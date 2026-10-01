@@ -86,6 +86,7 @@ type promptRunOverviewRecord struct {
 	CurrentIteration       int             `gorm:"column:current_iteration"`
 	ResultText             *string         `gorm:"column:result_text"`
 	ResultJSON             json.RawMessage `gorm:"column:result_json"`
+	Workspace              json.RawMessage `gorm:"column:workspace"`
 	Error                  *string         `gorm:"column:error"`
 	Version                int64           `gorm:"column:version"`
 	QueuedAt               time.Time       `gorm:"column:queued_at"`
@@ -263,6 +264,12 @@ func promptRunOverviewFromRecord(record promptRunOverviewRecord) (PromptRunOverv
 			return PromptRunOverview{}, fmt.Errorf("decode result JSON: %w", err)
 		}
 	}
+	var workspace *api.WorkspaceRecord
+	if len(record.Workspace) > 0 && string(record.Workspace) != "null" {
+		if err := json.Unmarshal(record.Workspace, &workspace); err != nil {
+			return PromptRunOverview{}, fmt.Errorf("decode workspace: %w", err)
+		}
+	}
 	execution := PromptRunRuntimeSelection{
 		Provider: optionalString(record.ExecutionProvider), Mode: optionalString(record.ExecutionRuntimeMode),
 		Model: optionalString(record.ExecutionModel), Effort: optionalString(record.ExecutionEffort),
@@ -292,7 +299,7 @@ func promptRunOverviewFromRecord(record promptRunOverviewRecord) (PromptRunOverv
 			Origin: optionalString(record.Origin), SpecProfile: optionalString(record.SpecProfile), AdmissionKey: optionalString(record.AdmissionKey),
 			RenderedSpec: renderedSpec, Runtime: runtime, Phase: record.Phase, State: record.State,
 			CurrentIteration: record.CurrentIteration, ResultText: optionalString(record.ResultText), ResultJSON: resultJSON,
-			Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt,
+			Workspace: workspace, Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt,
 			StartedAt: record.StartedAt, FinishedAt: record.FinishedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 		},
 		ProviderSessionID: optionalString(record.ProviderSessionID), Requested: runtime.Requested, Resolved: runtime.Resolved,

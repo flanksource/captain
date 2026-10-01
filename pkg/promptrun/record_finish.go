@@ -115,18 +115,21 @@ func (r *recorder) complete(classify func(Result, error, bool) (Outcome, error),
 	}
 	outcome, classifyErr := classify(result, runErr, stopped)
 	var notices []api.Notice
+	var workspace *api.WorkspaceRecord
 	if result.Response != nil && result.Response.Workspace != nil {
 		notices = result.Response.Workspace.Notices
+		workspace = api.NewWorkspaceRecord(result.Response.Workspace)
 	}
-	settleErr := r.settle(outcome, IterationRecords(result, stopped), notices)
+	settleErr := r.settle(outcome, IterationRecords(result, stopped), notices, workspace)
 	return result, errors.Join(runErr, classifyErr, settleErr)
 }
 
 // settle writes everything a finished run leaves behind: every iteration (one
 // refused row costs that row, not the others), the notices on the transcript
-// the run bound, and the run's terminal state. A run something else already
-// finished — a Cancel that raced the run's own end — keeps the state it has.
-func (r *recorder) settle(outcome Outcome, iterations []database.UpsertPromptRunIterationInput, notices []api.Notice) error {
+// the run bound, and the run's terminal state with its workspace record (nil
+// for a run that reported none). A run something else already finished — a
+// Cancel that raced the run's own end — keeps the state it has.
+func (r *recorder) settle(outcome Outcome, iterations []database.UpsertPromptRunIterationInput, notices []api.Notice, workspace *api.WorkspaceRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	errs := []error{r.firstWriteErr}
@@ -138,7 +141,7 @@ func (r *recorder) settle(outcome Outcome, iterations []database.UpsertPromptRun
 	}
 	errs = append(errs, r.writeTranscript(notices))
 	_, err := r.updateRun(func(run *database.PromptRun) (database.UpdatePromptRunInput, bool) {
-		return r.finishUpdate(run, outcome), !finishedRun(run.State)
+		return r.finishUpdate(run, outcome, workspace), !finishedRun(run.State)
 	})
 	if err != nil {
 		errs = append(errs, fmt.Errorf("promptrun: finish run %s: %w", r.runID, err))
@@ -146,13 +149,13 @@ func (r *recorder) settle(outcome Outcome, iterations []database.UpsertPromptRun
 	return errors.Join(errs...)
 }
 
-func (r *recorder) finishUpdate(run *database.PromptRun, outcome Outcome) database.UpdatePromptRunInput {
+func (r *recorder) finishUpdate(run *database.PromptRun, outcome Outcome, workspace *api.WorkspaceRecord) database.UpdatePromptRunInput {
 	phase := outcome.Phase
 	if phase == "" {
 		phase = r.settledPhase(run.Phase)
 	}
 	runtime := r.resolvedRuntime(run.Runtime, &api.Spec{})
-	update := database.UpdatePromptRunInput{State: &outcome.State, Phase: &phase, Runtime: &runtime}
+	update := database.UpdatePromptRunInput{State: &outcome.State, Phase: &phase, Runtime: &runtime, Workspace: workspace}
 	if outcome.Text != "" {
 		update.ResultText = &outcome.Text
 	}

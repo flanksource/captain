@@ -285,6 +285,15 @@ func (db *DB) UpdatePromptRun(ctx context.Context, input UpdatePromptRunInput) (
 			distinctArgs = append(distinctArgs, string(encoded))
 		}
 	}
+	if input.Workspace != nil {
+		encoded, err := json.Marshal(input.Workspace)
+		if err != nil {
+			return nil, fmt.Errorf("%w: encode workspace: %v", ErrInvalidPromptRun, err)
+		}
+		updates["workspace"] = input.Workspace
+		distinctPredicates = append(distinctPredicates, "workspace IS DISTINCT FROM CAST(? AS jsonb)")
+		distinctArgs = append(distinctArgs, string(encoded))
+	}
 	if input.ApprovalState != nil {
 		state := *input.ApprovalState
 		state.ProviderCheckpoint = nil
@@ -375,7 +384,7 @@ func promptRunFromRecord(record promptRunRecord) PromptRun {
 		RenderedSpec: record.RenderedSpec, Metadata: record.Metadata, Runtime: record.Runtime, PromptMarkdown: optionalString(record.PromptMarkdown),
 		VerificationMarkdown: optionalString(record.VerificationMarkdown), Phase: record.Phase, State: record.State,
 		CurrentIteration: record.CurrentIteration, ResultText: optionalString(record.ResultText), ResultJSON: record.ResultJSON,
-		ApprovalState: record.ApprovalState, ProviderCheckpoint: checkpoint,
+		Workspace: record.Workspace, ApprovalState: record.ApprovalState, ProviderCheckpoint: checkpoint,
 		Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt, StartedAt: record.StartedAt,
 		FinishedAt: record.FinishedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}

@@ -39,5 +39,5 @@ func RecordCompleted(ctx context.Context, rec *Recording, done Completed) (uuid.
 	r.prepare(done.Runtime, api.Model{Name: done.Model}, done.Resolved.Spec, done.ProviderSessionID)
 	spec := done.Resolved.Spec
 	startErr := r.start(&spec)
-	return run.ID, errors.Join(startErr, r.settle(done.Outcome, done.Iterations, done.Notices))
+	return run.ID, errors.Join(startErr, r.settle(done.Outcome, done.Iterations, done.Notices, nil))
 }

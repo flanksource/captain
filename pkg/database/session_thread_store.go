@@ -83,7 +83,7 @@ type SessionCost struct {
 	SessionID        uuid.UUID  `gorm:"column:session_id" json:"sessionId"`
 	Model            string     `gorm:"column:model" json:"model"`
 	Provider         *string    `gorm:"column:provider" json:"provider,omitempty"`
-	ModelMode        *string    `gorm:"column:model_mode" json:"modelMode,omitempty"`
+	ModelMode        *string    `gorm:"column:mode" json:"modelMode,omitempty"`
 	Effort           *string    `gorm:"column:effort" json:"effort,omitempty"`
 	Currency         string     `gorm:"column:currency" json:"currency"`
 	ModelCallCount   int64      `gorm:"column:model_call_count" json:"modelCallCount"`

@@ -54,6 +54,7 @@ type PromptRun struct {
 	CurrentIteration     int                    `json:"currentIteration"`
 	ResultText           string                 `json:"resultText,omitempty"`
 	ResultJSON           map[string]any         `json:"resultJson,omitempty"`
+	Workspace            *api.WorkspaceRecord   `json:"workspace,omitempty"`
 	ApprovalState        *api.ToolApprovalState `json:"-"`
 	ProviderCheckpoint   *PromptRunCheckpoint   `json:"-"`
 	Error                string                 `json:"error,omitempty"`
@@ -108,10 +109,12 @@ type UpdatePromptRunInput struct {
 	RenderedSpec       *map[string]any
 	// Metadata merges its top-level keys into the stored object; keys it does
 	// not name keep their stored values.
-	Metadata                *map[string]any
-	Runtime                 *PromptRunRuntime
-	ResultText              *string
-	ResultJSON              *map[string]any
+	Metadata   *map[string]any
+	Runtime    *PromptRunRuntime
+	ResultText *string
+	ResultJSON *map[string]any
+	// Workspace replaces the stored workspace record; nil leaves it unchanged.
+	Workspace               *api.WorkspaceRecord
 	ApprovalState           *api.ToolApprovalState
 	ClearApprovalState      bool
 	ProviderCheckpoint      *PromptRunCheckpoint
@@ -142,6 +145,7 @@ type promptRunRecord struct {
 	CurrentIteration          int                    `gorm:"column:current_iteration"`
 	ResultText                *string                `gorm:"column:result_text"`
 	ResultJSON                map[string]any         `gorm:"column:result_json;serializer:json;type:jsonb"`
+	Workspace                 *api.WorkspaceRecord   `gorm:"column:workspace;serializer:json;type:jsonb"`
 	ApprovalState             *api.ToolApprovalState `gorm:"column:approval_state;serializer:json;type:jsonb"`
 	ProviderCheckpointCodec   *string                `gorm:"column:provider_checkpoint_codec"`
 	ProviderCheckpointVersion *int                   `gorm:"column:provider_checkpoint_version"`

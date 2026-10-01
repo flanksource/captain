@@ -78,6 +78,7 @@ func TestSchemaBundleContainsGavelIntegrationContract(t *testing.T) {
 		`column "phase"`,
 		`column "state"`,
 		`column "runtime"`,
+		`column "workspace"`,
 		`table "captain_prompt_run_iterations"`,
 		`column "prompt_run_id"`,
 	)

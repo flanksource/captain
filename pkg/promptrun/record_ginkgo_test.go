@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
@@ -78,6 +79,23 @@ func (v *failingVerifier) Verify(context.Context, string, []string) (verify.Verd
 	final := api.NewNodeReport(api.VerifyKindFixture, "fixture", api.VerifyNode{Name: "acceptance", Passed: false})
 	final.Reason = "acceptance criteria unmet"
 	return verify.Verdict{OK: false, Report: &final}, nil
+}
+
+// workspaceHook stands in for the setup and commit hooks: it records a worktree
+// and a commit on the run's workspace, plus the transient detail (a notice and a
+// diff) the durable record must leave out.
+type workspaceHook struct {
+	worktree *api.WorktreeState
+	commit   api.CommitRecord
+}
+
+func (h *workspaceHook) Name() string { return "workspace-stub" }
+func (h *workspaceHook) PreRun(hc *agent.HookContext) error {
+	ws := hc.Workspace()
+	ws.Worktree = h.worktree
+	ws.AddCommit(h.commit.SHA, h.commit.Message)
+	ws.Diff = "diff --git a/x b/x"
+	return nil
 }
 
 func openRecordDB() *database.DB {
@@ -327,6 +345,30 @@ var _ = Describe("a recorded prompt run", func() {
 		messages, err := db.ListTranscriptMessages(ctx, database.TranscriptPage{SessionID: *run.ExecutionSessionID, Limit: 100})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(messages).To(HaveLen(len(res.Response.Workspace.Notices)))
+	})
+
+	It("persists the run workspace on finish", func(ctx SpecContext) {
+		worktree := &api.WorktreeState{
+			Repo: cwd, Path: cwd + "/worktrees/shell-abc", Branch: "shell/abc",
+			Base: "1111111111111111111111111111111111111111", Setup: "2222222222222222222222222222222222222222",
+			Head: "3333333333333333333333333333333333333333", Removed: true,
+		}
+		commit := api.CommitRecord{SHA: worktree.Head, Message: "feat: fix the build"}
+		hook := &workspaceHook{worktree: worktree, commit: commit}
+
+		res, err := promptrun.Run(ctx, promptrun.Input{
+			Resolved: resolved, Provider: &eventsProvider{events: answeredTurn(uuid.NewString())},
+			Timeout: testTimeout, Record: recording(nil), Hooks: []any{hook},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		want := &api.WorkspaceRecord{Cwd: cwd, Worktree: worktree, Commits: []api.CommitRecord{commit}}
+		run, err := db.GetPromptRun(ctx, res.PromptRunID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(run.Workspace).To(Equal(want), "notices, diff and metadata stay off the durable record")
+		overview, err := db.GetPromptRunOverview(ctx, res.PromptRunID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(overview.Workspace).To(Equal(want), "the overview carries the workspace through run.*")
 	})
 
 	Describe("Admit, for a host that admits ahead of dispatch", func() {

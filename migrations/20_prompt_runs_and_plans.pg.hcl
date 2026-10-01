@@ -100,6 +100,13 @@ table "captain_prompt_runs" {
     null = true
     type = jsonb
   }
+  # The run's durable workspace record (api.WorkspaceRecord): where it ran, the
+  # worktree it was isolated in and what became of it, and what it committed.
+  # Null until the run finishes, and for a run that reported no workspace.
+  column "workspace" {
+    null = true
+    type = jsonb
+  }
   column "provider_checkpoint_codec" {
     null = true
     type = text
