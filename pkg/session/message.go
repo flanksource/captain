@@ -73,14 +73,15 @@ type Part struct {
 	AttachmentID string `json:"attachmentId,omitempty"`
 
 	// tool parts
-	ToolName   string          `json:"toolName,omitempty"`
-	ToolCallID string          `json:"toolCallId,omitempty"`
-	State      string          `json:"state,omitempty"`
-	Input      json.RawMessage `json:"input,omitempty"`
-	Output     json.RawMessage `json:"output,omitempty"`
-	ErrorText  string          `json:"errorText,omitempty"`
-	Data       json.RawMessage `json:"data,omitempty"`
-	Approval   *Approval       `json:"approval,omitempty"`
+	ToolName      string            `json:"toolName,omitempty"`
+	ToolCallID    string            `json:"toolCallId,omitempty"`
+	State         string            `json:"state,omitempty"`
+	Input         json.RawMessage   `json:"input,omitempty"`
+	Output        json.RawMessage   `json:"output,omitempty"`
+	ErrorText     string            `json:"errorText,omitempty"`
+	Data          json.RawMessage   `json:"data,omitempty"`
+	Approval      *Approval         `json:"approval,omitempty"`
+	EstimatedCost *ToolCostEstimate `json:"estimatedCost,omitempty"`
 }
 
 // Roles the harness writes itself, alongside the provider's own user/assistant

@@ -58,12 +58,16 @@ func buildHierarchy(ps claude.ParsedSession, turnByEntry map[string]string) hier
 		}
 
 		costs := newResponseCosts()
+		var toolCosts claudeToolCosts
 		for _, e := range t.Entries {
 			costs.add(e)
-			if m, ok := entryToMessage(e, node.ID, turnByEntry[e.UUID]); ok {
+			m, ok := entryToMessage(e, node.ID, turnByEntry[e.UUID])
+			toolCosts.add(e, m)
+			if ok {
 				messages = append(messages, m)
 			}
 		}
+		toolCosts.estimate()
 		node.Cost = costs.costs.Sum()
 		node.Usage = usageFromCost(node.Cost)
 	}

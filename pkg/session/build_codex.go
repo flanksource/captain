@@ -115,6 +115,7 @@ type CodexAccumulator struct {
 	cumulative    codexCumulative
 	plan          codexPlanState
 	freshMessages []Message
+	pendingTools  []Message
 	rootType      string
 	rootDesc      string
 }
@@ -199,6 +200,9 @@ func (a *CodexAccumulator) observe(use history.ToolUse) {
 	}
 
 	if tools.IsEventToolName(use.Tool) || use.Tool == "ApiError" {
+		if use.Tool == "TaskStarted" || use.Tool == "TaskComplete" || use.Tool == "ApiError" {
+			a.pendingTools = nil
+		}
 		ev := codexUseToEvent(use)
 		if use.Tool == "MemoryCitation" {
 			ev.Scope = "session"
@@ -226,6 +230,7 @@ func (a *CodexAccumulator) observe(use history.ToolUse) {
 	}
 	a.collectPaths(use)
 	message := codexUseToMessage(use)
+	a.observeToolMessage(message)
 	a.turns.addMessage(use, message.ID)
 	if a.collect {
 		s.Messages = append(s.Messages, message)
@@ -241,6 +246,7 @@ func (a *CodexAccumulator) observeUsage(use history.ToolUse) {
 		cost = codexCostFromUsage(use.Model, delta)
 	}
 	if cost.TotalTokens != 0 {
+		a.estimateToolCosts(cost)
 		a.session.Cost = a.session.Cost.Add(cost)
 		modelCost := a.costByModel[cost.Model]
 		modelCost.Model = cost.Model

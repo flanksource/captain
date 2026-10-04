@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
@@ -19,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	segmentjson "github.com/segmentio/encoding/json"
 )
 
 var _ = Describe("SessionHandler", Ordered, func() {
@@ -93,6 +95,32 @@ var _ = Describe("SessionHandler", Ordered, func() {
 		var body map[string]any
 		Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
 		Expect(body["error"]).To(ContainSubstring("not found"))
+	})
+
+	It("preserves estimated tool usage and cache cost in the session JSON", func(ctx SpecContext) {
+		stored, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: uuid.NewString(), Source: "codex", Provider: "openai", HostID: captainHostID(),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		estimate := &session.ToolCostEstimate{SharedCalls: 2, Cost: api.Cost{
+			InputTokens: 100, OutputTokens: 20, CacheReadTokens: 800,
+			InputCost: 0.0002, OutputCost: 0.0002, CacheReadCost: 0.00008,
+		}}
+		parts, err := json.Marshal([]session.Part{{
+			Type: "dynamic-tool", ToolName: "Bash", ToolCallID: "estimated-shell",
+			State: "output-available", Input: segmentjson.RawMessage(`{"command":"pwd"}`), EstimatedCost: estimate,
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(db.PutChatMessage(ctx, database.PutChatMessageInput{
+			SessionID: stored.ID, ProviderMessageID: "estimated-message", Role: "assistant", Parts: parts,
+		})).To(Succeed())
+		response := getSession(ctx, server.URL+"/api/captain/sessions/"+stored.ID.String(), "application/json")
+		defer response.Body.Close()
+		Expect(response.StatusCode).To(Equal(http.StatusOK))
+		var body session.Session
+		Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
+		Expect(body.Messages).To(HaveLen(1))
+		Expect(body.Messages[0].Parts[0].EstimatedCost).To(Equal(estimate))
 	})
 
 	It("reports a session nothing can describe as a 404 naming its detail sources", func(ctx SpecContext) {
