@@ -57,6 +57,34 @@ var _ = Describe("Database execution authority", func() {
 		Expect(seen).To(Receive(Equal("org-acme")))
 	})
 
+	It("links the provider transcript under the identity the local monitor ingests it with", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_transcript_host"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		threadID := uuid.New()
+		providerSessionID := uuid.NewString()
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: threadID.String(), RequestID: "request-transcript-1", Title: "Accounts",
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "sonnet", Mode: api.ModeAgent})},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(execution.Close)
+		_, err = execution.Observe(ctx, api.Event{Kind: api.EventText, SessionID: providerSessionID})
+		Expect(err).NotTo(HaveOccurred())
+
+		ingested, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			Source: "claude", Provider: "anthropic", HostID: database.LocalHostID(),
+			ProviderSessionID: providerSessionID,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ingested.ParentSessionID).To(Equal(&threadID))
+		Expect(ingested.ParentRelation).To(Equal(database.SessionParentRelationTranscript))
+	})
+
 	It("blocks an ask tool on its durable approval and revokes the credential at completion", func(ctx SpecContext) {
 		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_execution"})
 		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())

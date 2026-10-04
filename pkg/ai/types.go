@@ -52,7 +52,11 @@ const (
 	EventVerifyFailed   = api.EventVerifyFailed
 	EventVerifyProgress = api.EventVerifyProgress
 	EventToolProgress   = api.EventToolProgress
+	EventTurnStart      = api.EventTurnStart
 )
+
+// TurnStart is the Raw payload of an EventTurnStart.
+type TurnStart = api.TurnStart
 
 // Usage is an alias for the canonical api.Usage (per-call token breakdown).
 type Usage = api.Usage

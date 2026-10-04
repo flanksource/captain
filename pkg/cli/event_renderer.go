@@ -13,6 +13,8 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/clicky"
+	"github.com/flanksource/clicky/task"
+	"github.com/flanksource/commons/logger"
 	"github.com/segmentio/encoding/json"
 	"golang.org/x/term"
 )
@@ -49,6 +51,21 @@ type EventRenderer struct {
 	// the final state is still written when the turn ends.
 	lastRedraw   time.Time
 	pendingDirty bool
+	// pendingDrawn records that the pending turn was drawn in place on the raw
+	// output, so finishing it means ending that line rather than writing it again.
+	pendingDrawn bool
+
+	// paneActive reports whether a clicky task pane is repainting the terminal.
+	// The pane erases its last frame by moving the cursor up, so anything written
+	// raw beneath it is wiped on the next tick. While it is active, committed
+	// lines go to paneOutput — the logger output the pane flushes above its frame
+	// — and nothing is drawn in place. Both are read on every write: the pane
+	// starts and stops around tasks, and the logger output is swapped with it.
+	paneActive func() bool
+	paneOutput func() io.Writer
+	// paneLine holds a partial line until its newline arrives, because the pane
+	// terminates whatever it flushes and would split a row written in pieces.
+	paneLine strings.Builder
 }
 
 func NewEventRenderer(output *os.File) *EventRenderer {
@@ -74,6 +91,8 @@ func newEventRenderer(output io.Writer, interactive bool) *EventRenderer {
 		width:        defaultRenderWidth,
 		rendered:     map[string]string{},
 		sessionShown: map[string]bool{},
+		paneActive:   task.IsInteractiveRenderActive,
+		paneOutput:   logger.GetOutput,
 	}
 	renderer.accumulator = newPromptEventAccumulator(renderer.consume, discardTaskSink{}, "", "")
 	if cwd, err := os.Getwd(); err == nil {
@@ -87,6 +106,9 @@ func (r *EventRenderer) Handle(iteration int, event ai.Event) {
 		r.flushPending()
 		r.accumulator.resetFrame()
 		clear(r.rendered)
+		// A resumed session keeps its id across turns; naming it once per run
+		// left every turn after the first without a session line.
+		clear(r.sessionShown)
 	}
 	r.iteration, r.hasIter = iteration, true
 
@@ -105,6 +127,12 @@ func (r *EventRenderer) Handle(iteration int, event ai.Event) {
 		return
 	}
 	r.clearProgress()
+
+	if event.Kind == ai.EventTurnStart {
+		r.flushPending()
+		r.renderTurnStart(event)
+		return
+	}
 
 	// A verdict is rendered here rather than through the transcript row the
 	// accumulator would build, because a row is a one-line preview cut to a
@@ -148,19 +176,19 @@ func (r *EventRenderer) Flush() error {
 // would end up mostly counts.
 func (r *EventRenderer) renderProgress(event ai.Event) {
 	report, ok := event.Raw.(*api.VerifyReport)
-	if !ok || report == nil || !r.interactive {
+	if !ok || report == nil || !r.live() {
 		return
 	}
 	r.flushPending()
 	line := clicky.Text("⟳ ", "text-blue-500").Append(verifyProgressStatus(*report), "text-muted").ANSI()
-	r.write("\r" + ansi.EraseEntireLine + truncateANSI(line, r.width))
+	r.writeRaw("\r" + ansi.EraseEntireLine + truncateANSI(line, r.width))
 	r.progressDrawn = true
 }
 
 // renderToolProgress redraws a running tool's newest output line in place, on a
 // terminal only — the same constraint as renderProgress, for the same reason.
 func (r *EventRenderer) renderToolProgress(event ai.Event) {
-	if !r.interactive || event.Text == "" {
+	if !r.live() || event.Text == "" {
 		return
 	}
 	r.flushPending()
@@ -169,7 +197,7 @@ func (r *EventRenderer) renderToolProgress(event ai.Event) {
 		label = "tool"
 	}
 	line := clicky.Text("⟳ "+label+" ", "text-blue-500").Append(event.Text, "text-muted").ANSI()
-	r.write("\r" + ansi.EraseEntireLine + truncateANSI(line, r.width))
+	r.writeRaw("\r" + ansi.EraseEntireLine + truncateANSI(line, r.width))
 	r.progressDrawn = true
 }
 
@@ -180,7 +208,13 @@ func (r *EventRenderer) clearProgress() {
 		return
 	}
 	r.progressDrawn = false
-	r.write("\r" + ansi.EraseEntireLine)
+	r.writeRaw("\r" + ansi.EraseEntireLine)
+}
+
+// live reports whether this renderer may draw in place: only on a terminal, and
+// only while no task pane is repainting it.
+func (r *EventRenderer) live() bool {
+	return r.interactive && !r.paneActive()
 }
 
 func (r *EventRenderer) pendingBoundary(kind ai.EventKind) bool {
@@ -210,7 +244,7 @@ func (r *EventRenderer) consume(message session.Message) {
 		}
 		copy := message
 		r.pending = &copy
-		if r.interactive {
+		if r.live() {
 			r.redrawPending()
 		}
 	case session.PartTool:
@@ -261,6 +295,35 @@ func (r *EventRenderer) renderSessionHeader(event ai.Event) {
 	r.write(truncateANSI(clicky.Text(text, "text-muted").ANSI(), r.width) + "\n")
 }
 
+// renderTurnStart heads a turn with its position in the loop, the model that
+// answers it and the parameters it runs with; a parameter the turn leaves at
+// the runtime default is omitted rather than printed as zero.
+func (r *EventRenderer) renderTurnStart(event ai.Event) {
+	start, ok := event.Raw.(*ai.TurnStart)
+	if !ok || start == nil {
+		r.err = errors.Join(r.err, fmt.Errorf("turn_start event carries %T, want *ai.TurnStart", event.Raw))
+		return
+	}
+	req := start.Request
+	parts := []string{fmt.Sprintf("turn %d/%d", start.Iteration+1, start.MaxIterations)}
+	add := func(set bool, format string, args ...any) {
+		if set {
+			parts = append(parts, fmt.Sprintf(format, args...))
+		}
+	}
+	model := firstNonEmpty(event.Model, req.Name)
+	add(model != "", "%s", model)
+	add(req.Effort != "", "effort %s", req.Effort)
+	add(req.Permissions.Mode != "", "mode %s", req.Permissions.Mode)
+	add(req.Budget.Cost > 0, "budget $%.2f", req.Budget.Cost)
+	add(req.Budget.MaxTurns > 0, "max turns %d", req.Budget.MaxTurns)
+	add(req.Budget.Timeout != "", "timeout %s", req.Budget.Timeout)
+	sessionID := firstNonEmpty(event.SessionID, req.SessionID)
+	add(sessionID != "", "resume %s", sessionID)
+	line := clicky.Text("▶ "+strings.Join(parts, " · "), "text-blue-500 font-medium").ANSI()
+	r.write(truncateANSI(line, r.width) + "\n")
+}
+
 func decodeToolOutput(raw []byte) string {
 	if len(raw) == 0 {
 		return ""
@@ -302,25 +365,25 @@ func (r *EventRenderer) writePending() {
 	if !ok {
 		return
 	}
-	r.lastRedraw, r.pendingDirty = time.Now(), false
-	r.write("\r" + ansi.EraseEntireLine + text)
+	r.lastRedraw, r.pendingDirty, r.pendingDrawn = time.Now(), false, true
+	r.writeRaw("\r" + ansi.EraseEntireLine + text)
 }
 
 func (r *EventRenderer) flushPending() {
 	if r.pending == nil {
 		return
 	}
-	if r.interactive {
+	if r.pendingDrawn {
 		// A throttled redraw may have left the line showing an earlier state of
 		// the turn that is now finished, so the last one is always written.
 		if r.pendingDirty {
 			r.writePending()
 		}
-		r.write("\n")
+		r.writeRaw("\n")
 	} else {
 		r.renderMessage(*r.pending)
 	}
-	r.pending, r.pendingDirty = nil, false
+	r.pending, r.pendingDirty, r.pendingDrawn = nil, false, false
 }
 
 // renderVerdict writes one verify verdict at the output's own width: the
@@ -383,7 +446,39 @@ func transcriptMessageANSI(message session.Message) (string, bool) {
 	return rows[0].Pretty().ANSI(), true
 }
 
+// write commits transcript lines: above the task pane while one is repainting,
+// straight to the output otherwise.
 func (r *EventRenderer) write(value string) {
+	if r.err != nil {
+		return
+	}
+	if !r.paneActive() {
+		r.writeRaw(r.takePaneLine() + value)
+		return
+	}
+	r.paneLine.WriteString(value)
+	buffered := r.paneLine.String()
+	end := strings.LastIndexByte(buffered, '\n')
+	if end < 0 {
+		return
+	}
+	r.paneLine.Reset()
+	r.paneLine.WriteString(buffered[end+1:])
+	_, err := io.WriteString(r.paneOutput(), buffered[:end+1])
+	r.err = errors.Join(r.err, err)
+}
+
+// takePaneLine returns and clears a partial line left over from a pane that
+// has since stopped, so it is written ahead of what follows instead of lost.
+func (r *EventRenderer) takePaneLine() string {
+	rest := r.paneLine.String()
+	r.paneLine.Reset()
+	return rest
+}
+
+// writeRaw writes to the renderer's own output, bypassing the pane. Only
+// in-place drawing uses it directly, and that happens only while live().
+func (r *EventRenderer) writeRaw(value string) {
 	if r.output == nil || r.err != nil {
 		return
 	}

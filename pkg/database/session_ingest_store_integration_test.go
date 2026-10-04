@@ -246,12 +246,15 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		later := modTime.Add(3 * time.Minute)
 		completing := testIngestBatch(later, 12288)
 		turnIdx0 := 0
+		// Re-offered, the row is still the same line, so it keeps the timestamp
+		// the extended batch gave it: that batch's turn-0 end.
+		lineAt := modTime.Add(2 * time.Minute).Add(-9 * time.Minute)
 		completing.Messages = []IngestMessage{{
 			Sequence: 3, ProviderMessageID: "uuid-3", Role: "assistant", TurnIndex: &turnIdx0,
 			PartsJSON: []byte(`[{"type":"text","text":"hi"},` +
 				`{"type":"dynamic-tool","toolName":"Read","toolCallId":"t1",` +
 				`"state":"output-available","output":"package main"}]`),
-			SourceLine: 3, OccurredAt: &later,
+			SourceLine: 3, OccurredAt: &lineAt,
 		}}
 		_, err := db.IngestTranscript(t.Context(), completing)
 		require.NoError(t, err)

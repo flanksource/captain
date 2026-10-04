@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/promptrun"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -23,8 +24,12 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 	})
 
 	It("resolves a construction alias before comparing policies and judge models", func() {
+		// The judge names the concrete model the run's alias resolves to; which
+		// model that is belongs to the catalog, pinned by the registry's tests.
+		sonnet, ok := registry.Anthropic.ResolveExact(api.ModeAgent, "sonnet")
+		Expect(ok).To(BeTrue())
 		path := filepath.Join(GinkgoT().TempDir(), "judge.prompt")
-		Expect(os.WriteFile(path, []byte("---\nmodel: claude-sonnet-5\n---\n{{role \"user\"}}\nReview."), 0o600)).To(Succeed())
+		Expect(os.WriteFile(path, []byte("---\nmodel: "+sonnet+"\n---\n{{role \"user\"}}\nReview."), 0o600)).To(Succeed())
 		in.Resolved.Spec.Permissions.Tools = api.Tools{"Bash": api.ToolPolicyDeny}
 		in.Resolved.Spec.Workflow = &api.Workflow{Verify: &api.Verify{Prompts: []string{path}}}
 		_, err := promptrun.Preflight(in)

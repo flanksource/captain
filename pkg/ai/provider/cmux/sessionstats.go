@@ -541,9 +541,13 @@ type SessionStatsCache struct {
 	cold map[string]coldStatsEntry
 }
 
+// coldStatsEntry is keyed on mtime and size together: filesystems with
+// one-second mtime resolution (HFS+) give every append within a second the same
+// mtime, but an append always changes the size.
 type coldStatsEntry struct {
 	stats      SessionStats
 	mtime      time.Time
+	size       int64
 	computedAt time.Time
 }
 
@@ -575,7 +579,7 @@ func (c *SessionStatsCache) Begin(sessionID, agent, model, effort string, start 
 }
 
 // Get returns the stats for a session: the live accumulator when one is present,
-// otherwise a cold read of the on-disk log cached by mtime + TTL. A missing log
+// otherwise a cold read of the on-disk log cached by mtime, size + TTL. A missing log
 // (session never produced output) is the normal "not found" state, returned as a
 // zero SessionStats with Found=false rather than an error.
 func (c *SessionStatsCache) Get(sessionID, path string) (SessionStats, error) {
@@ -598,7 +602,8 @@ func (c *SessionStatsCache) coldStats(sessionID, path string) (SessionStats, err
 	}
 
 	c.mu.Lock()
-	if entry, ok := c.cold[path]; ok && entry.mtime.Equal(info.ModTime()) && time.Since(entry.computedAt) < sessionStatsTTL {
+	if entry, ok := c.cold[path]; ok && entry.mtime.Equal(info.ModTime()) && entry.size == info.Size() &&
+		time.Since(entry.computedAt) < sessionStatsTTL {
 		c.mu.Unlock()
 		return entry.stats, nil
 	}
@@ -611,7 +616,7 @@ func (c *SessionStatsCache) coldStats(sessionID, path string) (SessionStats, err
 	stats.SessionID = sessionID
 
 	c.mu.Lock()
-	c.cold[path] = coldStatsEntry{stats: stats, mtime: info.ModTime(), computedAt: time.Now()}
+	c.cold[path] = coldStatsEntry{stats: stats, mtime: info.ModTime(), size: info.Size(), computedAt: time.Now()}
 	c.mu.Unlock()
 	return stats, nil
 }

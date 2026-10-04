@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -283,6 +285,91 @@ var _ = Describe("Captain event renderer", func() {
 		Expect(strings.Count(text, "session thread-1")).To(Equal(1))
 		Expect(text).To(ContainSubstring("gpt-5.6-sol"))
 		Expect(text).To(ContainSubstring("session session-2"))
+	})
+
+	// A fix loop's turns resume one session, so the session line alone could not
+	// say where one turn ended and the next began, nor what it ran with.
+	Describe("turn headers", func() {
+		turnStart := func(iteration, maxIterations int, model, sessionID string, request api.Spec) ai.Event {
+			return ai.Event{
+				Kind: ai.EventTurnStart, Model: model, SessionID: sessionID,
+				Raw: &ai.TurnStart{Iteration: iteration, MaxIterations: maxIterations, Request: request},
+			}
+		}
+
+		It("heads a turn with the resolved model and the parameters it runs with", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+			renderer.width = 400
+			request := api.Spec{SessionID: "sess-1"}
+			request.Model.Name, request.Model.Effort = "opus", "high"
+			request.Permissions.Mode = api.PermissionMode("auto")
+			request.Budget = api.Budget{Cost: 5, MaxTurns: 40, Timeout: "45m"}
+
+			renderer.Handle(1, turnStart(1, 5, "claude-opus-4", "sess-1", request))
+			Expect(renderer.Flush()).To(Succeed())
+
+			Expect(output.String()).To(ContainSubstring(
+				"turn 2/5 · claude-opus-4 · effort high · mode auto · budget $5.00 · max turns 40 · timeout 45m · resume sess-1"))
+		})
+
+		It("omits the parameters a turn does not set", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+
+			renderer.Handle(0, turnStart(0, 3, "", "", api.Spec{Model: api.Model{Name: "sonnet"}}))
+			Expect(renderer.Flush()).To(Succeed())
+
+			text := output.String()
+			Expect(text).To(ContainSubstring("turn 1/3 · sonnet"))
+			Expect(text).NotTo(Or(ContainSubstring("effort"), ContainSubstring("budget"), ContainSubstring("resume")))
+		})
+
+		It("names a resumed session again on every turn", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+
+			for iteration := 0; iteration < 2; iteration++ {
+				renderer.Handle(iteration, ai.Event{Kind: ai.EventSystem, SessionID: "thread-1", Model: "opus"})
+			}
+			Expect(renderer.Flush()).To(Succeed())
+
+			Expect(strings.Count(output.String(), "session thread-1")).To(Equal(2))
+		})
+
+		It("fails loudly on a turn_start without its payload", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+
+			renderer.Handle(0, ai.Event{Kind: ai.EventTurnStart})
+			Expect(renderer.Flush()).To(MatchError(ContainSubstring("turn_start")))
+		})
+	})
+
+	// The clicky task pane repaints over the last frame every tick by moving the
+	// cursor up; anything written raw to the terminal in between is erased.
+	Describe("under a live task pane", func() {
+		It("commits whole lines above the pane and never draws in place", func() {
+			var raw, pane bytes.Buffer
+			renderer := newEventRenderer(&raw, true)
+			renderer.paneActive = func() bool { return true }
+			renderer.paneOutput = func() io.Writer { return &pane }
+
+			renderer.Handle(0, ai.Event{Kind: ai.EventText, Text: "hello "})
+			renderer.Handle(0, ai.Event{Kind: ai.EventText, Text: "world"})
+			renderer.Handle(0, ai.Event{Kind: ai.EventToolProgress, Tool: "Bash", Text: "ok internal/apply"})
+			renderer.Handle(0, ai.Event{Kind: ai.EventResult, Success: true})
+			Expect(renderer.Flush()).To(Succeed())
+
+			Expect(raw.String()).To(BeEmpty())
+			Expect(pane.String()).To(And(
+				ContainSubstring("hello world"),
+				HaveSuffix("\n"),
+				Not(ContainSubstring("\r")),
+				Not(ContainSubstring("\x1b[2K")),
+				Not(ContainSubstring("ok internal/apply")),
+			))
+		})
 	})
 
 	Describe("running tool output", func() {

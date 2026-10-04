@@ -120,7 +120,9 @@ func terminalState(event api.Event) (
 // transcriptSessionInput links the provider's own transcript session to this
 // one. Only the local transports write a transcript, and which one they write is
 // a property of the family alone — every Claude mode leaves a `claude`
-// transcript — so this reads the provider, not the mode.
+// transcript — so this reads the provider, not the mode. The transcript is
+// written on this machine, so it takes the monitor's host identity rather than
+// the thread's, or ingestion creates a second, unlinked session for it.
 func transcriptSessionInput(session *database.Session, provider *api.ModelProvider, providerID string) *database.CreateSessionInput {
 	if session == nil || provider == nil || strings.TrimSpace(providerID) == "" {
 		return nil
@@ -131,7 +133,7 @@ func transcriptSessionInput(session *database.Session, provider *api.ModelProvid
 		return nil
 	}
 	return &database.CreateSessionInput{
-		ProviderSessionID: providerID, HostID: session.HostID, CWD: session.CWD,
+		ProviderSessionID: providerID, HostID: database.LocalHostID(), CWD: session.CWD,
 		ParentSessionID: &session.ID, ParentRelation: database.SessionParentRelationTranscript,
 		Source: provider.AgentName, Provider: provider.Name,
 	}

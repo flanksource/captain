@@ -40,17 +40,12 @@ var _ = Describe("runtime entities over the database", func() {
 		Expect(listRuntimePresets(f.ctx, RuntimePresetListOptions{Source: "db"})).To(HaveLen(1))
 	})
 
-	It("resolves a database profile referencing a file preset by name", func() {
-		organization := f.createPreset(withTarget(organizationPresetBody, f.presets.ID))
+	It("stores a database profile referencing a file preset by name", func() {
+		f.createPreset(withTarget(organizationPresetBody, f.presets.ID))
 		review := f.createProfile(map[string]any{"name": "Review", "presets": []string{"organization"}})
 		Expect(review.Source.Kind).To(Equal(runtimeprofiles.SourceDB))
-
-		resolution, err := resolveRuntimeProfileAction(f.ctx, review.ID, nil)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resolution.Profile.Source.Kind).To(Equal(runtimeprofiles.SourceDB))
-		Expect(resolution.Profile.Presets).To(Equal([]string{organization.ID}))
-		Expect(resolution.Presets).To(Equal([]runtimeprofiles.Preset{organization.Preset}))
-		Expect(resolution.Resolved.Trace[0].ID).To(Equal(organization.ID))
-		Expect(resolution.Resolved.Spec.Budget.MaxTurns).To(Equal(20))
+		// The reference is stored as authored; only the deprecated resolve ever
+		// canonicalised it to the preset id.
+		Expect(review.Presets).To(Equal([]string{"organization"}))
 	})
 })

@@ -373,15 +373,20 @@ func TestSessionStatsCacheColdCachesByMtime(t *testing.T) {
 		t.Fatalf("OutputTokens = %d, want 20", first.OutputTokens)
 	}
 
-	// Rewriting the log with a new mtime must invalidate the cold entry.
-	old := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(path, old, old); err != nil {
+	// An append within the same second keeps the mtime on a filesystem with
+	// one-second resolution (HFS+); pinning it back reproduces that anywhere.
+	// The grown log must still invalidate the cold entry.
+	info, err := os.Stat(path)
+	if err != nil {
 		t.Fatal(err)
 	}
 	writeSessionLog(t, path,
 		assistantLine("2026-06-23T10:00:00Z", "claude-opus-4-8", 100, 20, 0, 0),
 		assistantLine("2026-06-23T10:00:05Z", "claude-opus-4-8", 100, 80, 0, 0),
 	)
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
 	second, err := c.Get("sess", path)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)

@@ -75,7 +75,21 @@ const (
 	// consumer redraws it in place and never commits it, and a runtime with no
 	// incremental tool output simply never sends one.
 	EventToolProgress EventKind = "tool_progress"
+
+	// EventTurnStart is emitted by the loop before each iteration's
+	// ExecuteStream, never by a provider. Raw carries a *TurnStart naming the
+	// turn and the request it is about to send, Model the runtime's resolved
+	// model and SessionID the session being resumed (empty for a new one). It is
+	// loop metadata, so it is not recorded on LoopIteration.Events.
+	EventTurnStart EventKind = "turn_start"
 )
+
+// TurnStart is the Raw payload of an EventTurnStart.
+type TurnStart struct {
+	Iteration     int
+	MaxIterations int
+	Request       Spec
+}
 
 // Event is one item in a streaming provider's output channel.
 type Event struct {

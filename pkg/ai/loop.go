@@ -104,6 +104,14 @@ func RunUntil(ctx context.Context, opts LoopOptions) (*LoopResult, error) {
 			Request:   req,
 			StartedAt: time.Now(),
 		}
+		if opts.OnEvent != nil {
+			opts.OnEvent(iter.Iteration, Event{
+				Kind:      EventTurnStart,
+				Model:     opts.Provider.GetModel(),
+				SessionID: req.SessionID,
+				Raw:       &TurnStart{Iteration: iter.Iteration, MaxIterations: maxIter, Request: req},
+			})
+		}
 		runOneIteration(ctx, opts, req, iter)
 		iter.FinishedAt = time.Now()
 		result.Iterations = append(result.Iterations, iter)

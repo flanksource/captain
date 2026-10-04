@@ -410,15 +410,21 @@ type TranscriptPage struct {
 	Tail      int
 }
 
-// ListTranscriptMessages pages one session's messages in sequence order. That is
-// the provider's own ordering — the line number each message occupies in the
-// transcript file — and it is total, which is what makes Offset/Limit stable.
-//
-// Lifecycle notices (PutSessionNotices) sit in the negative half of the sequence
-// space and so surface at the front here, out of chronological place. Reading
-// them in place is the thread query's job: ListThreadTranscriptMessages orders on
-// occurred_at, which is the only key the two halves share, and is the path the
-// dashboard takes.
+// transcriptOccurredAt is the instant a message sorts at: its own occurred_at,
+// or for an untimed line the latest timestamp before it in the file, so it stays
+// beside its neighbours instead of collecting at either end. Only the provider
+// half (positive sequences) feeds that carry-forward: lifecycle notices sit in
+// the negative half yet happen at any point in the run.
+const transcriptOccurredAt = `COALESCE(occurred_at, max(occurred_at) FILTER (WHERE sequence > 0)
+	OVER (ORDER BY sequence ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING))`
+
+// ListTranscriptMessages pages one session's messages in the order they
+// happened. Sequence is the line each message occupies in the provider's file,
+// and Claude Code flushes a turn's lines out of order — a prompt can land after
+// the reply it produced — so the file order is not the conversation's. Messages
+// sort on transcriptOccurredAt with sequence breaking ties, which keeps the order
+// total and Offset/Limit stable, and places lifecycle notices
+// (PutSessionNotices) where they happened rather than at the front.
 func (db *DB) ListTranscriptMessages(ctx context.Context, page TranscriptPage) ([]TranscriptMessage, error) {
 	if err := db.requireGorm(); err != nil {
 		return nil, err
@@ -429,7 +435,7 @@ func (db *DB) ListTranscriptMessages(ctx context.Context, page TranscriptPage) (
 	query := db.gorm.WithContext(ctx).Model(&TranscriptMessage{}).Where("session_id = ?", page.SessionID)
 	var rows []TranscriptMessage
 	if page.Tail > 0 {
-		if err := query.Order("sequence DESC").Limit(page.Tail).Find(&rows).Error; err != nil {
+		if err := query.Order(transcriptOccurredAt + " DESC NULLS LAST, sequence DESC").Limit(page.Tail).Find(&rows).Error; err != nil {
 			return nil, fmt.Errorf("tail Captain transcript messages: %w", err)
 		}
 		for left, right := 0, len(rows)-1; left < right; left, right = left+1, right-1 {
@@ -437,7 +443,7 @@ func (db *DB) ListTranscriptMessages(ctx context.Context, page TranscriptPage) (
 		}
 		return rows, nil
 	}
-	query = query.Order("sequence ASC").Offset(page.Offset)
+	query = query.Order(transcriptOccurredAt + " ASC NULLS FIRST, sequence ASC").Offset(page.Offset)
 	if page.Limit > 0 {
 		query = query.Limit(page.Limit)
 	}
