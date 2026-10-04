@@ -197,6 +197,39 @@ var _ = Describe("AI SDK v6 event stream", func() {
 		}))
 	})
 
+	It("drops in-flight tool progress without splitting the open text block", func() {
+		recorder, err := recordEvents(
+			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "Bash", Input: map[string]any{"command": "make test"}},
+			api.Event{Kind: api.EventText, Text: "Running tests."},
+			api.Event{Kind: api.EventToolProgress, ToolCallID: "call-1", Tool: "Bash", Text: "ok internal/apply"},
+			api.Event{Kind: api.EventText, Text: " Still running."},
+			api.Event{Kind: api.EventToolResult, ToolCallID: "call-1", Tool: "Bash", Text: "PASS", Success: true},
+			api.Event{Kind: api.EventResult, Success: true},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(partTypes(decodedDataLines(recorder.Body.String()))).To(Equal([]string{
+			"start", "start-step",
+			"tool-input-available",
+			"text-start", "text-delta", "text-delta", "text-end",
+			"tool-output-available",
+			"data-result", "finish-step", "finish",
+		}))
+	})
+
+	It("skips an event kind it does not know instead of failing the turn", func() {
+		recorder, err := recordEvents(
+			api.Event{Kind: api.EventText, Text: "done"},
+			api.Event{Kind: api.EventKind("future_kind"), Text: "metadata"},
+			api.Event{Kind: api.EventResult, Success: true},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(partTypes(decodedDataLines(recorder.Body.String()))).To(Equal([]string{
+			"start", "start-step",
+			"text-start", "text-delta", "text-end",
+			"data-result", "finish-step", "finish",
+		}))
+	})
+
 	It("turns a Captain error event into a closed, valid UI stream", func() {
 		recorder, err := recordEvents(
 			api.Event{Kind: api.EventText, Text: "partial"},

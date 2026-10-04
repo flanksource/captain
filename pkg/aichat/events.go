@@ -145,8 +145,20 @@ func (s *eventStream) event(event api.Event) error {
 		return s.providerError(event)
 	case api.EventInterrupted:
 		return s.interrupted(event)
+	case api.EventToolProgress:
+		// Tool progress is a superseded snapshot of a still-running call's newest
+		// output line, never transcript. The AI SDK UI stream has no tool-output
+		// delta part and the chat UI does not render progress, so it is dropped;
+		// the complete output still arrives on the call's EventToolResult. It must
+		// not close the open text/reasoning block either.
+		return nil
 	default:
-		return fmt.Errorf("unsupported Captain event kind %q", event.Kind)
+		// Every kind that carries transcript or ends the turn is handled above.
+		// Anything else is additive runtime metadata (verify verdicts, turn starts,
+		// kinds added to pkg/api later), so an unknown kind is skipped rather than
+		// aborting the user's turn.
+		serviceLog.Warnf("dropping unsupported Captain event kind %q (tool=%q call=%q)", event.Kind, event.Tool, event.ToolCallID)
+		return nil
 	}
 }
 
