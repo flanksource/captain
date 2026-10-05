@@ -9,9 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.11.0
-	github.com/flanksource/clicky v1.21.68
-	github.com/flanksource/clicky/aichat v1.21.68
-	github.com/flanksource/commons v1.59.0
+	github.com/flanksource/clicky v1.21.75
+	github.com/flanksource/clicky/aichat v1.21.75
+	github.com/flanksource/commons v1.60.0
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
@@ -39,7 +39,7 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.31
+	github.com/flanksource/commons-db v0.1.46
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pelletier/go-toml/v2 v2.4.3
 	modernc.org/sqlite v1.55.0
@@ -47,6 +47,8 @@ require (
 
 require (
 	github.com/alpkeskin/gotoon v0.1.1 // indirect
+	github.com/ebitengine/purego v0.10.2 // indirect
+	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.4 // indirect
 	github.com/go-openapi/swag/conv v0.25.4 // indirect
 	github.com/go-openapi/swag/fileutils v0.25.4 // indirect
@@ -59,6 +61,7 @@ require (
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/shirou/gopsutil/v4 v4.26.7 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
@@ -182,8 +185,8 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/flanksource/gomplate/v3 v3.24.89 // indirect
-	github.com/flanksource/is-healthy v1.0.90 // indirect
+	github.com/flanksource/gomplate/v3 v3.24.90 // indirect
+	github.com/flanksource/is-healthy v1.0.92 // indirect
 	github.com/flanksource/kubectl-neat v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
