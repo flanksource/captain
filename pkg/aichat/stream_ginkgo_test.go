@@ -153,9 +153,6 @@ var _ = Describe("AI SDK v6 event stream", func() {
 				"cacheReadTokens": 5.0, "cacheWriteTokens": 0.0, "totalTokens": 155.0,
 			},
 			"cost": 0.0125,
-			// Context occupancy is the whole prompt: input plus the cached
-			// prefix, not input alone.
-			"contextTokens": 105.0,
 			"success":       true,
 		}))
 	})

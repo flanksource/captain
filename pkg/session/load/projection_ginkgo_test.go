@@ -22,7 +22,7 @@ var _ = Describe("Projection", func() {
 			PermissionMode: api.PermissionAuto,
 		},
 		Git:     session.GitState{Branch: "feat/session-load"},
-		Context: &session.Context{UsedTokens: 1200, WindowTokens: 4000, FreePercent: 70},
+		Context: &api.ContextUsage{UsedTokens: 1200, WindowTokens: 4000, FreePercent: 70},
 	}
 
 	It("fills the stored row's projection for a session built from any source", func() {

@@ -229,8 +229,8 @@ func TestBuildCodexSession_RichCodexMetadata(t *testing.T) {
 	if got, want := s.Usage.TotalTokens(), 1050; got != want {
 		t.Fatalf("summed usage buckets = %d, want %d", got, want)
 	}
-	if s.Context == nil || s.Context.UsedTokens != 1000 || s.Context.WindowTokens != 2000 || s.Context.FreePercent != 50 {
-		t.Fatalf("context = %+v, want 1000/2000/50", s.Context)
+	if s.Context == nil || s.Context.UsedTokens != 1050 || s.Context.WindowTokens != 2000 || s.Context.FreePercent != 0 {
+		t.Fatalf("context = %+v, want native 1050/2000/0 for a window below the baseline", s.Context)
 	}
 	if len(s.Turns) != 1 || s.Turns[0].ID != "turn-rich" || s.Turns[0].Usage.TotalTokens() != 1050 {
 		t.Fatalf("turns = %+v", s.Turns)

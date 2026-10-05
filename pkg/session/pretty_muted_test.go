@@ -16,7 +16,7 @@ func TestPrettyMuted(t *testing.T) {
 var _ = ginkgo.Describe("session Pretty muted styles", func() {
 	ginkgo.It("separates current context occupancy from cumulative token traffic", func() {
 		session := &Session{
-			Context: &Context{UsedTokens: 88_818, WindowTokens: 258_400, FreePercent: 66},
+			Context: &api.ContextUsage{UsedTokens: 88_818, WindowTokens: 258_400, FreePercent: 66},
 			Usage: api.Usage{
 				InputTokens: 86_514, OutputTokens: 2_223, ReasoningTokens: 2_971, CacheReadTokens: 855_296,
 			},

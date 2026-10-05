@@ -321,9 +321,9 @@ func (s *eventStream) result(event api.Event) error {
 	}
 	s.metadata = s.terminalMetadata.message(s.sessionID, s.model, event.Success)
 	s.metadata.Cost = event.CostUSD
+	s.metadata.Context = event.Context
 	if event.Usage != nil {
 		s.metadata.Usage = usageMetadata(*event.Usage)
-		s.metadata.ContextTokens = contextTokens(*event.Usage)
 	}
 	if s.costs != nil {
 		s.metadata.CostBreakdown = s.costs.Breakdown
@@ -331,14 +331,6 @@ func (s *eventStream) result(event api.Event) error {
 	}
 	s.terminal = true
 	return nil
-}
-
-// contextTokens is the prompt's occupancy of the context window. The usage
-// buckets are disjoint (pkg/api/cost.go), so the cached prefix counts too:
-// agent backends report near-zero InputTokens against a six-figure cache read,
-// and reporting input alone renders that as a context of single digits.
-func contextTokens(usage api.Usage) int {
-	return usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 }
 
 func (s *eventStream) validateApprovalCorrelation(approval *api.ToolApprovalState) error {

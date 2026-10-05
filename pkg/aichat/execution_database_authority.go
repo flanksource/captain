@@ -51,7 +51,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Mode == "" || request.Spec.Provider == nil {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved (provider, mode) runtime")
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Candidates())
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Candidates())
 	if err != nil {
 		return nil, err
 	}

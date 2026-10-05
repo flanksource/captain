@@ -22,6 +22,7 @@ import {
   type ApprovalResolveAction,
 } from "./sessionApprovals";
 import { RunVerification } from "./RunVerification";
+import { sizeSessionTokens } from "./sessionTokens";
 import {
   mergeSessionMessages,
   useSessionChat,
@@ -70,7 +71,7 @@ export function SessionDetail({
         <div className="min-h-80 flex-1">
           <SessionInspector
             session={collection}
-            transcriptProps={{ defaultExpanded: false }}
+            transcriptProps={{ defaultExpanded: false, sizeTokens: sizeSessionTokens }}
             onResolveApproval={onResolveApproval}
           />
         </div>
@@ -145,6 +146,7 @@ function SessionGetItemDetail({
   const transcriptProps = useMemo(
     () => ({
       defaultExpanded: false,
+      sizeTokens: sizeSessionTokens,
       ...(awaitingInput
         ? {
             pendingTools: askAnswerTools(awaitingInput),

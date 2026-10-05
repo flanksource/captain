@@ -297,9 +297,7 @@ export function ContextCell({
     <ContextMeter
       mode={expanded ? "bar" : "gauge"}
       usedPercent={
-        context.windowTokens && context.usedTokens !== undefined
-          ? (context.usedTokens / context.windowTokens) * 100
-          : 100 - context.freePercent
+        100 - context.freePercent
       }
       usedTokens={context.usedTokens}
       windowTokens={context.windowTokens}

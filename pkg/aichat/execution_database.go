@@ -60,7 +60,6 @@ func (e *databaseExecution) finishModelCall(
 	e.mu.Unlock()
 	input := database.FinishChatModelCallInput{
 		ID: e.modelCallID, Status: status, StopReason: stopReason, Event: event,
-		ContextWindowTokens: ai.ContextWindowFor(provider, model),
 	}
 	if event.Usage != nil {
 		cost := ai.PriceUsage(provider, model, *event.Usage, event.CostUSD)

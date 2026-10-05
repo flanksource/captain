@@ -62,19 +62,25 @@ func (s *Service) persistEvent(ctx context.Context, threadID string, event api.E
 			return fmt.Errorf("persist provider session: %w", err)
 		}
 	}
-	if event.Kind != api.EventResult || event.Usage == nil {
+	if event.Kind != api.EventResult {
 		return nil
 	}
-	thread, err := store.AddUsage(ctx, threadID, TurnUsage{
-		InputTokens: event.Usage.InputTokens, OutputTokens: event.Usage.OutputTokens,
-		ReasoningTokens: event.Usage.ReasoningTokens, CacheReadTokens: event.Usage.CacheReadTokens,
-		CacheWriteTokens: event.Usage.CacheWriteTokens, CostUSD: event.CostUSD,
-	})
+	usage := TurnUsage{Context: event.Context, CostUSD: event.CostUSD}
+	if event.Usage != nil {
+		usage.InputTokens = event.Usage.InputTokens
+		usage.OutputTokens = event.Usage.OutputTokens
+		usage.ReasoningTokens = event.Usage.ReasoningTokens
+		usage.CacheReadTokens = event.Usage.CacheReadTokens
+		usage.CacheWriteTokens = event.Usage.CacheWriteTokens
+	}
+	thread, err := store.AddUsage(ctx, threadID, usage)
 	if err != nil {
 		return fmt.Errorf("persist thread usage: %w", err)
 	}
 	if costs != nil {
-		costs.Breakdown = costBreakdownMetadata(model, *event.Usage, event.CostUSD)
+		if event.Usage != nil {
+			costs.Breakdown = costBreakdownMetadata(model, *event.Usage, event.CostUSD)
+		}
 		if thread != nil {
 			costs.ThreadCostUSD = thread.TotalCostUSD
 		}

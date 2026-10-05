@@ -52,11 +52,11 @@ type Session struct {
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
 
-	Usage     api.Usage `json:"usage,omitempty"`
-	Cost      api.Cost  `json:"cost,omitempty"`
-	ToolCosts api.Costs `json:"toolCosts,omitempty"` // per-model breakdown
-	Context   *Context  `json:"context,omitempty"`
-	Budget    *Budget   `json:"budget,omitempty"`
+	Usage     api.Usage         `json:"usage,omitempty"`
+	Cost      api.Cost          `json:"cost,omitempty"`
+	ToolCosts api.Costs         `json:"toolCosts,omitempty"` // per-model breakdown
+	Context   *api.ContextUsage `json:"context,omitempty"`
+	Budget    *Budget           `json:"budget,omitempty"`
 
 	Capabilities Capabilities `json:"capabilities,omitempty"`
 	Events       []Event      `json:"events,omitempty"`
@@ -127,13 +127,6 @@ type Agent struct {
 	Cost        api.Cost  `json:"cost,omitempty"`
 }
 
-// Context is the context-window occupancy for a session or turn.
-type Context struct {
-	UsedTokens   int `json:"usedTokens,omitempty"`
-	WindowTokens int `json:"windowTokens,omitempty"`
-	FreePercent  int `json:"freePercent"`
-}
-
 // Budget is the latest budget state observed in the transcript.
 type Budget struct {
 	Used      float64    `json:"used,omitempty"`
@@ -163,23 +156,23 @@ type Event struct {
 // Turn groups user/assistant messages, tool calls, usage, cost, and contextual
 // state for one model turn.
 type Turn struct {
-	ID              string     `json:"id"`
-	Status          string     `json:"status,omitempty"`
-	AgentID         string     `json:"agentId,omitempty"`
-	Index           int        `json:"index"`
-	StartedAt       *time.Time `json:"startedAt,omitempty"`
-	EndedAt         *time.Time `json:"endedAt,omitempty"`
-	StopReason      string     `json:"stopReason,omitempty"`
-	Model           string     `json:"model,omitempty"`
-	ModelProvider   string     `json:"modelProvider,omitempty"`
-	Mode            string     `json:"mode,omitempty"`
-	ReasoningEffort string     `json:"reasoningEffort,omitempty"`
-	MessageIDs      []string   `json:"messageIds,omitempty"`
-	Usage           api.Usage  `json:"usage,omitempty"`
-	Cost            api.Cost   `json:"cost,omitempty"`
-	Context         *Context   `json:"context,omitempty"`
-	Budget          *Budget    `json:"budget,omitempty"`
-	Events          []Event    `json:"events,omitempty"`
+	ID              string            `json:"id"`
+	Status          string            `json:"status,omitempty"`
+	AgentID         string            `json:"agentId,omitempty"`
+	Index           int               `json:"index"`
+	StartedAt       *time.Time        `json:"startedAt,omitempty"`
+	EndedAt         *time.Time        `json:"endedAt,omitempty"`
+	StopReason      string            `json:"stopReason,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	ModelProvider   string            `json:"modelProvider,omitempty"`
+	Mode            string            `json:"mode,omitempty"`
+	ReasoningEffort string            `json:"reasoningEffort,omitempty"`
+	MessageIDs      []string          `json:"messageIds,omitempty"`
+	Usage           api.Usage         `json:"usage,omitempty"`
+	Cost            api.Cost          `json:"cost,omitempty"`
+	Context         *api.ContextUsage `json:"context,omitempty"`
+	Budget          *Budget           `json:"budget,omitempty"`
+	Events          []Event           `json:"events,omitempty"`
 }
 
 // ChangedFiles is the read/write file set aggregated across a session,

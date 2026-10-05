@@ -21,7 +21,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 5
+const parserVersion = 6
 
 type codexCheckpoint struct {
 	parser      *history.CodexParser
@@ -506,6 +506,7 @@ func unifiedIngestInput(s *session.Session, source string, sequence func(session
 		if turn.Context != nil {
 			ingestTurn.Call.ContextTokens = int64(turn.Context.UsedTokens)
 			ingestTurn.Call.ContextWindowTokens = int64(turn.Context.WindowTokens)
+			ingestTurn.Call.ContextFreePercent = &turn.Context.FreePercent
 		}
 		input.Turns = append(input.Turns, ingestTurn)
 	}

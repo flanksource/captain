@@ -25,10 +25,10 @@ type ToolUse struct {
 	// ReasoningTokens is disjoint from OutputTokens, per the api.Usage contract:
 	// OpenAI reports reasoning as a subset of output, so it is netted out at this
 	// parse boundary the way the live providers already net it.
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
-	CacheReadTokens int `json:"cache_read_tokens,omitempty"`
-	TotalTokens     int `json:"total_tokens,omitempty"`
-	ContextWindow   int `json:"context_window,omitempty"`
+	ReasoningTokens int               `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens int               `json:"cache_read_tokens,omitempty"`
+	TotalTokens     int               `json:"total_tokens,omitempty"`
+	Context         *api.ContextUsage `json:"context,omitempty"`
 	// CumulativeUsage is the provider's own running total for the session as of
 	// this record, rather than this record's delta. It is the result figure:
 	// reading the last one is exact, where summing per-record deltas drifts

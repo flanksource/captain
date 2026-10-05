@@ -76,7 +76,7 @@ func buildCodexEventUse(event CodexEvent, cwd, sessionID string) ToolUse {
 		CacheReadTokens: usage.CachedInputTokens,
 		TotalTokens:     usage.TotalTokens,
 		CumulativeUsage: cumulativeEventUsage(event),
-		ContextWindow:   eventContextWindow(event),
+		Context:         eventContext(event),
 		RecordType:      "event_msg." + event.Payload.Type,
 	}
 }
@@ -147,11 +147,11 @@ func eventTokenUsage(event CodexEvent) CodexTokenUsage {
 	return event.Payload.Info.LastTokenUsage
 }
 
-func eventContextWindow(event CodexEvent) int {
+func eventContext(event CodexEvent) *api.ContextUsage {
 	if event.Payload.Info == nil {
-		return 0
+		return nil
 	}
-	return event.Payload.Info.ModelContextWindow
+	return event.Payload.Info.Context
 }
 
 func codexNonCachedInputTokens(usage CodexTokenUsage) int {

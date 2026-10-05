@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 )
 
@@ -18,6 +19,7 @@ type turnState struct {
 	ch                 chan ai.Event
 	usage              *ai.Usage
 	usagePresent       bool
+	context            *api.ContextUsage
 	model              string
 	streamed           map[string]string
 	toolOutput         map[string]string

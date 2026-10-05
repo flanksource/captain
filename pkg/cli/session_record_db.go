@@ -175,15 +175,10 @@ func recordFromOverview(overview database.SessionOverview) SessionRecord {
 			TotalTokens:         int(overview.TotalTokens),
 		}
 	}
-	if overview.ContextTokens != nil && *overview.ContextTokens > 0 {
-		context := &SessionContextWire{UsedTokens: int(*overview.ContextTokens)}
-		if overview.ContextWindowTokens != nil {
-			context.WindowTokens = int(*overview.ContextWindowTokens)
+	if overview.ContextTokens != nil && overview.ContextWindowTokens != nil && overview.ContextFreePercent != nil {
+		record.Context = &SessionContextWire{
+			UsedTokens: int(*overview.ContextTokens), WindowTokens: int(*overview.ContextWindowTokens), FreePercent: *overview.ContextFreePercent,
 		}
-		if overview.ContextFreePercent != nil {
-			context.FreePercent = *overview.ContextFreePercent
-		}
-		record.Context = context
 	}
 	if overview.ProcessActive {
 		record.Live = liveWireFromOverview(overview, id, path)

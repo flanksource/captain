@@ -14,6 +14,7 @@ type Response struct {
 	Model           string
 	Runtime         Runtime
 	Usage           Usage
+	Context         *ContextUsage
 	// CostUSD is the response's reported cost: the provider's authoritative value
 	// when it supplies one (the claude CLI's total_cost_usd, the agent's cost_usd),
 	// otherwise the provider's list-price estimate. 0 means no cost was reported
@@ -115,10 +116,11 @@ type Event struct {
 	// Input and ToolCallID stay set alongside it for hosts that read only those.
 	Request *ApprovalRequest
 
-	Usage     *Usage  // when Kind == EventResult
-	CostUSD   float64 // when Kind == EventResult
-	Success   bool    // when Kind == EventResult; for EventToolResult, false = the tool errored
-	SessionID string  // when Kind == EventSystem
+	Usage     *Usage        // when Kind == EventResult
+	Context   *ContextUsage // provider context snapshot, independent of Usage
+	CostUSD   float64       // when Kind == EventResult
+	Success   bool          // when Kind == EventResult; for EventToolResult, false = the tool errored
+	SessionID string        // when Kind == EventSystem
 	Model     string
 	Error     string // when Kind == EventError
 	Reason    string // when Kind == EventInterrupted or EventVerifyFailed

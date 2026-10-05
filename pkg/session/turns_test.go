@@ -19,7 +19,7 @@ func TestBuildSessionMetadataIgnoresReplayedClaudeBranch(t *testing.T) {
 		claudeTurnEntry("assistant-2", "2026-07-09T11:00:05Z", claude.MessageRoleAssistant, claude.StopReasonEndTurn),
 	}
 
-	meta := buildSessionMetadata("claude", entries)
+	meta := buildSessionMetadata(entries)
 	require.Len(t, meta.turns, 2)
 	assert.Equal(t, []string{"user-1", "assistant-1"}, meta.turns[0].MessageIDs)
 	assert.Equal(t, []string{"user-2", "assistant-2"}, meta.turns[1].MessageIDs)
@@ -33,7 +33,7 @@ func TestBuildSessionMetadataBoundsOutOfOrderUniqueTimestamps(t *testing.T) {
 		claudeTurnEntry("assistant", "2026-07-09T13:37:53Z", claude.MessageRoleAssistant, claude.StopReasonEndTurn),
 	}
 
-	meta := buildSessionMetadata("claude", entries)
+	meta := buildSessionMetadata(entries)
 	require.Len(t, meta.turns, 1)
 	require.NotNil(t, meta.turns[0].StartedAt)
 	require.NotNil(t, meta.turns[0].EndedAt)

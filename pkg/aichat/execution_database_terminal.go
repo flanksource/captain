@@ -47,7 +47,6 @@ func (e *databaseExecution) CommitTerminal(ctx context.Context, commit TerminalC
 	activity := database.SessionActivityIdle
 	modelCall := database.FinishChatModelCallInput{
 		ID: e.modelCallID, Status: callStatus, StopReason: stopReason, Event: commit.Event,
-		ContextWindowTokens: ai.ContextWindowFor(provider, model),
 	}
 	if commit.Event.Usage != nil {
 		cost := ai.PriceUsage(provider, model, *commit.Event.Usage, commit.Event.CostUSD)

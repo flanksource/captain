@@ -30,6 +30,7 @@ var sessionStreamKeepAlive = 15 * time.Second
 func SessionHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{id}", handleSessionRead)
+	mux.HandleFunc("POST /{id}/tokens", handleSessionTokens)
 	return mux
 }
 

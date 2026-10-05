@@ -217,9 +217,10 @@ type CodexContent struct {
 }
 
 type CodexTokenInfo struct {
-	TotalTokenUsage    CodexTokenUsage `json:"total_token_usage"`
-	LastTokenUsage     CodexTokenUsage `json:"last_token_usage"`
-	ModelContextWindow int             `json:"model_context_window,omitempty"`
+	Context            *api.ContextUsage `json:"-"`
+	TotalTokenUsage    CodexTokenUsage   `json:"total_token_usage"`
+	LastTokenUsage     CodexTokenUsage   `json:"last_token_usage"`
+	ModelContextWindow int               `json:"model_context_window,omitempty"`
 }
 
 type CodexTokenUsage struct {

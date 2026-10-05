@@ -140,6 +140,7 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommandWithContext("list", sessionsCmd, cli.SessionListOptions{}, cli.RunSessionList).Short = "List discovered sessions"
 	clicky.AddNamedCommandWithContext("live", sessionsCmd, cli.SessionLiveOptions{}, cli.RunSessionLive).Short = "List sessions with live process health"
 	clicky.AddNamedCommandWithContext("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
+	clicky.AddNamedCommandWithContext("tokens", sessionsCmd, cli.SessionTokensOptions{}, cli.RunSessionTokens).Short = "Size canonical transcript rows without changing recorded usage"
 
 	rootCmd.AddCommand(cli.NewBrowserCommand())
 

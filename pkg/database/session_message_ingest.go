@@ -20,7 +20,7 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 		DoUpdates: clause.AssignmentColumns([]string{
 			"model", "provider", "mode", "effort", "stop_reason",
 			"input_tokens", "output_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens",
-			"context_tokens", "context_window_tokens",
+			"context_tokens", "context_window_tokens", "context_free_percent",
 			"input_cost", "output_cost", "reasoning_cost", "cache_read_cost", "cache_write_cost", "currency",
 			"started_at", "ended_at",
 		}),
@@ -29,7 +29,7 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 			 captain_model_calls.stop_reason, captain_model_calls.input_tokens, captain_model_calls.output_tokens,
 			 captain_model_calls.reasoning_tokens, captain_model_calls.cache_read_tokens,
 			 captain_model_calls.cache_write_tokens, captain_model_calls.context_tokens,
-			 captain_model_calls.context_window_tokens, captain_model_calls.input_cost,
+			 captain_model_calls.context_window_tokens, captain_model_calls.context_free_percent, captain_model_calls.input_cost,
 			 captain_model_calls.output_cost, captain_model_calls.reasoning_cost,
 			 captain_model_calls.cache_read_cost, captain_model_calls.cache_write_cost,
 			 captain_model_calls.currency, captain_model_calls.started_at, captain_model_calls.ended_at)
@@ -37,7 +37,7 @@ func (db *DB) upsertTurnCalls(ctx context.Context, calls []modelCallRecord) erro
 			(excluded.model, excluded.provider, excluded.mode, excluded.effort, excluded.stop_reason,
 			 excluded.input_tokens, excluded.output_tokens, excluded.reasoning_tokens,
 			 excluded.cache_read_tokens, excluded.cache_write_tokens, excluded.context_tokens,
-			 excluded.context_window_tokens, excluded.input_cost, excluded.output_cost,
+			 excluded.context_window_tokens, excluded.context_free_percent, excluded.input_cost, excluded.output_cost,
 			 excluded.reasoning_cost, excluded.cache_read_cost, excluded.cache_write_cost,
 			 excluded.currency, excluded.started_at, excluded.ended_at)`}}},
 	}).CreateInBatches(&calls, ingestBatchSize).Error

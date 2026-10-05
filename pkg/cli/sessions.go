@@ -103,8 +103,8 @@ type SessionTokensWire struct {
 }
 
 type SessionContextWire struct {
-	UsedTokens   int `json:"usedTokens,omitempty"`
-	WindowTokens int `json:"windowTokens,omitempty"`
+	UsedTokens   int `json:"usedTokens"`
+	WindowTokens int `json:"windowTokens"`
 	FreePercent  int `json:"freePercent"`
 }
 

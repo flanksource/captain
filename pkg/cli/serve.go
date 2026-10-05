@@ -171,6 +171,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	addCaptainProviderDefaultsPaths(openAPISpec)
 	addCaptainDisabledPaths(openAPISpec)
 	addCaptainAdapterSchemaPaths(openAPISpec)
+	addCaptainSessionTokenPaths(openAPISpec)
 	chat, mcpTools, err := newCaptainChatService(ctx, rootCmd, opts, cwd, authority, attachmentStore)
 	if err != nil {
 		return err

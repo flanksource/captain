@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
 )
 
@@ -17,7 +18,7 @@ import (
 type ProjectionFacts struct {
 	Metadata session.Metadata
 	Git      session.GitState
-	Context  *session.Context
+	Context  *api.ContextUsage
 	// Plan is the authoritative revision from captain_plans — the approved one
 	// when there is one. A transcript cannot know about an approval, so this
 	// outranks whatever the branch already found.

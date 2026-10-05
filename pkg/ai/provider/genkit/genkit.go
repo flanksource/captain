@@ -82,6 +82,7 @@ func New(cfg ai.Config) (*Provider, error) {
 		return nil, err
 	}
 
+	cfg.APIKey = apiKey
 	return &Provider{cfg: cfg, provider: provider, g: g, modelRef: ref}, nil
 }
 

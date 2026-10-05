@@ -6,6 +6,7 @@ import {
 } from "./hooks/usePromptRunStream";
 import { useSessionChat } from "./hooks/useSessionChat";
 import { RunVerification } from "./RunVerification";
+import { sizeSessionTokens } from "./sessionTokens";
 
 /**
  * PromptRunStream renders a prompt run's session history live: it subscribes to
@@ -49,7 +50,11 @@ export function PromptRunStream({ runID }: { runID: string }) {
           </div>
         ) : (
           <div className="p-density-4">
-            <SessionViewer session={messages} defaultExpanded={false} />
+            <SessionViewer
+              session={{ messages, ...(run?.sessionId ? { id: run.sessionId } : {}), ...(run?.model ? { model: run.model } : {}) }}
+              sizeTokens={sizeSessionTokens}
+              defaultExpanded={false}
+            />
           </div>
         )}
       </div>

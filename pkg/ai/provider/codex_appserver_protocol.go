@@ -75,7 +75,11 @@ type appServerRef struct {
 }
 
 type appServerTokenUsage struct {
-	Total struct {
+	Last *struct {
+		TotalTokens *int `json:"totalTokens"`
+	} `json:"last"`
+	ModelContextWindow *int `json:"modelContextWindow"`
+	Total              struct {
 		InputTokens           int `json:"inputTokens"`
 		OutputTokens          int `json:"outputTokens"`
 		CachedInputTokens     int `json:"cachedInputTokens"`
@@ -132,6 +136,7 @@ type appServerEventContext struct {
 	Model        string
 	Usage        *ai.Usage
 	UsagePresent *bool
+	Context      **api.ContextUsage
 	ToolOutput   string
 }
 
@@ -167,6 +172,12 @@ func mapAppServerNotification(method string, params json.RawMessage, ctx appServ
 			*ctx.UsagePresent = true
 		}
 		n.foldUsage(ctx.Usage)
+		if ctx.Context != nil && n.TokenUsage != nil {
+			*ctx.Context = nil
+			if n.TokenUsage.Last != nil {
+				*ctx.Context = history.CodexContext(n.TokenUsage.Last.TotalTokens, n.TokenUsage.ModelContextWindow)
+			}
+		}
 		return ai.Event{}, false
 
 	case "turn/completed":
@@ -183,6 +194,9 @@ func mapAppServerNotification(method string, params json.RawMessage, ctx appServ
 			}
 		}
 		out := ai.Event{Kind: ai.EventResult, Tool: "Result", SessionID: n.threadID(), Model: ctx.Model, Success: true}
+		if ctx.Context != nil {
+			out.Context = *ctx.Context
+		}
 		if ctx.Usage != nil && ctx.UsagePresent != nil && *ctx.UsagePresent {
 			u := *ctx.Usage
 			out.Usage = &u

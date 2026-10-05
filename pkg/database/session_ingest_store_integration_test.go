@@ -28,6 +28,7 @@ func openIngestTestDB(t *testing.T) *DB {
 }
 
 func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput {
+	firstFreePercent, lastFreePercent := 80, 70
 	started := modTime.Add(-10 * time.Minute)
 	turn0End := started.Add(1 * time.Minute)
 	turnIdx0, turnIdx1 := 0, 1
@@ -59,6 +60,7 @@ func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput 
 				Call: &IngestModelCall{
 					Model: "claude-sonnet-5", Provider: "anthropic", Mode: "agent", InputTokens: 1000, OutputTokens: 200, ReasoningTokens: 100,
 					CacheReadTokens: 5000, CacheWriteTokens: 250, ContextTokens: 40000, ContextWindowTokens: 200000,
+					ContextFreePercent: &firstFreePercent,
 					InputCost: 0.003, OutputCost: 0.003, ReasoningCost: 0.001,
 					CacheReadCost: 0.002, CacheWriteCost: 0.004, Currency: "USD",
 				},
@@ -69,6 +71,7 @@ func testIngestBatch(modTime time.Time, byteOffset int64) IngestTranscriptInput 
 				Call: &IngestModelCall{
 					Model: "claude-sonnet-5", Provider: "anthropic", Mode: "agent", Effort: "high", InputTokens: 2000, OutputTokens: 400, ReasoningTokens: 200,
 					CacheReadTokens: 8000, CacheWriteTokens: 500, ContextTokens: 60000, ContextWindowTokens: 200000,
+					ContextFreePercent: &lastFreePercent,
 					InputCost: 0.006, OutputCost: 0.006, ReasoningCost: 0.002,
 					CacheReadCost: 0.004, CacheWriteCost: 0.008, Currency: "USD",
 				},
@@ -110,7 +113,7 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 		assert.EqualValues(t, 750, overview.CacheWriteTokens)
 		assert.InDelta(t, 0.039, overview.CostUSD, 1e-9)
 		require.NotNil(t, overview.ContextFreePercent)
-		assert.Equal(t, 70, *overview.ContextFreePercent, "latest call: 1-60000/200000 = 70%")
+		assert.Equal(t, 70, *overview.ContextFreePercent, "latest provider-reported free percentage")
 		require.NotNil(t, overview.Model)
 		assert.Equal(t, "claude-sonnet-5", *overview.Model)
 		require.NotNil(t, overview.Effort)

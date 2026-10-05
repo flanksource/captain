@@ -3,6 +3,7 @@ package rootcmd
 import (
 	"context"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/clicky"
 	"github.com/spf13/cobra"
@@ -36,6 +37,12 @@ func RegisterAIRuntimeCommands(rootCmd *cobra.Command) {
 	})
 	agentCmd.Short = "Run an iterative agent with verifiers, worktree, and commit"
 	clicky.AddNamedCommand("models", aiCmd, cli.AIModelsOptions{}, cli.RunAIModels)
+	var tokensCmd *cobra.Command
+	tokensCmd = clicky.AddNamedCommandWithContext("tokens", aiCmd, cli.AITokensOptions{}, func(ctx context.Context, opts cli.AITokensOptions) (api.TokenSize, error) {
+		opts.AIRuntimeOptions = opts.WithChangedFlags(tokensCmd.Flags())
+		return cli.RunAITokens(ctx, opts)
+	})
+	tokensCmd.Short = "Estimate prompt tokens or call the provider's count endpoint without generating"
 	var testCmd *cobra.Command
 	testCmd = clicky.AddNamedCommand("test", aiCmd, cli.AITestOptions{}, func(opts cli.AITestOptions) (any, error) {
 		opts.AIProviderOptions = (cli.AIRuntimeOptions{AIProviderOptions: opts.AIProviderOptions}).WithChangedFlags(testCmd.Flags()).AIProviderOptions

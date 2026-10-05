@@ -428,9 +428,9 @@ func (b *assistantMessageBuilder) result(event api.Event) error {
 	b.message.Parts = append(b.message.Parts, UIPart{Type: dataType, Data: data})
 	b.message.Metadata = b.terminalMetadata.message(b.sessionID, b.model, event.Success)
 	b.message.Metadata.Cost = event.CostUSD
+	b.message.Metadata.Context = event.Context
 	if event.Usage != nil {
 		b.message.Metadata.Usage = usageMetadata(*event.Usage)
-		b.message.Metadata.ContextTokens = contextTokens(*event.Usage)
 	}
 	return nil
 }

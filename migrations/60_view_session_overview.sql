@@ -77,21 +77,9 @@ SELECT
   latest_call.provider AS model_provider,
   latest_call.mode AS model_mode,
   latest_call.effort,
-  latest_call.context_tokens,
-  latest_call.context_window_tokens,
-  CASE
-    WHEN latest_call.context_window_tokens > 0 THEN
-      GREATEST(
-        0,
-        LEAST(
-          100,
-          round(
-            (1 - latest_call.context_tokens::numeric / latest_call.context_window_tokens::numeric) * 100
-          )::integer
-        )
-      )
-    ELSE NULL
-  END AS context_free_percent,
+  CASE WHEN latest_call.context_free_percent IS NOT NULL THEN latest_call.context_tokens END AS context_tokens,
+  CASE WHEN latest_call.context_free_percent IS NOT NULL THEN latest_call.context_window_tokens END AS context_window_tokens,
+  latest_call.context_free_percent,
   COALESCE(call_stats.input_tokens, 0) AS input_tokens,
   COALESCE(call_stats.output_tokens, 0) AS output_tokens,
   COALESCE(call_stats.reasoning_tokens, 0) AS reasoning_tokens,
@@ -204,7 +192,8 @@ LEFT JOIN LATERAL (
     c.mode,
     c.effort,
     c.context_tokens,
-    c.context_window_tokens
+    c.context_window_tokens,
+    c.context_free_percent
   FROM public.captain_turns t
   JOIN public.captain_model_calls c ON c.turn_id = t.id
   WHERE t.session_id = s.id

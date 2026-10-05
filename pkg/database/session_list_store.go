@@ -203,7 +203,10 @@ func cursorID(cursor *sessionListCursor) any {
 const sessionListQuery = `
 WITH latest_call AS MATERIALIZED (
   SELECT DISTINCT ON (t.session_id)
-    t.session_id, c.model, c.provider AS model_provider, c.mode AS model_mode, c.effort, c.context_tokens, c.context_window_tokens
+    t.session_id, c.model, c.provider AS model_provider, c.mode AS model_mode, c.effort,
+    CASE WHEN c.context_free_percent IS NOT NULL THEN c.context_tokens END AS context_tokens,
+    CASE WHEN c.context_free_percent IS NOT NULL THEN c.context_window_tokens END AS context_window_tokens,
+    c.context_free_percent
   FROM captain_turns t
   JOIN captain_model_calls c ON c.turn_id = t.id
   ORDER BY t.session_id, COALESCE(c.ended_at, c.started_at, c.created_at) DESC, c.call_index DESC
@@ -224,7 +227,7 @@ WITH latest_call AS MATERIALIZED (
     ap.process_started_at, ap.sampled_at AS process_sampled_at, ap.last_heartbeat_at,
     ap.lease_owner, ap.lease_expires_at, ap.session_id IS NOT NULL AS process_active,
     ap.cpu_percent, ap.memory_percent, lc.model, lc.model_provider, lc.model_mode, lc.effort,
-    lc.context_tokens, lc.context_window_tokens, count(*) OVER () AS total_count
+    lc.context_tokens, lc.context_window_tokens, lc.context_free_percent, count(*) OVER () AS total_count
   FROM captain_sessions s
   LEFT JOIN latest_call lc ON lc.session_id = s.id
   LEFT JOIN active_process ap ON ap.session_id = s.id
@@ -304,8 +307,7 @@ SELECT
   p.last_heartbeat_at, p.lease_owner, p.lease_expires_at, p.process_active,
   p.cpu_percent, p.memory_percent, p.model, p.model_provider, p.model_mode, p.effort, p.context_tokens,
   p.context_window_tokens,
-  CASE WHEN p.context_window_tokens > 0 THEN GREATEST(0, LEAST(100,
-    round((1 - p.context_tokens::numeric / p.context_window_tokens::numeric) * 100)::integer)) END AS context_free_percent,
+  p.context_free_percent,
   COALESCE(cs.input_tokens, 0) AS input_tokens,
   COALESCE(cs.output_tokens, 0) AS output_tokens,
   COALESCE(cs.cache_read_tokens, 0) AS cache_read_tokens,

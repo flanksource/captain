@@ -1,5 +1,7 @@
 # Chat runtime profiles
 
+Chat finish metadata carries an optional `context` snapshot with `usedTokens`, `windowTokens` and `freePercent`. Providers supply context independently of billing `usage`; missing context remains unavailable, while a reported zero is retained. Codex uses `last.totalTokens` and `modelContextWindow` and calculates free space with its native 12,000-token baseline. Session reloads retain the authoritative session snapshot instead of replacing it with historical assistant metadata.
+
 `RuntimeProfileProvider` supplies application-owned defaults and restrictions before the chat request selects its final runtime. Profiles may contain only permissions, budgets, or model options. Catalog endpoints can use this partial configuration without requiring an executable model.
 
 ## Migrating `RuntimeProfile.Resolved` to `RuntimeProfile.Composed`

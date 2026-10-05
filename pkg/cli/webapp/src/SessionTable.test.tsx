@@ -14,9 +14,9 @@ const SESSION: SessionRecord = {
   messages: 38,
   toolCalls: 14,
   context: {
-    usedTokens: 88_818,
+    usedTokens: 89_595,
     windowTokens: 258_400,
-    freePercent: 66,
+    freePercent: 69,
   },
   tokens: {
     inputTokens: 86_514,
@@ -33,12 +33,12 @@ describe("ContextCell", () => {
   it("renders context-window occupancy through ContextMeter", async () => {
     render(<ContextCell session={SESSION} />);
 
-    const meter = screen.getByLabelText("Context 34% used");
+    const meter = screen.getByLabelText("Context 31% used");
     fireEvent.mouseEnter(meter);
 
     expect(await screen.findByText("Window")).toBeInTheDocument();
-    expect(screen.getByText("89k / 258k")).toBeInTheDocument();
-    expect(screen.getByText("66%")).toBeInTheDocument();
+    expect(screen.getByText("90k / 258k")).toBeInTheDocument();
+    expect(screen.getByText("69%")).toBeInTheDocument();
     expect(screen.getByText("947k")).toBeInTheDocument();
   });
 

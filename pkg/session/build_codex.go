@@ -251,10 +251,12 @@ func (a *CodexAccumulator) observeUsage(use history.ToolUse) {
 		modelCost := a.costByModel[cost.Model]
 		modelCost.Model = cost.Model
 		a.costByModel[cost.Model] = modelCost.Add(cost)
+	}
+	if cost.TotalTokens != 0 || use.Tool == "TokenCount" {
 		a.turns.addUsage(use, cost)
 	}
-	if context := codexContextFromUse(use); context != nil {
-		a.session.Context = context
+	if use.Tool == "TokenCount" {
+		a.session.Context = use.Context
 	}
 }
 
@@ -770,8 +772,8 @@ func (b *codexTurnBuilder) addUsage(u history.ToolUse, cost api.Cost) {
 	}
 	turn.Cost = turn.Cost.Add(cost)
 	turn.Usage = usageFromCost(turn.Cost)
-	if ctx := codexContextFromUse(u); ctx != nil {
-		turn.Context = ctx
+	if u.Tool == "TokenCount" {
+		turn.Context = u.Context
 	}
 	observeCodexTurnRuntime(turn, u)
 	b.dirty[turn.ID] = struct{}{}
@@ -935,18 +937,6 @@ func (c *codexCumulative) delta(u history.ToolUse) (api.Usage, bool) {
 	c.prev = current
 	c.seen = true
 	return delta, true
-}
-
-func codexContextFromUse(u history.ToolUse) *Context {
-	if u.ContextWindow == 0 {
-		return nil
-	}
-	used := u.InputTokens + u.CacheReadTokens
-	return &Context{
-		UsedTokens:   used,
-		WindowTokens: u.ContextWindow,
-		FreePercent:  freeContextPercent(used, u.ContextWindow),
-	}
 }
 
 func mergeCodexCapabilities(c *Capabilities, u history.ToolUse) {

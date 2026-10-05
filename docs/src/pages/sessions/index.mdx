@@ -28,3 +28,22 @@ captain sessions get 01a10698-d1e2-7282-885f-6e6aa640a3ae --json --limit 0
 ```
 
 Each priced tool part has an optional `estimatedCost` object. Its `cost` field is the canonical token and cost breakdown; `sharedCalls` is the number of calls sharing that model request. Provider adapters identify the request and normalize its usage before the shared allocator attaches this object, so consumers do not need provider-specific costing logic.
+
+## Calculate row footprints
+
+The transcript's three-dot menu offers **Estimate tokens/cost for all rows**, including loaded rows hidden by filters or scrolling, and **Calculate missing rows**. A row without an allocated cost also offers **Calculate tokens/cost** in its own three-dot menu. Pending approval rows are excluded until they are available in the canonical transcript. These actions are explicit: opening a session or running a prompt never calls a count endpoint automatically. Calculations are cached while viewing the transcript and invalidate when its model, revision or row content changes.
+
+Local estimates use one token per four UTF-8 bytes, rounded up, over complete text and serialized tool payloads. **Calculate** calls the model family's count endpoint: Anthropic Messages, OpenAI Responses or Gemini. DeepSeek has no supported dedicated count endpoint and reports an error for provider calculation; its local estimates and recorded usage remain available. Non-API sessions still use their family's API credentials for provider counting.
+
+A **Footprint** measures isolated row content, not the model request's historical bill. User text and tool results use input rates; assistant text and tool arguments use output rates; visible reasoning has its own token bucket. The tooltip identifies the source, model and excluded context. Hidden runtime instructions, surrounding conversation, historical cache usage, unavailable attachments and encrypted reasoning cannot be reconstructed from an isolated row. Missing prices appear as **price unavailable**. Existing allocated tool costs, recorded usage and session totals remain unchanged.
+
+```sh
+captain ai tokens --model api:claude-sonnet-4-6 --prompt 'Explain this example' --method estimate --json
+captain ai tokens --model api:gpt-5 --prompt 'Explain this example' --method provider --json
+captain sessions tokens SESSION_ID --method estimate --json
+captain sessions tokens SESSION_ID --row-id MESSAGE_ID-0 --method provider --json
+```
+
+The Go entry point is `ai.SizeTokens(ctx, ai.TokenSizeOptions{Request: spec, Config: cfg, Method: "estimate"})`. Use `Direction: "output"` or `"reasoning"` when pricing isolated output; a complete preflight request uses the default input direction. Optional `api.TokenCountingProvider` implementations expose counting through provider wrappers.
+
+The session HTTP endpoint is `POST /api/captain/sessions/{id}/tokens` with `{"method":"estimate","rowIds":["MESSAGE_ID-0"],"revision":3}`. Omit `rowIds` for the complete canonical transcript; an optional `revision` rejects stale requests. Results contain `sessionId`, `revision` and `rows`, each with either a `size` footprint or an explicit `error`. The server reads the canonical row content; clients cannot submit replacement text. The generated command HTTP endpoint also exposes `ai tokens` under `/api/v1`.

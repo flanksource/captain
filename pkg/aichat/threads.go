@@ -39,17 +39,18 @@ type Thread struct {
 	Runtime    *api.RuntimeIdentity `json:"runtime,omitempty"`
 	ForkedFrom string               `json:"forkedFrom,omitempty"`
 
-	TotalInputTokens      int     `json:"totalInputTokens"`
-	TotalOutputTokens     int     `json:"totalOutputTokens"`
-	TotalReasoningTokens  int     `json:"totalReasoningTokens"`
-	TotalCacheReadTokens  int     `json:"totalCacheReadTokens"`
-	TotalCacheWriteTokens int     `json:"totalCacheWriteTokens"`
-	TotalCostUSD          float64 `json:"totalCostUsd"`
-	LastContextTokens     int     `json:"lastContextTokens"`
-	ProviderSessionID     string  `json:"providerSessionId,omitempty"`
+	TotalInputTokens      int               `json:"totalInputTokens"`
+	TotalOutputTokens     int               `json:"totalOutputTokens"`
+	TotalReasoningTokens  int               `json:"totalReasoningTokens"`
+	TotalCacheReadTokens  int               `json:"totalCacheReadTokens"`
+	TotalCacheWriteTokens int               `json:"totalCacheWriteTokens"`
+	TotalCostUSD          float64           `json:"totalCostUsd"`
+	Context               *api.ContextUsage `json:"context,omitempty"`
+	ProviderSessionID     string            `json:"providerSessionId,omitempty"`
 }
 
 type TurnUsage struct {
+	Context          *api.ContextUsage
 	InputTokens      int
 	OutputTokens     int
 	ReasoningTokens  int
@@ -290,7 +291,7 @@ func (s *memoryThreadStore) AddUsage(_ context.Context, id string, usage TurnUsa
 	thread.TotalCacheReadTokens += usage.CacheReadTokens
 	thread.TotalCacheWriteTokens += usage.CacheWriteTokens
 	thread.TotalCostUSD += usage.CostUSD
-	thread.LastContextTokens = usage.InputTokens
+	thread.Context = usage.Context
 	touchMemoryThread(thread)
 	return cloneThread(thread), nil
 }
@@ -306,6 +307,10 @@ func (s *memoryThreadStore) thread(id string) (*Thread, error) {
 func cloneThread(thread *Thread) *Thread {
 	copy := *thread
 	copy.Messages = append([]UIMessage(nil), thread.Messages...)
+	if thread.Context != nil {
+		context := *thread.Context
+		copy.Context = &context
+	}
 	if thread.Runtime != nil {
 		runtime := *thread.Runtime
 		copy.Runtime = &runtime

@@ -24,6 +24,17 @@ var (
 	registryMu sync.RWMutex
 )
 
+// LookupModelInfo reads already-loaded rates or the bundled catalog without I/O.
+func LookupModelInfo(model string) (ModelInfo, bool) {
+	registryMu.RLock()
+	info, ok := registry[model]
+	registryMu.RUnlock()
+	if ok {
+		return info, true
+	}
+	return catalogInfo(model)
+}
+
 func GetModelInfo(model string) (ModelInfo, bool) {
 	EnsureLoaded(LoadOptions{})
 	registryMu.RLock()

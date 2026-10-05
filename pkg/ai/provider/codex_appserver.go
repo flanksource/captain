@@ -539,7 +539,7 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if ts == nil {
 		return
 	}
-	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage, UsagePresent: &ts.usagePresent}
+	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage, UsagePresent: &ts.usagePresent, Context: &ts.context}
 	if ts.recordFileChange(method, params) {
 		return
 	}
