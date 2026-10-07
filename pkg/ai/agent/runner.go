@@ -207,6 +207,7 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 		Provider:      r.Provider,
 		MaxIterations: maxIter,
 		MaxCostUSD:    r.Request.Budget.Cost, // enforce the USD budget across iterations
+		SessionReuse:  true,                  // a verify retry continues the session that did the work
 		OnEvent: func(iter int, ev ai.Event) {
 			r.recordEvent(hc, ev)
 			if r.OnEvent != nil {
