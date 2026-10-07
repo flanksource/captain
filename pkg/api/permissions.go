@@ -108,7 +108,8 @@ type Tools map[string]ToolPolicy
 
 // MCP controls Model-Context-Protocol servers.
 type MCP struct {
-	// Disabled turns off all MCP servers. (ai.Request.NoMCP)
+	// Disabled turns off all configured MCP servers. Captain's own caller-tool
+	// server is not affected: it is how Config.Tools reach the agent.
 	Disabled bool `json:"-" yaml:"-" pretty:"label=Disabled"`
 	// Servers is an optional allowlist subset of configured servers.
 	Servers []string `json:"-" yaml:"-" pretty:"label=Servers"`

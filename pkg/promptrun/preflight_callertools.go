@@ -79,13 +79,11 @@ func askingCallerTools(definitions []api.ToolDefinition, spec api.Spec) ([]strin
 }
 
 // check refuses a candidate model on which the run's caller tools could not
-// work: MCP is their transport, the runtime must be able to expose them, and an
-// ask must have a broker to answer it.
-func (a callerToolAdmission) check(spec api.Spec, model api.Model) error {
+// work: the runtime must be able to expose them, and an ask must have a broker
+// to answer it. mcp.disabled is no obstacle: every runtime that exposes caller
+// tools keeps captain's caller-tool server while dropping configured servers.
+func (a callerToolAdmission) check(model api.Model) error {
 	runtime := api.RuntimeOf(model.Provider, model.Mode)
-	if a.tools && spec.Permissions.MCP.Disabled {
-		return fmt.Errorf("promptrun: MCP is disabled, but caller tools reach the agent over captain's MCP endpoint, so the run on %q would have none of them; enable MCP or drop Config.Tools", runtime)
-	}
 	if a.tools && !api.SupportsCallerTools(model.Provider, model.Mode) {
 		return fmt.Errorf("promptrun: runtime %q cannot expose caller tools, so the agent would have none of them; choose an agent-mode model (e.g. agent:sonnet)", runtime)
 	}

@@ -105,11 +105,17 @@ var _ = Describe("promptrun.Preflight caller tools", func() {
 		expectRefused("has no handler")
 	})
 
-	It("refuses caller tools when MCP is disabled, since they travel over captain's MCP endpoint", func() {
-		in.Config.OnApproval = broker
-		in.Resolved.Spec.Permissions.MCP.Disabled = true
-		expectRefused("MCP is disabled")
-	})
+	DescribeTable("admits caller tools when MCP is disabled, since captain's caller-tool server is exempt",
+		func(provider string) {
+			in.Config.OnApproval = broker
+			in.Resolved.Spec.Model = api.Model{Name: provider, Mode: api.ModeAgent}
+			in.Resolved.Spec.Permissions.MCP.Disabled = true
+			_, err := promptrun.Preflight(in)
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("anthropic agent", "sonnet"),
+		Entry("openai agent", "gpt-5.4"),
+	)
 
 	It("refuses caller tools on a runtime that cannot expose them, naming it", func() {
 		in.Config.OnApproval = broker
