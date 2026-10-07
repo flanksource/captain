@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
@@ -66,6 +67,13 @@ type EventRenderer struct {
 	// paneLine holds a partial line until its newline arrives, because the pane
 	// terminates whatever it flushes and would split a row written in pieces.
 	paneLine strings.Builder
+
+	// mu serialises Handle, Flush and Suspend: an approval prompt suspends the
+	// renderer from the tool's goroutine while events stream on another.
+	// suspended counts open suspensions, and held keeps the events they delay.
+	mu        sync.Mutex
+	suspended int
+	held      []heldEvent
 }
 
 func NewEventRenderer(output *os.File) *EventRenderer {
@@ -101,7 +109,7 @@ func newEventRenderer(output io.Writer, interactive bool) *EventRenderer {
 	return renderer
 }
 
-func (r *EventRenderer) Handle(iteration int, event ai.Event) {
+func (r *EventRenderer) handle(iteration int, event ai.Event) {
 	if r.hasIter && iteration != r.iteration {
 		r.flushPending()
 		r.accumulator.resetFrame()
@@ -164,7 +172,7 @@ func (r *EventRenderer) Handle(iteration int, event ai.Event) {
 	}
 }
 
-func (r *EventRenderer) Flush() error {
+func (r *EventRenderer) flush() error {
 	r.clearProgress()
 	r.flushPending()
 	return r.err
@@ -384,51 +392,6 @@ func (r *EventRenderer) flushPending() {
 		r.renderMessage(*r.pending)
 	}
 	r.pending, r.pendingDirty, r.pendingDrawn = nil, false, false
-}
-
-// renderVerdict writes one verify verdict at the output's own width: the
-// headline on the first line, and the verifier's output — the failure the next
-// turn is about to be told about — beneath it, one line per line so a test
-// runner's tables and traces keep their alignment instead of wrapping.
-func (r *EventRenderer) renderVerdict(event ai.Event) {
-	headline, body, _ := strings.Cut(strings.TrimRight(event.Text, "\n"), "\n")
-	icon, style := "✓", "text-green-500 font-medium"
-	if event.Kind == ai.EventVerifyFailed {
-		icon, style = "✗", "text-red-500 font-medium"
-	}
-	prefix := clicky.Text(icon+" verify ", style)
-	r.write(truncateANSI(prefix.Append(headline, "text-muted").ANSI(), r.width) + "\n")
-
-	shown := 0
-	for _, line := range strings.Split(body, "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		if shown == maxVerdictBodyLines {
-			r.write(clicky.Text(fmt.Sprintf("  … %d more lines (full output sent to the agent)",
-				countNonBlank(body)-shown), "text-muted").ANSI() + "\n")
-			return
-		}
-		r.write(truncateANSI(line, r.width) + "\n")
-		shown++
-	}
-}
-
-// maxVerdictBodyLines caps how much of a verdict's output is echoed here. The
-// feedback the agent receives is deliberately unbounded by this — a check's
-// output streams live through the caller's verify Output sink and the whole
-// tail reaches the next iteration — so a megabyte-long failure does not have to
-// be replayed down the terminal a second time to be acted on.
-const maxVerdictBodyLines = 200
-
-func countNonBlank(body string) int {
-	n := 0
-	for _, line := range strings.Split(body, "\n") {
-		if strings.TrimSpace(line) != "" {
-			n++
-		}
-	}
-	return n
 }
 
 func (r *EventRenderer) renderMessage(message session.Message) {
