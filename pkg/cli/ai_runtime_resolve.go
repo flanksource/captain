@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,13 +11,24 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/runtimeprofiles"
 )
 
 type AIRuntimeResolveOptions struct {
+	// Context is required once a perms selection is non-empty: the preset
+	// catalog is discovered, and its database opened, under it.
+	Context      context.Context
 	Layers       []api.SpecLayer
 	Saved        captainconfig.Config
 	Cwd          string
 	RequireModel bool
+	// DefaultPerms is the host's permission-set selection (runtime preset ids
+	// or names) when --perms is not passed.
+	DefaultPerms []string
+	// CatalogSources are the host's own embedded preset sources
+	// (runtimeprofiles.NewEmbeddedSource) perms resolve against. They override
+	// captain's built-ins and yield to database, user and repo presets.
+	CatalogSources []runtimeprofiles.Source
 }
 
 func logRuntimeWarnings(warnings []string) {
@@ -28,6 +41,9 @@ type AIRuntimeResolved struct {
 	Request    ai.Request
 	Config     ai.Config
 	Resolution api.ResolvedSpec
+	// Presets is the perms selection layered into Resolution, nil when none.
+	// promptrun.RunMetadata records it the way prompt runs record presets.
+	Presets *runtimeprofiles.PresetResolution
 }
 
 func resolveInvocation(options AIRuntimeOptions, layers []api.SpecLayer) (AIRuntimeResolved, error) {
@@ -39,7 +55,9 @@ func resolveInvocation(options AIRuntimeOptions, layers []api.SpecLayer) (AIRunt
 	if err != nil {
 		return AIRuntimeResolved{}, fmt.Errorf("get working directory: %w", err)
 	}
-	return options.Resolve(AIRuntimeResolveOptions{Layers: layers, Saved: saved, Cwd: cwd, RequireModel: true})
+	// The commands calling resolveInvocation carry no context yet, so a
+	// --perms selection resolves under a fresh root.
+	return options.Resolve(AIRuntimeResolveOptions{Context: context.Background(), Layers: layers, Saved: saved, Cwd: cwd, RequireModel: true})
 }
 
 type AIRuntimeProjectOptions struct {
@@ -70,12 +88,87 @@ func (o AIRuntimeOptions) Resolve(options AIRuntimeResolveOptions) (AIRuntimeRes
 	if err != nil {
 		return AIRuntimeResolved{}, err
 	}
+	perms, err := o.resolvePerms(options)
+	if err != nil {
+		return AIRuntimeResolved{}, err
+	}
+	// Perms sit between the caller's layers and the flags, so ties within a
+	// scope go to the perms over the host and to the flags over the perms.
 	layers := append([]api.SpecLayer(nil), options.Layers...)
+	if perms != nil {
+		layers = append(layers, perms.Layers...)
+	}
 	if len(request.Fields()) > 0 {
 		layers = append(layers, api.RequestSpecLayer("CLI flags", request))
 	}
 	options.Layers = layers
-	return o.resolveAuthored(options)
+	resolved, err := o.resolveAuthored(options)
+	if err != nil {
+		return AIRuntimeResolved{}, err
+	}
+	resolved.Presets = perms
+	return resolved, nil
+}
+
+// resolvePerms selects --perms when it was passed, else the host's
+// DefaultPerms, through the preset resolver `prompt run --preset` uses.
+func (o AIRuntimeOptions) resolvePerms(options AIRuntimeResolveOptions) (*runtimeprofiles.PresetResolution, error) {
+	explicit := o.Perms != nil
+	refs := nonBlankRefs(options.DefaultPerms)
+	if explicit {
+		refs = nonBlankRefs(o.Perms)
+	}
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if options.Context == nil {
+		return nil, fmt.Errorf("perms %s: AIRuntimeResolveOptions.Context is required to resolve permission sets", strings.Join(refs, ","))
+	}
+	selection := runtimePresetSelection{Catalog: runtimeprofiles.DefaultCatalogOptions{
+		Config: &options.Saved, Cwd: options.Cwd, Sources: options.CatalogSources,
+	}}
+	if explicit {
+		selection.Requested, selection.RequestedSet = refs, true
+	} else {
+		selection.Default = refs
+	}
+	presets, warnings, err := selectRuntimePresets(options.Context, selection)
+	if errors.Is(err, runtimeprofiles.ErrNotFound) {
+		return nil, availablePermsError(options.Context, selection.Catalog, err)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("perms: %w", err)
+	}
+	logRuntimeWarnings(warnings)
+	return presets, nil
+}
+
+func nonBlankRefs(refs []string) []string {
+	var kept []string
+	for _, ref := range refs {
+		if ref = strings.TrimSpace(ref); ref != "" {
+			kept = append(kept, ref)
+		}
+	}
+	return kept
+}
+
+// availablePermsError extends an unknown-perm failure with every preset name
+// the catalog offers, in precedence order.
+func availablePermsError(ctx context.Context, options runtimeprofiles.DefaultCatalogOptions, cause error) error {
+	catalog, err := buildRuntimeCatalog(ctx, options)
+	if err != nil {
+		return errors.Join(fmt.Errorf("perms: %w", cause), fmt.Errorf("list available perms: %w", err))
+	}
+	presets, err := catalog.ListPresets(ctx)
+	if err != nil {
+		return errors.Join(fmt.Errorf("perms: %w", cause), fmt.Errorf("list available perms: %w", err))
+	}
+	names := make([]string, 0, len(presets))
+	for _, preset := range presets {
+		names = append(names, preset.Name)
+	}
+	return fmt.Errorf("perms: %w; available perms: %s", cause, strings.Join(names, ", "))
 }
 
 func (o AIRuntimeOptions) resolveAuthored(options AIRuntimeResolveOptions) (AIRuntimeResolved, error) {

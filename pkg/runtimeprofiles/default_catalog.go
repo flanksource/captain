@@ -22,11 +22,16 @@ type DefaultCatalogOptions struct {
 	// Config avoids reloading ~/.captain.yaml when the host already loaded it.
 	// Relative runtime directories still resolve against captainconfig.Path().
 	Config *captainconfig.Config
+	// Sources are a host's own embedded preset sources (NewEmbeddedSource),
+	// in precedence order. They override captain's built-ins of the same name
+	// and yield to any database, user, configured or repo preset.
+	Sources []Source
 }
 
 // NewDefaultCatalog discovers the database, user, configured and repo sources,
-// and registers the built-in presets last as the lowest-precedence source.
-// Database openers run only when records are read or written.
+// then registers the host's Sources and finally the built-in presets as the
+// lowest-precedence source. Database openers run only when records are read or
+// written.
 func NewDefaultCatalog(ctx context.Context, options DefaultCatalogOptions) (*Catalog, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -47,6 +52,17 @@ func NewDefaultCatalog(ctx context.Context, options DefaultCatalogOptions) (*Cat
 		source, err := NewFileSource(dir)
 		if err != nil {
 			return nil, err
+		}
+		sources = append(sources, source)
+	}
+	for index, source := range options.Sources {
+		if source == nil {
+			return nil, fmt.Errorf("host runtime source %d is nil", index)
+		}
+		// Precedence between a host source and the file directories rests on
+		// built-in shadowing, so anything else would make names ambiguous.
+		if info := source.Info(); info.Kind != SourceBuiltin {
+			return nil, fmt.Errorf("host runtime source %q is a %s source; host sources must be embedded preset sources (NewEmbeddedSource)", info.Label, info.Kind)
 		}
 		sources = append(sources, source)
 	}

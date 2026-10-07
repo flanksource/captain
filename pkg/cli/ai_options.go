@@ -96,6 +96,10 @@ type AIRuntimeOptions struct {
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`
 	DisallowedTools []string `flag:"disallowed-tools" help:"Tools to deny (claude only)"`
 	PermissionMode  string   `flag:"permission-mode" help:"acceptEdits|auto|bypassPermissions|default|plan"`
+	// Perms is nil when --perms was not passed, which selects the host's
+	// AIRuntimeResolveOptions.DefaultPerms; a non-nil selection whose entries
+	// are all blank (`--perms ''`) selects none.
+	Perms []string `flag:"perms" help:"Permission sets (runtime preset ids or names) layered beneath the CLI flags; repeatable. Empty string selects none"`
 
 	NoMCP     bool     `flag:"no-mcp" help:"Disable all MCP servers"`
 	NoHooks   bool     `flag:"no-hooks" help:"Skip hooks"`

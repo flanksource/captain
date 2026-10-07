@@ -3,16 +3,17 @@ package runtimeprofiles
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 )
 
 // Catalog unifies every source. Reads fan out across sources in registration
 // order; writes go to the named target source, or the database when none is
 // named. Names are unique case-insensitively across all sources, with one
-// exception: a database or file record named like a built-in shadows it. The
-// shadowed built-in drops out of listings and name lookups, and reading its id
-// resolves to the record that overrides it; writing through its id is refused.
+// exception: a database or file record named like a built-in shadows it, and
+// among built-in sources (captain's own and any a host embeds) the one
+// registered first shadows the rest. The shadowed built-in drops out of
+// listings and name lookups, and reading its id resolves to the record that
+// overrides it; writing through its id is refused.
 type Catalog struct {
 	sources []Source
 	byID    map[string]Source
@@ -146,8 +147,8 @@ func listAll[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stor
 		records = append(records, items...)
 	}
 	effective := make([]R, 0, len(records))
-	for _, item := range records {
-		if meta := item.meta(); meta.Source.Kind == SourceBuiltin && overridden(records, meta.Name) {
+	for index, item := range records {
+		if shadowed(records, index) {
 			continue
 		}
 		effective = append(effective, item)
@@ -155,12 +156,24 @@ func listAll[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stor
 	return effective, nil
 }
 
-// overridden reports whether a record that is not a built-in carries the name.
-func overridden[R record](records []R, name string) bool {
-	return slices.ContainsFunc(records, func(item R) bool {
-		meta := item.meta()
-		return meta.Source.Kind != SourceBuiltin && strings.EqualFold(meta.Name, name)
-	})
+// shadowed reports whether records[index] is a built-in that yields its name:
+// to a record that is not a built-in, or to a built-in of a source registered
+// before its own. records is in source registration order.
+func shadowed[R record](records []R, index int) bool {
+	meta := records[index].meta()
+	if meta.Source.Kind != SourceBuiltin {
+		return false
+	}
+	for other, item := range records {
+		candidate := item.meta()
+		if candidate.Source.ID == meta.Source.ID || !strings.EqualFold(candidate.Name, meta.Name) {
+			continue
+		}
+		if candidate.Source.Kind != SourceBuiltin || other < index {
+			return true
+		}
+	}
+	return false
 }
 
 func get[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stores[R, I], kind Kind, ref string) (R, error) {

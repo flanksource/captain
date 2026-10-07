@@ -78,17 +78,35 @@ var _ = Describe("promptrun.Preflight runtime configuration", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("warns for an absent approval broker and never calls an attached broker", func() {
+	It("admits an ask rule on a run that serves no caller tools", func() {
 		in.Resolved.Spec.ToolPreferences = api.ToolPreferences{"review": api.ToolPolicyAsk}
+		in.Resolved.Spec.ToolPolicy = api.PermissionPolicy{{ToolMatch: api.ToolMatch{Method: api.MatchPatterns{"POST"}}, Policy: api.ToolPolicyAsk}}
 		warnings, err := promptrun.Preflight(in)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(warnings).To(ContainElement(ContainSubstring("OnApproval")))
+		Expect(warnings).To(BeEmpty())
+	})
+
+	It("refuses an ask rule over a caller-tool endpoint with no approval broker and never calls an attached broker", func() {
+		in.Config.CallerTools = &api.CallerToolEndpoint{Name: "review", URL: "http://127.0.0.1:9/mcp", Headers: map[string]string{"Authorization": "Bearer token"}}
+		in.Resolved.Spec.ToolPreferences = api.ToolPreferences{"review": api.ToolPolicyAsk}
+		_, err := promptrun.Preflight(in)
+		Expect(err).To(MatchError(ContainSubstring("caller tools review resolve to ask")))
+		Expect(err).To(MatchError(ContainSubstring("Config.OnApproval")))
+		_, runErr := promptrun.Run(context.Background(), in)
+		Expect(runErr).To(MatchError(err.Error()))
+
+		in.Resolved.Spec.ToolPreferences = nil
+		in.Resolved.Spec.ToolPolicy = api.PermissionPolicy{{ToolMatch: api.ToolMatch{Method: api.MatchPatterns{"POST"}}, Policy: api.ToolPolicyAsk}}
+		_, err = promptrun.Preflight(in)
+		Expect(err).To(MatchError(ContainSubstring("caller tools toolPolicy[0] resolve to ask")))
+
+		in.Resolved.Spec.ToolPreferences = api.ToolPreferences{"review": api.ToolPolicyAsk}
 		calls := 0
 		in.Config.OnApproval = func(context.Context, api.ApprovalRequest) (api.ApprovalDecision, error) {
 			calls++
 			return api.ApprovalDecision{}, nil
 		}
-		warnings, err = promptrun.Preflight(in)
+		warnings, err := promptrun.Preflight(in)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(warnings).To(BeEmpty())
 		Expect(calls).To(BeZero())

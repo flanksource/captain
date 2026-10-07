@@ -18,18 +18,22 @@ type runtimePresetSelection struct {
 	RequestedSet      bool
 	Pin               []string
 	PinSet            bool
+	Default           []string
 	DeprecatedRequest string
 	DeprecatedPin     string
-	Config            *captainconfig.Config
+	// Catalog carries the config, working directory and host sources the
+	// catalog is discovered from; Read and Write are always the CLI database.
+	Catalog runtimeprofiles.DefaultCatalogOptions
 }
 
 func selectRuntimePresets(ctx context.Context, options runtimePresetSelection) (*runtimeprofiles.PresetResolution, []string, error) {
 	resolver := runtimeprofiles.NewResolver(func(ctx context.Context) (*runtimeprofiles.Catalog, error) {
-		return buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{Config: options.Config})
+		return buildRuntimeCatalog(ctx, options.Catalog)
 	})
 	result, err := resolver.Layers(ctx, runtimeprofiles.ResolveOptions{
 		RequestedPresets: options.Requested, RequestedPresetsSet: options.RequestedSet,
 		PinnedPresets: options.Pin, PinnedPresetsSet: options.PinSet,
+		DefaultPresets:   options.Default,
 		RequestedProfile: options.DeprecatedRequest, PinnedProfile: options.DeprecatedPin,
 	})
 	if err != nil {
@@ -80,7 +84,7 @@ func renderLayers(ctx context.Context, source, content string, frontmatter ai.Re
 		Requested: renderReq.Presets, RequestedSet: renderReq.Presets != nil,
 		Pin: pinnedPresets, PinSet: pinnedPresetsSet,
 		DeprecatedRequest: renderReq.RuntimeProfile, DeprecatedPin: deprecatedPin,
-		Config: &saved,
+		Catalog: runtimeprofiles.DefaultCatalogOptions{Config: &saved},
 	})
 	if err != nil {
 		return nil, nil, err

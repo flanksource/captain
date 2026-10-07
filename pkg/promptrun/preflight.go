@@ -99,40 +99,20 @@ func validateRuntime(in Input, spec api.Spec) ([]string, error) {
 	if err != nil {
 		return warnings, fmt.Errorf("promptrun: %w", err)
 	}
+	callers, err := admitCallerTools(in, spec)
+	if err != nil {
+		return warnings, err
+	}
 	for _, model := range append([]api.Model{spec.Model}, spec.Fallbacks...) {
-		candidate := spec
-		candidate.Model = model
 		if constructsProvider(in) && in.Config.SandboxSelection != nil {
 			descriptor, _ := api.SandboxFor(in.Config.SandboxSelection.Kind)
 			if err := descriptor.ValidateMode(model.Mode); err != nil {
 				return warnings, err
 			}
 		}
-		caps := api.PermissionCapabilitiesFor(api.RuntimeOf(model.Provider, model.Mode))
-		binding, err := in.Config.Approvals()
-		if err != nil {
+		if err := callers.check(spec, model); err != nil {
 			return warnings, err
-		}
-		if constructsProvider(in) && binding.Func == nil && in.Approvals == nil && requiresBroker(candidate, caps) {
-			warnings = append(warnings, fmt.Sprintf("caller-tool policy ask requires Config.OnApproval for %s", api.RuntimeOf(model.Provider, model.Mode)))
 		}
 	}
 	return warnings, nil
-}
-
-func requiresBroker(spec api.Spec, caps api.PermissionCapabilities) bool {
-	if caps.ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyAsk).Kind != api.SupportRequiresBroker {
-		return false
-	}
-	for _, policy := range spec.ToolPreferences {
-		if policy == api.ToolPolicyAsk {
-			return true
-		}
-	}
-	for _, rule := range spec.ToolPolicy {
-		if rule.Policy == api.ToolPolicyAsk {
-			return true
-		}
-	}
-	return false
 }

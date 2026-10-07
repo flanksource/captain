@@ -76,6 +76,47 @@ var _ = Describe("Session list pages", func() {
 		Expect(last.NextCursor).To(BeEmpty())
 	})
 
+	It("drops subagents but keeps transcript children, carrying relation and activity state", func(ctx SpecContext) {
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_session_subagents"})
+		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
+
+		create := func(provider string, parent *uuid.UUID, relation SessionParentRelation, activity SessionActivityState, reason string) uuid.UUID {
+			GinkgoHelper()
+			record, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+				ID: uuid.New(), ProviderSessionID: provider, Source: "claude", Provider: "anthropic",
+				HostID: "subagent-test", Project: "captain", CWD: "/work/captain",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(db.Gorm().Exec(
+				"UPDATE captain_sessions SET parent_session_id = ?, parent_relation = NULLIF(?, ''), activity_state = ?, state_reason = NULLIF(?, '') WHERE id = ?",
+				parent, string(relation), string(activity), reason, record.ID,
+			).Error).NotTo(HaveOccurred())
+			return record.ID
+		}
+		root := create("root", nil, "", SessionActivityApproval, "Approve Bash make test")
+		transcript := create("run-agent", &root, SessionParentRelationTranscript, SessionActivityWorking, "")
+		create("subagent", &root, SessionParentRelationAgent, SessionActivityWorking, "")
+
+		page, err := db.ListSessionSummaries(ctx, SessionListFilter{ExcludeSubagents: true})
+		Expect(err).NotTo(HaveOccurred())
+		byID := map[uuid.UUID]SessionListSummary{}
+		for _, row := range page.Rows {
+			byID[row.ID] = row
+		}
+		Expect(byID).To(HaveLen(2))
+		Expect(byID[root]).To(MatchFields(IgnoreExtras, Fields{
+			"ParentRelation": Equal(SessionParentRelation("")),
+			"ActivityState":  Equal(string(SessionActivityApproval)),
+			"StateReason":    PointTo(Equal("Approve Bash make test")),
+		}))
+		Expect(byID[transcript]).To(MatchFields(IgnoreExtras, Fields{
+			"ParentRelation": Equal(SessionParentRelationTranscript),
+			"ActivityState":  Equal(string(SessionActivityWorking)),
+		}))
+	})
+
 	It("combines inclusive activity bounds with live-only filtering", func(ctx SpecContext) {
 		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_session_range"})
 		db, err := Open(ctx, WithDSN(handle.DSN()), WithMigrations())
