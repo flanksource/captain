@@ -253,52 +253,56 @@ func TestRunSessionLiveEnrichesSummaryWithProcessHealth(t *testing.T) {
 	}
 	t.Chdir(project)
 
-	writeJSONL(t, filepath.Join(home, ".claude", "projects", claude.NormalizePath(project), "sess-live.jsonl"),
+	// Context comes only from provider-reported telemetry, so the session is a
+	// Codex rollout: Codex reports model_context_window, Claude transcripts do not.
+	// With Codex's 12,000-token baseline, 106,000 of 112,000 tokens leaves 6% free.
+	writeJSONL(t, filepath.Join(home, ".codex", "sessions", "2026", "06", "01", "rollout-sess-live.jsonl"),
 		map[string]any{
-			"type":      "user",
-			"sessionId": "sess-live",
-			"timestamp": "2026-06-01T10:00:00Z",
-			"cwd":       project,
-			"message": map[string]any{
-				"role":    "user",
-				"content": []any{map[string]any{"type": "text", "text": "run something"}},
-			},
+			"timestamp": "2026-06-01T10:00:00Z", "type": "session_meta",
+			"payload": map[string]any{"id": "sess-live", "cwd": project, "cli_version": "0.143.0", "model_provider": "openai"},
 		},
 		map[string]any{
-			"type":      "assistant",
-			"sessionId": "sess-live",
-			"timestamp": "2026-06-01T10:00:02Z",
-			"cwd":       project,
-			"message": map[string]any{
-				"role":    "assistant",
-				"model":   "claude-sonnet-4",
-				"content": []any{map[string]any{"type": "text", "text": "working"}},
-				"usage": map[string]any{
-					"input_tokens":                930000,
-					"cache_read_input_tokens":     10000,
-					"cache_creation_input_tokens": 0,
-					"output_tokens":               1000,
-				},
-			},
+			"timestamp": "2026-06-01T10:00:00Z", "type": "turn_context",
+			"payload": map[string]any{"turn_id": "turn-live", "model": "gpt-5"},
+		},
+		map[string]any{
+			"timestamp": "2026-06-01T10:00:00Z", "type": "event_msg",
+			"payload": map[string]any{"type": "task_started", "turn_id": "turn-live"},
+		},
+		map[string]any{
+			"timestamp": "2026-06-01T10:00:01Z", "type": "event_msg",
+			"payload": map[string]any{"type": "user_message", "message": "run something"},
+		},
+		map[string]any{
+			"timestamp": "2026-06-01T10:00:02Z", "type": "event_msg",
+			"payload": map[string]any{"type": "token_count", "info": map[string]any{
+				"last_token_usage":     map[string]any{"input_tokens": 105000, "output_tokens": 1000, "total_tokens": 106000},
+				"total_token_usage":    map[string]any{"input_tokens": 105000, "output_tokens": 1000, "total_tokens": 106000},
+				"model_context_window": 112000,
+			}},
+		},
+		map[string]any{
+			"timestamp": "2026-06-01T10:00:03Z", "type": "event_msg",
+			"payload": map[string]any{"type": "agent_message", "message": "working"},
 		},
 	)
 
 	started := time.Date(2026, 6, 1, 9, 59, 0, 0, time.UTC)
 	monitorDiscoverProcesses = func() ([]monitor.Process, error) {
 		return []monitor.Process{{
-			Source:        "claude",
+			Source:        "codex",
 			PID:           12345,
 			Status:        "active",
 			CPUPercent:    2.5,
 			MemoryPercent: 1.25,
 			StartedAt:     &started,
 			CWD:           project,
-			Command:       "claude",
+			Command:       "codex",
 		}}, nil
 	}
 	refreshTestSessionDB(t)
 
-	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "claude", Limit: 10})
+	result, err := RunSessionLive(context.Background(), SessionLiveOptions{Source: "codex", Limit: 10})
 	if err != nil {
 		t.Fatalf("RunSessionLive: %v", err)
 	}

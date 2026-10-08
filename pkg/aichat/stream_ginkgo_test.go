@@ -152,8 +152,8 @@ var _ = Describe("AI SDK v6 event stream", func() {
 				"inputTokens": 100.0, "outputTokens": 40.0, "reasoningTokens": 10.0,
 				"cacheReadTokens": 5.0, "cacheWriteTokens": 0.0, "totalTokens": 155.0,
 			},
-			"cost": 0.0125,
-			"success":       true,
+			"cost":    0.0125,
+			"success": true,
 		}))
 	})
 

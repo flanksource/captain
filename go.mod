@@ -9,9 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.11.0
-	github.com/flanksource/clicky v1.21.68
+	github.com/flanksource/clicky v1.21.70
 	github.com/flanksource/clicky/aichat v1.21.68
-	github.com/flanksource/commons v1.59.1
+	github.com/flanksource/commons v1.60.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
@@ -39,7 +39,7 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.39
+	github.com/flanksource/commons-db v0.1.50
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pelletier/go-toml/v2 v2.4.3
 )
