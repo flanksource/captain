@@ -110,7 +110,7 @@ func validateRuntime(in Input, spec api.Spec) ([]string, error) {
 				return warnings, err
 			}
 		}
-		if err := callers.check(spec, model); err != nil {
+		if err := callers.check(model); err != nil {
 			return warnings, err
 		}
 	}

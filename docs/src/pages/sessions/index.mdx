@@ -11,7 +11,9 @@ This section is scaffolded for Claude and Codex history, live prompt run entries
 
 ## Estimated tool cost
 
-In a session's transcript, open the three-dot menu and enable **Show estimated tool cost**. It is off by default. Each tool's summary line shows a compact estimated USD amount. Expand the tool row to see its token usage, reasoning tokens when available, and cache reads and writes in a footer beneath the details.
+In a session's transcript, open the three-dot menu and enable **Show estimated tool cost**. It is off by default. Each tool's summary line shows a compact estimated USD amount and its cache-read token delta when nonzero, such as `+8k` tokens. Hover the cache-read indicator for the exact count. Expand the tool row to see its token usage, reasoning tokens when available, and cache reads and writes in a footer beneath the details.
+
+In **Compact** density, structured tool inputs and JSON responses use the collapsible YAML view. **Comfortable** and **Spacious** density keep the JSON view.
 
 Claude and Codex use the same allocation and display:
 

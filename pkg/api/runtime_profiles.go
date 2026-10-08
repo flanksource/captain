@@ -277,20 +277,27 @@ func hasResolvedPermissionSettings(spec Spec) bool {
 }
 
 // ValidateResolvedSandbox refuses sandbox isolation unsupported by the runtime.
-func ValidateResolvedSandbox(spec Spec) error {
+// The one exception is a restrict-only native policy on the API mode: the
+// policy governs built-in provider tools and the API mode runs none, so the
+// restriction already holds and is reported as a warning instead.
+func ValidateResolvedSandbox(spec Spec) (string, error) {
 	if spec.Sandbox == nil {
-		return nil
+		return "", nil
 	}
 	if err := spec.Sandbox.Validate(); err != nil {
-		return err
+		return "", err
 	}
 	provider, mode, err := spec.Runtime()
 	if err != nil {
-		return fmt.Errorf("sandbox settings require a resolved runtime: %w", err)
+		return "", fmt.Errorf("sandbox settings require a resolved runtime: %w", err)
 	}
 	capabilities := RuntimeSandboxCapabilitiesFor(provider, mode)
 	if !containsSandboxMode(capabilities.Modes, spec.Sandbox.Mode) {
-		return fmt.Errorf("sandbox mode %q is not available for %s", spec.Sandbox.Mode, RuntimeOf(provider, mode))
+		if mode == ModeAPI && spec.Sandbox.Mode == SandboxNative && spec.Sandbox.Policy.restrictsOnly() {
+			return fmt.Sprintf("sandbox mode %q is vacuous on %s: it runs no provider process, so its restrict-only policy already holds",
+				spec.Sandbox.Mode, RuntimeOf(provider, mode)), nil
+		}
+		return "", fmt.Errorf("sandbox mode %q is not available for %s", spec.Sandbox.Mode, RuntimeOf(provider, mode))
 	}
 	if mode != ModeAPI {
 		switch provider {
@@ -301,9 +308,9 @@ func ValidateResolvedSandbox(spec Spec) error {
 		}
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
-	return nil
+	return "", nil
 }
 
 func requireResolvedToolPolicy(

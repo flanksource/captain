@@ -16,10 +16,15 @@ func ValidateRuntimeSpec(spec Spec) ([]string, error) {
 		}
 		candidate := spec
 		candidate.Model = model
-		if err := ValidateResolvedSandbox(candidate); err != nil {
+		sandboxWarning, err := ValidateResolvedSandbox(candidate)
+		if err != nil {
 			return warnings, fmt.Errorf("model %q: %w", model.Name, err)
 		}
-		for _, warning := range UnsupportedPermissions(candidate) {
+		candidateWarnings := UnsupportedPermissions(candidate)
+		if sandboxWarning != "" {
+			candidateWarnings = append(candidateWarnings, sandboxWarning)
+		}
+		for _, warning := range candidateWarnings {
 			if index > 0 {
 				warning = fmt.Sprintf("fallback[%d] %q: %s", index-1, model.Name, warning)
 			}

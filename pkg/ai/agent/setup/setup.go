@@ -132,8 +132,10 @@ type relocation struct {
 	kind, path string
 	// keep is the checkout's explicit request to leave the worktree in place;
 	// existing marks a worktree the run was pointed at rather than one setup
-	// created, which teardown never removes either.
-	keep, existing bool
+	// created, which teardown never removes either. existingBranch marks a
+	// branch the run continued on: it predates the run, so teardown never
+	// deletes it.
+	keep, existing, existingBranch bool
 }
 
 // retainReason is why teardown must keep the worktree whatever its state; empty
@@ -187,6 +189,7 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 	}
 	p.relocation.kind = "worktree"
 	p.relocation.keep, p.relocation.existing = wt.Keep, wt.Mode == shell.WorktreeExisting
+	p.relocation.existingBranch = wt.Mode == shell.WorktreeBranch
 	// Only a worktree setup created holds a copy of the source's work-in-progress;
 	// an existing one's uncommitted state is its owner's, and never committed here.
 	state, err := recordWorktree(res.Cwd, wt.Mode == shell.WorktreeNew)
@@ -221,7 +224,7 @@ func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
 	cleanup, moved, wt := p.prepared.Cleanup, p.relocation, p.worktree
 	p.prepared, p.relocation, p.worktree = nil, nil, nil
 	if wt != nil {
-		if err := teardownWorktree(wt, moved.retainReason(), cleanup); err != nil {
+		if err := teardownWorktree(wt, moved, cleanup); err != nil {
 			return err
 		}
 		hc.Notify("%s", teardownNotice(wt))

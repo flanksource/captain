@@ -132,8 +132,10 @@ func statusPaths(dir string) ([]string, error) {
 // tree is kept — commons-db's cleanup force-removes, which would discard the
 // agent's uncommitted edits — and so is one the run was told to keep (retain).
 // A clean tree is removed, and its branch deleted when it holds nothing past
-// Setup: the setup snapshot alone is not work worth a branch.
-func teardownWorktree(wt *api.WorktreeState, retain string, cleanup func() error) error {
+// Setup: the setup snapshot alone is not work worth a branch — unless the run
+// continued on a branch that already existed, which is never the run's to delete.
+func teardownWorktree(wt *api.WorktreeState, moved *relocation, cleanup func() error) error {
+	retain := moved.retainReason()
 	head, err := git(wt.Path, "rev-parse", "HEAD")
 	if err != nil {
 		return err
@@ -159,6 +161,9 @@ func teardownWorktree(wt *api.WorktreeState, retain string, cleanup func() error
 		return nil
 	}
 	wt.Removed = true
+	if moved.existingBranch {
+		return nil
+	}
 	ahead, err := git(wt.Repo, "rev-list", "--count", wt.Setup+".."+wt.Head)
 	if err != nil || ahead != "0" {
 		return err

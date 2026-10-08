@@ -213,4 +213,27 @@ var _ = Describe("the setup plugin's worktree state", func() {
 		Expect(noticeTexts(hc)).To(ContainElement(
 			"[post-run] removed worktree " + wt.Path + "; branch " + wt.Branch + " @ " + head[:7]))
 	})
+
+	It("continues on an existing branch and never deletes it, even with no new commits", func() {
+		gitIn(repo, "branch", "shell/previous")
+		gitIn(repo, "checkout", "-q", "shell/previous")
+		writeFile(repo, "previous.go", "package main\n")
+		gitIn(repo, "add", "previous.go")
+		gitIn(repo, "commit", "-q", "-m", "feat: previous run")
+		tip := gitIn(repo, "rev-parse", "HEAD")
+		gitIn(repo, "checkout", "-q", "main")
+		plugin, hc := worktreeHook(repo)
+		hc.Request.Setup.Checkout.Worktree = &shell.Worktree{Mode: shell.WorktreeBranch, Branch: "shell/previous"}
+
+		wt := preRun(plugin, hc, repo)
+		Expect(wt.Branch).To(Equal("shell/previous"))
+		Expect(wt.Base).To(Equal(tip))
+		Expect(wt.Setup).To(Equal(tip), "the agent's own work starts at the previous run's tip")
+
+		Expect(plugin.Post(hc, agent.PhaseRun)).To(Succeed())
+
+		Expect(wt.Removed).To(BeTrue())
+		Expect(wt.BranchDeleted).To(BeFalse())
+		Expect(gitIn(repo, "rev-parse", "refs/heads/shell/previous")).To(Equal(tip), "the previous run's commits survive")
+	})
 })

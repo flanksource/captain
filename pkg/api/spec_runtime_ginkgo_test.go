@@ -52,6 +52,30 @@ var _ = Describe("Effective layered runtime validation", func() {
 		Entry("fallback", Model{Name: "agent:sonnet", Fallbacks: []Model{{Name: "api:sol"}}}),
 	)
 
+	It("accepts a restrict-only native policy on the API mode, which has no provider process to isolate", func() {
+		readOnly := &NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly}}
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{
+			Model: Model{Name: "api:sonnet"}, Sandbox: &SandboxRef{Mode: SandboxNative, Policy: readOnly},
+		})}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Warnings).To(ContainElement(
+			`sandbox mode "native" is vacuous on anthropic api: it runs no provider process, so its restrict-only policy already holds`))
+	})
+
+	DescribeTable("refuses a native policy on the API mode that grants access or demands real isolation",
+		func(policy NativeSandboxPolicy) {
+			_, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{
+				Model: Model{Name: "api:sonnet"}, Sandbox: &SandboxRef{Mode: SandboxNative, Policy: &policy},
+			})}})
+			Expect(err).To(MatchError(ContainSubstring(`sandbox mode "native" is not available`)))
+		},
+		Entry("required", NativeSandboxPolicy{Required: new(true), Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly}}),
+		Entry("workspace write", NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemWorkspaceWrite}}),
+		Entry("writable roots", NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly, WritableRoots: []string{"/tmp"}}}),
+		Entry("allowed domains", NativeSandboxPolicy{Network: &SandboxNetworkPolicy{Access: SandboxNetworkRestricted, AllowedDomains: []string{"example.com"}}}),
+		Entry("unsandboxed commands", NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly}, Commands: &SandboxCommandPolicy{AllowUnsandboxed: new(true)}}),
+	)
+
 	It("retains hard agent-tool policy refusal for fallback runtimes", func() {
 		_, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{
 			Model:       Model{Name: "cli:sonnet", Fallbacks: []Model{{Name: "cli:sol"}}},
