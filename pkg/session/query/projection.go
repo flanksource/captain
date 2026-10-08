@@ -5,26 +5,19 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/google/uuid"
 )
 
-func overviewContext(overview database.SessionOverview) *session.Context {
-	if overview.ContextTokens == nil && overview.ContextWindowTokens == nil && overview.ContextFreePercent == nil {
+func overviewContext(overview database.SessionOverview) *api.ContextUsage {
+	if overview.ContextTokens == nil || overview.ContextWindowTokens == nil || overview.ContextFreePercent == nil {
 		return nil
 	}
-	context := &session.Context{}
-	if overview.ContextTokens != nil {
-		context.UsedTokens = int(*overview.ContextTokens)
+	return &api.ContextUsage{
+		UsedTokens: int(*overview.ContextTokens), WindowTokens: int(*overview.ContextWindowTokens), FreePercent: *overview.ContextFreePercent,
 	}
-	if overview.ContextWindowTokens != nil {
-		context.WindowTokens = int(*overview.ContextWindowTokens)
-	}
-	if overview.ContextFreePercent != nil {
-		context.FreePercent = *overview.ContextFreePercent
-	}
-	return context
 }
 
 func descendantFiles(sessionID uuid.UUID, thread []database.SessionOverview) *session.ChangedFiles {
@@ -92,13 +85,17 @@ func projectSessionRequests(rows []database.TurnRequest) ([]session.Request, err
 		if err != nil {
 			return nil, fmt.Errorf("encode Captain request %s input: %w", rows[i].ID, err)
 		}
+		document, err := json.Marshal(rows[i].Request)
+		if err != nil {
+			return nil, fmt.Errorf("encode Captain request %s document: %w", rows[i].ID, err)
+		}
 		updatedInput, err := json.Marshal(rows[i].Response["updatedInput"])
 		if err != nil {
 			return nil, fmt.Errorf("encode Captain request %s updated input: %w", rows[i].ID, err)
 		}
 		requests[i] = session.Request{
 			ID: rows[i].ID.String(), ToolCallID: rows[i].ToolCallID, Kind: rows[i].Kind, State: string(rows[i].State),
-			Tool: fmt.Sprint(rows[i].Request["tool"]), Input: input, RequestedBy: rows[i].RequestedBy,
+			Tool: fmt.Sprint(rows[i].Request["tool"]), Input: input, Request: document, RequestedBy: rows[i].RequestedBy,
 			ResolvedBy: rows[i].ResolvedBy, Reason: rows[i].Reason, Version: rows[i].Version,
 			ExpiresAt: rows[i].ExpiresAt, CreatedAt: rows[i].CreatedAt, ResolvedAt: rows[i].ResolvedAt,
 		}

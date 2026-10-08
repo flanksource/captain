@@ -10,8 +10,8 @@ import (
 //
 // A round runs every verifier the workflow declares — `commands` then `fixture`,
 // say — and each returns its own report. Keeping the last one threw the rest
-// away: the round's row and its result_json.verify carried the fixture's tree
-// and nothing else, and the run's summary counted half of what actually ran.
+// away: the iteration's verification_result carried the fixture's tree and
+// nothing else, and the run's summary counted half of what actually ran.
 //
 // The merged shape keeps each report whole and addressable: one group node per
 // report, named after the report and framed by its kind, holding that report's

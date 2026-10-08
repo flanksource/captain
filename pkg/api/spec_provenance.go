@@ -6,21 +6,44 @@ import (
 	"strings"
 )
 
-func (composed *ComposedSpec) recordLayer(layer SpecLayer) {
+// recordLayer attributes every field layer names to it, given merged — the
+// composed spec with layer applied. Paths inside a key-merged list's elements
+// are recorded at the element's merged position, and the attributions earlier
+// layers made there move with their elements, so a stanza keeps its sources
+// wherever the merge places it. Key names the path as the layer authored it.
+func (composed *ComposedSpec) recordLayer(layer SpecLayer, merged Spec) {
 	if composed.fieldLayers == nil {
 		composed.fieldLayers = map[string]int{}
 	}
-	for _, path := range sortedKeys(layer.Spec.Fields()) {
-		composed.fieldLayers[path] = len(composed.Trace) + 1
-		value := serializedField(reflect.ValueOf(layer.Spec), strings.Split(strings.TrimPrefix(path, "/"), "/"))
-		if replacesField(value) {
-			for previous := range composed.Provenance {
-				if strings.HasPrefix(previous, path+"/") {
-					delete(composed.Provenance, previous)
-				}
+	fields := sortedKeys(layer.Spec.Fields())
+	explicit := layer.Spec.explicitFields()
+	for _, path := range fields {
+		tokens := splitPath(path)
+		value := serializedField(reflect.ValueOf(layer.Spec), tokens)
+		if keyed, replaces := keyedListReplaces(tokens, value, explicit[path]); !replacesField(value) || keyed && !replaces {
+			continue
+		}
+		for previous := range composed.Provenance {
+			if strings.HasPrefix(previous, path+"/") {
+				delete(composed.Provenance, previous)
 			}
 		}
-		composed.Provenance[path] = FieldProvenance{Source: FieldSource{Kind: FieldSourceLayer, Name: layer.Name, Key: path, LayerID: layer.ID}}
+		for previous := range composed.fieldLayers {
+			if strings.HasPrefix(previous, path+"/") {
+				delete(composed.fieldLayers, previous)
+			}
+		}
+	}
+	composed.Provenance = rekeyed(composed.Provenance, composed.Spec, merged)
+	composed.fieldLayers = rekeyed(composed.fieldLayers, composed.Spec, merged)
+	authored := layer.Spec.withCommitPhases()
+	for _, path := range fields {
+		at := path
+		if inKeyedElement(splitPath(path)) {
+			at = keyedPath(path, authored, merged)
+		}
+		composed.fieldLayers[at] = len(composed.Trace) + 1
+		composed.Provenance[at] = FieldProvenance{Source: FieldSource{Kind: FieldSourceLayer, Name: layer.Name, Key: path, LayerID: layer.ID}}
 	}
 }
 
@@ -126,35 +149,5 @@ func (resolved *ResolvedSpec) recordNormalization(before Model) {
 			source.NormalizedBy = &catalog
 		}
 		resolved.Provenance[path] = source
-	}
-}
-
-type budgetLimitSources map[string]FieldSource
-
-func (sources budgetLimitSources) record(layer SpecLayer, limits Budget) {
-	for _, key := range []string{"cost", "maxTokens", "maxTurns", "timeout"} {
-		value := serializedField(reflect.ValueOf(layer.Constraints.Limits.Budget), []string{key})
-		limit := serializedField(reflect.ValueOf(limits), []string{key})
-		if !value.IsZero() && reflect.DeepEqual(value.Interface(), limit.Interface()) {
-			sources[key] = FieldSource{Kind: FieldSourceLayer, Name: layer.Name, LayerID: layer.ID, Key: "/constraints/limits/budget/" + key}
-		}
-	}
-}
-
-func (composed *ComposedSpec) recordLimits(sources budgetLimitSources) {
-	for key, constraint := range sources {
-		limit := serializedField(reflect.ValueOf(composed.Constraints.Limits.Budget), []string{key})
-		effective := serializedField(reflect.ValueOf(composed.Spec.Budget), []string{key})
-		if !reflect.DeepEqual(limit.Interface(), effective.Interface()) {
-			continue
-		}
-		path := "/budget/" + key
-		provenance, exists := composed.Provenance[path]
-		if exists {
-			provenance.NormalizedBy = &constraint
-		} else {
-			provenance.Source = constraint
-		}
-		composed.Provenance[path] = provenance
 	}
 }

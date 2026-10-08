@@ -7,26 +7,28 @@ import (
 )
 
 type ToolUse struct {
-	Tool            string         `json:"tool,omitempty"`
-	Input           map[string]any `json:"input,omitempty"`
-	Timestamp       *time.Time     `json:"timestamp,omitempty"`
-	CWD             string         `json:"cwd,omitempty"`
-	SessionID       string         `json:"session_id,omitempty"`
-	TurnID          string         `json:"turn_id,omitempty"`
-	ToolUseID       string         `json:"tool_use_id,omitempty"`
-	Source          string         `json:"source,omitempty"` // "claude" or "codex"
-	Model           string         `json:"model,omitempty"`
-	ReasoningEffort string         `json:"reasoning_effort,omitempty"`
-	Namespace       string         `json:"namespace,omitempty"`
-	InputTokens     int            `json:"input_tokens,omitempty"`
-	OutputTokens    int            `json:"output_tokens,omitempty"`
+	Tool            string              `json:"tool,omitempty"`
+	Input           map[string]any      `json:"input,omitempty"`
+	Attachments     []api.AttachmentRef `json:"attachments,omitempty"`
+	Timestamp       *time.Time          `json:"timestamp,omitempty"`
+	CWD             string              `json:"cwd,omitempty"`
+	SessionID       string              `json:"session_id,omitempty"`
+	TurnID          string              `json:"turn_id,omitempty"`
+	ToolUseID       string              `json:"tool_use_id,omitempty"`
+	Source          string              `json:"source,omitempty"` // "claude" or "codex"
+	Model           string              `json:"model,omitempty"`
+	ReasoningEffort string              `json:"reasoning_effort,omitempty"`
+	PermissionMode  api.PermissionMode  `json:"permission_mode,omitempty"`
+	Namespace       string              `json:"namespace,omitempty"`
+	InputTokens     int                 `json:"input_tokens,omitempty"`
+	OutputTokens    int                 `json:"output_tokens,omitempty"`
 	// ReasoningTokens is disjoint from OutputTokens, per the api.Usage contract:
 	// OpenAI reports reasoning as a subset of output, so it is netted out at this
 	// parse boundary the way the live providers already net it.
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
-	CacheReadTokens int `json:"cache_read_tokens,omitempty"`
-	TotalTokens     int `json:"total_tokens,omitempty"`
-	ContextWindow   int `json:"context_window,omitempty"`
+	ReasoningTokens int               `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens int               `json:"cache_read_tokens,omitempty"`
+	TotalTokens     int               `json:"total_tokens,omitempty"`
+	Context         *api.ContextUsage `json:"context,omitempty"`
 	// CumulativeUsage is the provider's own running total for the session as of
 	// this record, rather than this record's delta. It is the result figure:
 	// reading the last one is exact, where summing per-record deltas drifts

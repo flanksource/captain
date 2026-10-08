@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -92,6 +93,34 @@ type CreateToolApprovalRequestInput struct {
 	Input        map[string]any
 	RequestedBy  string
 	ExpiresAt    time.Time
+	// Approval is the typed request behind the row. Its kind and payload are
+	// stored beside tool and input, which stay the keys older readers use; its
+	// Tool, Input and ToolUseID must agree with the fields above.
+	Approval *api.ApprovalRequest
+}
+
+// approvalRequestDocument is the request JSONB: tool and input, as every
+// reader has always seen them, plus the typed request's own keys.
+func approvalRequestDocument(input CreateToolApprovalRequestInput) (map[string]any, error) {
+	document := map[string]any{"tool": input.Tool, "input": input.Input}
+	if input.Approval == nil {
+		return document, nil
+	}
+	approval := *input.Approval
+	if approval.Tool != input.Tool || approval.ToolUseID != input.ToolCallID || !reflect.DeepEqual(approval.Input, input.Input) {
+		return nil, fmt.Errorf("%w: typed approval disagrees with the row's tool, input or tool call", ErrTurnRequestInvalid)
+	}
+	typed, err := jsonDocument(approval)
+	if err != nil {
+		return nil, err
+	}
+	for _, column := range []string{"tool", "input", "toolUseId", "sessionId"} {
+		delete(typed, column)
+	}
+	for key, value := range typed {
+		document[key] = value
+	}
+	return document, nil
 }
 
 func (db *DB) CreateToolApprovalRequest(
@@ -131,8 +160,9 @@ func (db *DB) CreateToolApprovalRequest(
 	if credential != nil {
 		idempotencyKey = "mcp:" + input.CredentialID.String() + ":" + input.ToolCallID
 	}
-	request := map[string]any{
-		"tool": input.Tool, "input": input.Input,
+	request, err := approvalRequestDocument(input)
+	if err != nil {
+		return nil, err
 	}
 	var credentialID *uuid.UUID
 	if credential != nil {
@@ -175,6 +205,45 @@ type ResolveToolApprovalRequestInput struct {
 	UpdatedInput   map[string]any
 	ResolvedBy     string
 	Reason         string
+	// Interrupt, Scope and Grants carry the parts of a typed decision that
+	// approve/deny and updated input cannot express.
+	Interrupt bool
+	Scope     api.ApprovalScope
+	Grants    *api.NativeSandboxPolicy
+}
+
+// resolutionResponse is the response JSONB for a decision, normalized through
+// JSON so a repeated identical answer compares equal to the stored one.
+func resolutionResponse(input ResolveToolApprovalRequestInput) (map[string]any, error) {
+	response := map[string]any{}
+	if input.Approved && input.UpdatedInput != nil {
+		response["updatedInput"] = input.UpdatedInput
+	}
+	if input.Interrupt {
+		response["interrupt"] = true
+	}
+	if input.Scope != "" {
+		response["scope"] = string(input.Scope)
+	}
+	if input.Grants != nil {
+		response["grants"] = input.Grants
+	}
+	if len(response) == 0 {
+		return nil, nil
+	}
+	return jsonDocument(response)
+}
+
+func jsonDocument(value any) (map[string]any, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode turn request document: %w", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, fmt.Errorf("decode turn request document: %w", err)
+	}
+	return document, nil
 }
 
 func (db *DB) ResolveToolApprovalRequest(
@@ -185,12 +254,12 @@ func (db *DB) ResolveToolApprovalRequest(
 		return nil, fmt.Errorf("%w: session and approval request IDs are required", ErrTurnRequestInvalid)
 	}
 	state := TurnRequestStateDenied
-	var response map[string]any
 	if input.Approved {
 		state = TurnRequestStateApproved
-		if input.UpdatedInput != nil {
-			response = map[string]any{"updatedInput": input.UpdatedInput}
-		}
+	}
+	response, err := resolutionResponse(input)
+	if err != nil {
+		return nil, err
 	}
 	var pending turnRequestRecord
 	if err := db.gorm.WithContext(ctx).
@@ -350,7 +419,7 @@ func (db *DB) ListUnwaitedPromptRuns(ctx context.Context) ([]UnwaitedPromptRun, 
 // resume moves the run to running and the trigger bumps its version, so a
 // re-read supplies exactly the version an optimistic write expects and the
 // restore lands anyway. That parks a run nobody is waiting on — no pending
-// approval left to answer, no wait left to call OnRunning — and neither half of
+// approval left to answer, no wait left to release it — and neither half of
 // the sweep moves a run out of waiting, so nothing ever repairs it.
 //
 // Reports whether the row moved. Not moving is the ordinary outcome rather than

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
@@ -18,8 +17,8 @@ const maxSchemaRetries = 2
 
 // validatingProvider validates a structured-output response against the request's
 // JSON schema and applies the prompt's SchemaStrictness policy: warning (log and
-// continue), error (fail), retry (re-ask the model once with the validation error,
-// then fail). It is a no-op unless the prompt sets both a schema and a strictness
+// continue), error (fail), retry (re-ask the model with the validation errors up to
+// maxSchemaRetries times, then fail; a streamed turn is re-asked in its own session). It is a no-op unless the prompt sets both a schema and a strictness
 // mode; Anthropic native structured-output backends default to retry validation
 // because their provider-facing schema is intentionally stripped down.
 type validatingProvider struct {
@@ -133,80 +132,6 @@ func (v *validatingProvider) retryWithFeedback(ctx context.Context, req ai.Reque
 		prev = resp
 	}
 	return nil, fmt.Errorf("%w: still invalid after %d retries: %s", ai.ErrSchemaValidation, maxSchemaRetries, verrs)
-}
-
-// ExecuteStream tees the stream: it forwards every event unchanged, accumulates
-// the response (text + any EventResult.StructuredData), and once the terminal
-// result arrives validates it against the request schema. Under "error"
-// strictness an empty or non-conforming response injects a trailing EventError
-// (which fails the iteration); "warning" only logs. (Streaming "retry" isn't
-// supported — it would require re-streaming — so it is treated as "error".)
-func (v *validatingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	streamer, ok := v.provider.(ai.StreamingProvider)
-	if !ok {
-		return nil, fmt.Errorf("provider %s/%s does not support streaming", v.provider.GetRuntime(), v.provider.GetModel())
-	}
-
-	strictness := v.effectiveStrictness(req)
-	schema, serr := ai.SchemaJSONFor(req.Prompt)
-	if strictness == api.SchemaStrictnessNone || serr != nil || len(schema) == 0 {
-		return streamer.ExecuteStream(ctx, req) // nothing to validate; forward as-is
-	}
-
-	upstream, err := streamer.ExecuteStream(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-
-	out := make(chan ai.Event)
-	go func() {
-		defer close(out)
-		var text strings.Builder
-		var structured json.RawMessage
-		validated := false
-		for ev := range upstream {
-			switch ev.Kind {
-			case ai.EventText:
-				text.WriteString(ev.Text)
-			case ai.EventResult:
-				if len(ev.StructuredData) > 0 {
-					structured = ev.StructuredData
-				}
-			}
-			out <- ev
-			if ev.Kind == ai.EventResult {
-				validated = true
-				v.emitValidation(out, schema, strictness, text.String(), structured)
-			}
-		}
-		// Some backends close the stream without a terminal EventResult.
-		if !validated {
-			v.emitValidation(out, schema, strictness, text.String(), structured)
-		}
-	}()
-	return out, nil
-}
-
-// emitValidation validates the accumulated response and, on failure, injects an
-// EventError (error/retry strictness) or logs (warning strictness).
-func (v *validatingProvider) emitValidation(out chan<- ai.Event, schema json.RawMessage, strictness api.SchemaStrictness, text string, structured json.RawMessage) {
-	resp := &ai.Response{Text: text}
-	if len(structured) > 0 {
-		resp.StructuredData = structured
-	}
-	verrs, err := validateResponse(schema, resp)
-	if err != nil {
-		out <- ai.Event{Kind: ai.EventError, Error: err.Error()}
-		return
-	}
-	if verrs == "" {
-		return
-	}
-	if strictness == api.SchemaStrictnessWarning {
-		log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetRuntime(), v.provider.GetModel(), verrs)
-		return
-	}
-	out <- ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("%s: %s", ai.ErrSchemaValidation, verrs)}
 }
 
 // responseJSON extracts the raw structured JSON a provider returned: the decoded

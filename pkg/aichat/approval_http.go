@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/flanksource/captain/pkg/ai/approval"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 )
 
@@ -24,9 +26,12 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		return
 	}
 	body := struct {
-		Approved     *bool          `json:"approved"`
-		UpdatedInput map[string]any `json:"updatedInput,omitempty"`
-		Reason       string         `json:"reason,omitempty"`
+		Approved     *bool                    `json:"approved"`
+		UpdatedInput map[string]any           `json:"updatedInput,omitempty"`
+		Reason       string                   `json:"reason,omitempty"`
+		Interrupt    bool                     `json:"interrupt,omitempty"`
+		Scope        api.ApprovalScope        `json:"scope,omitempty"`
+		Grants       *api.NativeSandboxPolicy `json:"grants,omitempty"`
 	}{}
 	decoder := json.NewDecoder(request.Body)
 	decoder.DisallowUnknownFields()
@@ -57,6 +62,7 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 		ThreadID: threadID, ApprovalID: request.PathValue("approvalID"),
 		ExpectedTurnID: activeTurnID,
 		Approved:       *body.Approved, UpdatedInput: body.UpdatedInput, Reason: body.Reason,
+		Interrupt: body.Interrupt, Scope: body.Scope, Grants: body.Grants,
 	})
 	if err != nil {
 		// Only a genuine concurrency conflict is retryable. Reporting an internal
@@ -69,6 +75,8 @@ func (s *Service) handleResolveToolApproval(w http.ResponseWriter, request *http
 			status = http.StatusConflict
 		case errors.Is(err, database.ErrSessionNotFound), errors.Is(err, database.ErrTurnRequestNotFound):
 			status = http.StatusNotFound
+		case errors.Is(err, approval.ErrInvalidResolution):
+			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	"github.com/flanksource/clicky/route"
@@ -155,11 +156,11 @@ var _ = Describe("runtime entity routes", func() {
 			})
 			Expect(status).To(Equal(http.StatusOK), "profile create: %v", profile)
 			profileID, _ := profile["id"].(string)
+			// Profiles are deprecated: the resolve route stays published but only
+			// carries the deprecation warning.
 			status, resolution := call(http.MethodGet, "/api/v1/runtime-profile/"+url.PathEscape(profileID)+"/resolve", nil)
 			Expect(status).To(Equal(http.StatusOK), "resolve: %v", resolution)
-			Expect(resolution).To(HaveKey("profile"))
-			Expect(resolution).To(HaveKey("resolved"))
-			Expect(resolution["presets"]).To(HaveLen(1))
+			Expect(resolution["warnings"]).To(ConsistOf(api.RuntimeProfileDeprecationWarning))
 		})
 	})
 })

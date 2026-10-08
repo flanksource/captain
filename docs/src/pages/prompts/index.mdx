@@ -19,11 +19,11 @@ Captain prompts are `.prompt` templates rendered through Google dotprompt and fo
 <div className="docs-card-grid">
   <div className="docs-card">
     <h3>Source</h3>
-    <p>A prompt can come from a positional file, `--prompt`, stdin, embedded examples, configured prompt dirs, or the implicit `.captain/prompts` directory.</p>
+    <p>A prompt can come from a positional file, `--prompt`, stdin (piped, or named with `-`), embedded examples, configured prompt dirs, or the implicit `.captain/prompts` directory. `-p`, `--system`, `--append-system` and `--vars` also accept `@file` or `@url`.</p>
   </div>
   <div className="docs-card">
     <h3>Template</h3>
-    <p>dotprompt renders YAML frontmatter, input schema, defaults, and role-marked body blocks such as `{{role "system"}}` and `{{role "user"}}`.</p>
+    <p>dotprompt renders YAML frontmatter, input schema, defaults, and role-marked body blocks such as `{{role "system"}}` and `{{role "user"}}`. A `.prompt` file is always a template; inline `-p` text and piped input are data, sent verbatim unless you supply `-V`/`--vars` or write `{{input}}`.</p>
   </div>
   <div className="docs-card">
     <h3>Spec</h3>

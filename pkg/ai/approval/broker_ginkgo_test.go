@@ -3,7 +3,6 @@ package approval_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/approval"
@@ -21,7 +20,7 @@ import (
 const brokerPoll = 20 * time.Millisecond
 
 type outcome struct {
-	decision api.PermissionDecision
+	decision api.ApprovalDecision
 	err      error
 }
 
@@ -34,7 +33,8 @@ var _ = Describe("Approval broker", Ordered, func() {
 
 	It("blocks on a durable pending row and unblocks with the approved input", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		outcomes := run.callTool(ctx, run.broker(time.Minute), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.broker(time.Minute), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "ls"}, ToolUseID: "toolu_approve",
 		})
 
@@ -54,7 +54,7 @@ var _ = Describe("Approval broker", Ordered, func() {
 			"PromptRunID": PointTo(Equal(run.run)),
 			"TurnID":      BeNil(),
 			"ModelCallID": BeNil(),
-			"Request":     Equal(map[string]any{"tool": "Bash", "input": map[string]any{"command": "ls"}}),
+			"Request":     Equal(map[string]any{"tool": "Bash", "input": map[string]any{"command": "ls"}, "kind": "tool"}),
 		}))
 		Consistently(outcomes, 5*brokerPoll).ShouldNot(Receive())
 
@@ -64,15 +64,16 @@ var _ = Describe("Approval broker", Ordered, func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		Eventually(outcomes).Should(Receive(Equal(outcome{decision: api.PermissionDecision{
+		Eventually(outcomes).Should(Receive(Equal(outcome{decision: api.ApprovalDecision{
 			Allow: true, UpdatedInput: map[string]any{"command": "ls -al"},
 		}})))
-		Expect(run.hooks()).To(Equal([2]int{1, 1}))
+		Expect(run.state(ctx)).To(Equal(database.PromptRunStateRunning))
 	})
 
 	It("returns the denial reason as the decision message", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		outcomes := run.callTool(ctx, run.broker(time.Minute), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.broker(time.Minute), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "go.mod"}, ToolUseID: "toolu_deny",
 		})
 
@@ -84,13 +85,14 @@ var _ = Describe("Approval broker", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		Eventually(outcomes).Should(Receive(Equal(outcome{
-			decision: api.PermissionDecision{Message: "go.mod is off limits"},
+			decision: api.ApprovalDecision{Message: "go.mod is off limits"},
 		})))
 	})
 
 	It("reuses one durable row when the same tool call is brokered twice", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		request := api.PermissionRequest{
+		request := api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Edit", Input: map[string]any{"path": "main.go"}, ToolUseID: "toolu_retry",
 		}
 		first := run.callTool(ctx, run.broker(time.Minute), request)
@@ -109,13 +111,14 @@ var _ = Describe("Approval broker", Ordered, func() {
 			SessionID: run.session, RequestID: requests[0].ID, Approved: true, ResolvedBy: "dashboard",
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Eventually(first).Should(Receive(Equal(outcome{decision: api.PermissionDecision{Allow: true}})))
-		Eventually(second).Should(Receive(Equal(outcome{decision: api.PermissionDecision{Allow: true}})))
+		Eventually(first).Should(Receive(Equal(outcome{decision: api.ApprovalDecision{Allow: true}})))
+		Eventually(second).Should(Receive(Equal(outcome{decision: api.ApprovalDecision{Allow: true}})))
 	})
 
 	It("expires an approval nobody answered before its timeout", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		outcomes := run.callTool(ctx, run.broker(150*time.Millisecond), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.broker(150*time.Millisecond), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "sleep 1"}, ToolUseID: "toolu_expire",
 		})
 		event := run.awaitPermission()
@@ -131,7 +134,8 @@ var _ = Describe("Approval broker", Ordered, func() {
 	It("cancels the durable row when the calling context ends", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
 		callCtx, cancel := context.WithCancel(ctx)
-		outcomes := run.callTool(callCtx, run.broker(time.Minute), api.PermissionRequest{
+		outcomes := run.callTool(callCtx, run.broker(time.Minute), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "git push"}, ToolUseID: "toolu_cancel",
 		})
 		event := run.awaitPermission()
@@ -144,12 +148,11 @@ var _ = Describe("Approval broker", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cancelled.State).To(Equal(database.TurnRequestStateCancelled))
 
-		// Resuming is the response to the cancellation, not a casualty of it: the
-		// hook runs on a detached context, so the run leaves `waiting` even though
-		// the caller's own context is already dead.
-		Expect(run.hooks()).To(Equal([2]int{1, 1}))
-		Expect(run.state(ctx)).NotTo(Equal(database.PromptRunStateWaiting),
-			"a cancelled approval that never resumed leaves the run waiting forever")
+		// Releasing is the response to the cancellation, not a casualty of it: it
+		// runs on a detached context, so the run leaves `waiting` even though the
+		// caller's own context is already dead.
+		Expect(run.state(ctx)).To(Equal(database.PromptRunStateRunning),
+			"a cancelled approval that never released leaves the run waiting forever")
 	})
 
 	It("resumes the run when the host cannot surface the request", func(ctx SpecContext) {
@@ -158,13 +161,13 @@ var _ = Describe("Approval broker", Ordered, func() {
 		unreachable := errors.New("event stream closed")
 		broker.Notify = func(context.Context, api.Event) error { return unreachable }
 
-		_, err := broker.CanUseTool(ctx, api.PermissionRequest{
+		_, err := broker.OnApproval(ctx, api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "ls"}, ToolUseID: "toolu_notify_fail",
 		})
 		Expect(err).To(MatchError(unreachable))
-		Expect(run.hooks()).To(Equal([2]int{1, 1}),
+		Expect(run.state(ctx)).To(Equal(database.PromptRunStateRunning),
 			"a run marked waiting for an approval nobody was shown has to be put back")
-		Expect(run.state(ctx)).NotTo(Equal(database.PromptRunStateWaiting))
 	})
 
 	It("refuses a generated tool-use ID it cannot correlate, before writing any row", func(ctx SpecContext) {
@@ -172,7 +175,8 @@ var _ = Describe("Approval broker", Ordered, func() {
 		broker := run.broker(time.Minute)
 		broker.ClaimToolUseID = nil
 
-		_, err := broker.CanUseTool(ctx, api.PermissionRequest{
+		_, err := broker.OnApproval(ctx, api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "ls"},
 			ToolUseID: "local_1", ToolUseIDGenerated: true,
 		})
@@ -184,19 +188,20 @@ var _ = Describe("Approval broker", Ordered, func() {
 		Expect(listErr).NotTo(HaveOccurred())
 		Expect(requests).To(BeEmpty(),
 			"a row keyed on a locally invented ID is one no provider decision could ever match")
-		Expect(run.hooks()).To(Equal([2]int{0, 0}))
+		Expect(run.state(ctx)).To(Equal(database.PromptRunStateRunning))
 	})
 
 	It("records the provider's own tool-call ID once the claim resolves it", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
 		broker := run.broker(time.Minute)
-		var claimed api.PermissionRequest
-		broker.ClaimToolUseID = func(_ context.Context, req api.PermissionRequest) (string, error) {
+		var claimed api.ApprovalRequest
+		broker.ClaimToolUseID = func(_ context.Context, req api.ApprovalRequest) (string, error) {
 			claimed = req
 			return "toolu_provider_1", nil
 		}
 
-		outcomes := run.callTool(ctx, broker, api.PermissionRequest{
+		outcomes := run.callTool(ctx, broker, api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "ls"},
 			ToolUseID: "local_1", ToolUseIDGenerated: true,
 		})
@@ -213,12 +218,13 @@ var _ = Describe("Approval broker", Ordered, func() {
 			SessionID: run.session, RequestID: pending.ID, Approved: true, ResolvedBy: "dashboard",
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Eventually(outcomes).Should(Receive(Equal(outcome{decision: api.PermissionDecision{Allow: true}})))
+		Eventually(outcomes).Should(Receive(Equal(outcome{decision: api.ApprovalDecision{Allow: true}})))
 	})
 
 	It("brokers a caller-tool approval under its credential, turn and model call", func(ctx SpecContext) {
 		run := newCallerToolRun(ctx, db)
-		outcomes := run.callTool(ctx, run.callerBroker(), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.callerBroker(), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "ls"}, ToolUseID: "toolu_caller",
 		})
 
@@ -236,12 +242,13 @@ var _ = Describe("Approval broker", Ordered, func() {
 			SessionID: run.session, RequestID: pending.ID, Approved: true, ResolvedBy: "chat",
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Eventually(outcomes).Should(Receive(Equal(outcome{decision: api.PermissionDecision{Allow: true}})))
+		Eventually(outcomes).Should(Receive(Equal(outcome{decision: api.ApprovalDecision{Allow: true}})))
 	})
 
 	It("cancels a caller-tool approval whose credential is revoked mid-wait", func(ctx SpecContext) {
 		run := newCallerToolRun(ctx, db)
-		outcomes := run.callTool(ctx, run.callerBroker(), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.callerBroker(), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "rm -rf /"}, ToolUseID: "toolu_revoked",
 		})
 		event := run.awaitPermission()
@@ -285,16 +292,13 @@ func completeBroker(db *database.DB) *approval.Broker {
 
 // providerRun is a captain session and prompt run with no turn, model call or
 // caller-tool credential — the shape `captain prompt run` and an external host
-// present to the broker.
+// present to the broker. The run is already running, as it is whenever a tool
+// call reaches the broker.
 type providerRun struct {
 	db      *database.DB
 	session uuid.UUID
 	run     uuid.UUID
 	events  chan api.Event
-
-	mu      sync.Mutex
-	waiting int
-	running int
 }
 
 func newProviderRun(ctx context.Context, db *database.DB) *providerRun {
@@ -305,26 +309,29 @@ func newProviderRun(ctx context.Context, db *database.DB) *providerRun {
 	Expect(err).NotTo(HaveOccurred())
 	run, err := db.CreatePromptRun(ctx, database.CreatePromptRunInput{SessionID: session.ID})
 	Expect(err).NotTo(HaveOccurred())
-	return &providerRun{db: db, session: session.ID, run: run.ID, events: make(chan api.Event, 4)}
+	started := &providerRun{db: db, session: session.ID, run: run.ID, events: make(chan api.Event, 4)}
+	started.setState(ctx, database.PromptRunStateRunning)
+	return started
 }
 
+// broker names no posture hook: the broker writes the run's waiting state
+// itself, which is exactly what a host must no longer have to do.
 func (r *providerRun) broker(timeout time.Duration) *approval.Broker {
 	return &approval.Broker{
 		DB: r.db, SessionID: r.session, PromptRunID: r.run, RequestedBy: "provider",
 		Timeout: timeout, Poll: brokerPoll, Notify: r.notify,
-		OnWaiting: r.markWaiting, OnRunning: r.markRunning,
 	}
 }
 
 func (r *providerRun) callTool(
 	ctx context.Context,
 	broker *approval.Broker,
-	request api.PermissionRequest,
+	request api.ApprovalRequest,
 ) chan outcome {
 	outcomes := make(chan outcome, 1)
 	go func() {
 		defer GinkgoRecover()
-		decision, err := broker.CanUseTool(ctx, request)
+		decision, err := broker.OnApproval(ctx, request)
 		outcomes <- outcome{decision: decision, err: err}
 	}()
 	return outcomes
@@ -348,47 +355,24 @@ func (r *providerRun) notify(ctx context.Context, event api.Event) error {
 	}
 }
 
-// markWaiting is the host callback a credential-less approval depends on:
-// ResolveToolApprovalRequest only accepts one while its prompt run is waiting.
-func (r *providerRun) markWaiting(ctx context.Context) error {
-	r.mu.Lock()
-	r.waiting++
-	r.mu.Unlock()
-	return r.setState(ctx, database.PromptRunStateWaiting)
-}
-
-func (r *providerRun) markRunning(ctx context.Context) error {
-	r.mu.Lock()
-	r.running++
-	r.mu.Unlock()
-	return r.setState(ctx, database.PromptRunStateRunning)
-}
-
-func (r *providerRun) setState(ctx context.Context, state database.PromptRunState) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// setState is the run's own lifecycle moving underneath the broker — started,
+// or stopped by a writer the broker never sees.
+func (r *providerRun) setState(ctx context.Context, state database.PromptRunState) {
+	GinkgoHelper()
 	current, err := r.db.GetPromptRun(ctx, r.run)
-	if err != nil {
-		return err
-	}
+	Expect(err).NotTo(HaveOccurred())
 	_, err = r.db.UpdatePromptRun(ctx, database.UpdatePromptRunInput{
 		ID: current.ID, ExpectedVersion: current.Version, State: &state,
 	})
-	return err
+	Expect(err).NotTo(HaveOccurred())
 }
 
 // state is the prompt run's durable state, which is what a host reading the
 // dashboard sees: a run still parked in `waiting` after its approval ended is
-// the symptom every unpaired OnWaiting produces.
+// the symptom of a wait that never released it.
 func (r *providerRun) state(ctx context.Context) database.PromptRunState {
 	GinkgoHelper()
 	current, err := r.db.GetPromptRun(ctx, r.run)
 	Expect(err).NotTo(HaveOccurred())
 	return current.State
-}
-
-func (r *providerRun) hooks() [2]int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return [2]int{r.waiting, r.running}
 }

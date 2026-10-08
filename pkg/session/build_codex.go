@@ -115,6 +115,7 @@ type CodexAccumulator struct {
 	cumulative    codexCumulative
 	plan          codexPlanState
 	freshMessages []Message
+	pendingTools  []Message
 	rootType      string
 	rootDesc      string
 }
@@ -187,6 +188,9 @@ func (a *CodexAccumulator) observe(use history.ToolUse) {
 	if s.Model == "" {
 		s.Model = use.Model
 	}
+	if use.PermissionMode != "" {
+		s.PermissionMode = use.PermissionMode
+	}
 	if use.Timestamp != nil {
 		extendRange(s, *use.Timestamp)
 	}
@@ -196,6 +200,9 @@ func (a *CodexAccumulator) observe(use history.ToolUse) {
 	}
 
 	if tools.IsEventToolName(use.Tool) || use.Tool == "ApiError" {
+		if use.Tool == "TaskStarted" || use.Tool == "TaskComplete" || use.Tool == "ApiError" {
+			a.pendingTools = nil
+		}
 		ev := codexUseToEvent(use)
 		if use.Tool == "MemoryCitation" {
 			ev.Scope = "session"
@@ -223,6 +230,7 @@ func (a *CodexAccumulator) observe(use history.ToolUse) {
 	}
 	a.collectPaths(use)
 	message := codexUseToMessage(use)
+	a.observeToolMessage(message)
 	a.turns.addMessage(use, message.ID)
 	if a.collect {
 		s.Messages = append(s.Messages, message)
@@ -238,14 +246,17 @@ func (a *CodexAccumulator) observeUsage(use history.ToolUse) {
 		cost = codexCostFromUsage(use.Model, delta)
 	}
 	if cost.TotalTokens != 0 {
+		a.estimateToolCosts(cost)
 		a.session.Cost = a.session.Cost.Add(cost)
 		modelCost := a.costByModel[cost.Model]
 		modelCost.Model = cost.Model
 		a.costByModel[cost.Model] = modelCost.Add(cost)
+	}
+	if cost.TotalTokens != 0 || use.Tool == "TokenCount" {
 		a.turns.addUsage(use, cost)
 	}
-	if context := codexContextFromUse(use); context != nil {
-		a.session.Context = context
+	if use.Tool == "TokenCount" {
+		a.session.Context = use.Context
 	}
 }
 
@@ -253,6 +264,9 @@ func (a *CodexAccumulator) collectPaths(use history.ToolUse) {
 	footprint := history.ToolFootprint(use)
 	for _, path := range footprint.Read {
 		a.addPath(a.read, &a.session.Files.Read, path, use.CWD)
+	}
+	for _, attachment := range use.Attachments {
+		a.addPath(a.read, &a.session.Files.Read, attachment.Path, use.CWD)
 	}
 	for _, path := range footprint.Written {
 		a.addPath(a.written, &a.session.Files.Written, path, use.CWD)
@@ -303,6 +317,9 @@ func (a *CodexAccumulator) Project(provisional []history.ToolUse) *Session {
 		if use.Timestamp != nil {
 			extendRange(&s, *use.Timestamp)
 		}
+		if use.PermissionMode != "" {
+			s.PermissionMode = use.PermissionMode
+		}
 		plan.observe(use)
 		if items := todosFromCodexUse(use); len(items) > 0 {
 			s.Todos = items
@@ -312,6 +329,9 @@ func (a *CodexAccumulator) Project(provisional []history.ToolUse) *Session {
 		}
 		footprint := history.ToolFootprint(use)
 		appendAbsolute(&extraRead, footprint.Read, use.CWD)
+		for _, attachment := range use.Attachments {
+			appendAbsolute(&extraRead, []string{attachment.Path}, use.CWD)
+		}
 		appendAbsolute(&extraWritten, footprint.Written, use.CWD)
 		message := codexUseToMessage(use)
 		s.Messages = append(s.Messages, message)
@@ -548,7 +568,22 @@ func codexUseToMessageBody(u history.ToolUse) Message {
 	case "System":
 		return Message{ID: id, Role: "system", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "User":
-		return Message{ID: id, Role: "user", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
+		parts := make([]Part, 0, len(u.Attachments)+1)
+		for _, attachment := range u.Attachments {
+			part := Part{
+				Type: PartFile, MediaType: attachment.MediaType, URL: attachment.URL,
+				Filename: attachment.Filename, AttachmentID: attachment.ID,
+			}
+			if id := codexAttachmentID(attachment.Path); id != "" {
+				part.AttachmentID = id
+				part.URL = "/api/attachments/" + id
+			}
+			parts = append(parts, part)
+		}
+		if text := codexText(u); text != "" {
+			parts = append(parts, Part{Type: PartText, Text: text})
+		}
+		return Message{ID: id, Role: "user", Parts: parts, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "Assistant":
 		return Message{ID: id, Role: "assistant", Parts: []Part{{Type: PartText, Text: codexText(u)}}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	case "Reasoning":
@@ -569,6 +604,19 @@ func codexUseToMessageBody(u history.ToolUse) Message {
 		}
 		return Message{ID: id, Role: "assistant", Parts: []Part{part}, TurnID: u.TurnID, Provenance: prov, AgentID: agentID}
 	}
+}
+
+func codexAttachmentID(path string) string {
+	digest := filepath.Base(path)
+	if filepath.Base(filepath.Dir(path)) != strings.ToLower(digest[:min(2, len(digest))]) ||
+		filepath.Base(filepath.Dir(filepath.Dir(path))) != "sha256" {
+		return ""
+	}
+	id := api.AttachmentIDPrefix + strings.ToLower(digest)
+	if err := (api.AttachmentRef{ID: id}).Validate(); err != nil {
+		return ""
+	}
+	return id
 }
 
 func codexUseToEvent(u history.ToolUse) Event {
@@ -724,8 +772,8 @@ func (b *codexTurnBuilder) addUsage(u history.ToolUse, cost api.Cost) {
 	}
 	turn.Cost = turn.Cost.Add(cost)
 	turn.Usage = usageFromCost(turn.Cost)
-	if ctx := codexContextFromUse(u); ctx != nil {
-		turn.Context = ctx
+	if u.Tool == "TokenCount" {
+		turn.Context = u.Context
 	}
 	observeCodexTurnRuntime(turn, u)
 	b.dirty[turn.ID] = struct{}{}
@@ -889,18 +937,6 @@ func (c *codexCumulative) delta(u history.ToolUse) (api.Usage, bool) {
 	c.prev = current
 	c.seen = true
 	return delta, true
-}
-
-func codexContextFromUse(u history.ToolUse) *Context {
-	if u.ContextWindow == 0 {
-		return nil
-	}
-	used := u.InputTokens + u.CacheReadTokens
-	return &Context{
-		UsedTokens:   used,
-		WindowTokens: u.ContextWindow,
-		FreePercent:  freeContextPercent(used, u.ContextWindow),
-	}
 }
 
 func mergeCodexCapabilities(c *Capabilities, u history.ToolUse) {

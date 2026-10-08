@@ -1,0 +1,9 @@
+name: Edit
+description: >-
+  Accepts file edits without asking: permission mode acceptEdits plus the edit bundle (a Read/Edit/Write/Glob/Grep allowlist where the runtime honours one), the same posture as captain's --edit flag.
+  It does not pre-approve shell commands, web access or MCP tools, and it sets no sandbox.
+scope: context
+spec:
+  permissions:
+    mode: acceptEdits
+    presets: [edit]

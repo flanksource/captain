@@ -85,14 +85,14 @@ var _ = Describe("Session overview aggregates", func() {
 			INSERT INTO captain_model_calls
 			  (turn_id, call_index, prompt_run_id, model, provider, mode, effort, input_tokens, output_tokens,
 			   reasoning_tokens, cache_read_tokens, cache_write_tokens, context_tokens,
-			   context_window_tokens, input_cost, output_cost, reasoning_cost,
+			   context_window_tokens, context_free_percent, input_cost, output_cost, reasoning_cost,
 			   cache_read_cost, cache_write_cost, provider_cost_usd, currency, started_at, ended_at)
 			VALUES
-			  (?, 0, ?, 'model-old', 'openai', 'cli', 'low', 10, 4, 2, 3, 1, 20, 100,
+			  (?, 0, ?, 'model-old', 'openai', 'cli', 'low', 10, 4, 2, 3, 1, 20, 100, 80,
 			   0.10, 0.04, 0.02, 0.03, 0.01, 0.25, 'USD', '2026-07-16 10:00:00+00', '2026-07-16 10:01:00+00'),
-			  (?, 0, ?, 'model-latest', 'openai', 'cli', 'high', 20, 8, 4, 6, 2, 75, 100,
+			  (?, 0, ?, 'model-latest', 'openai', 'cli', 'high', 20, 8, 4, 6, 2, 89595, 258400, 69,
 			   0.20, 0.08, 0.04, 0.06, 0.02, 0, 'USD', '2026-07-16 11:00:00+00', '2026-07-16 11:01:00+00'),
-			  (?, 1, ?, 'model-eur', 'openai', 'cli', NULL, 100, 50, 25, 10, 5, 50, 100,
+			  (?, 1, ?, 'model-eur', 'openai', 'cli', NULL, 100, 50, 25, 10, 5, 50, 100, 50,
 			   9, 9, 9, 9, 9, 9, 'EUR', '2026-07-16 09:00:00+00', '2026-07-16 09:01:00+00')`,
 			turnOne, promptRunID, turnTwo, promptRunID, turnTwo, promptRunID,
 		).Error).NotTo(HaveOccurred())
@@ -203,7 +203,7 @@ var _ = Describe("Session overview aggregates", func() {
 			PendingRequestCount: 1, ApprovedRequestCount: 2, DeniedRequestCount: 1,
 			FileReadCount: 1, FileWrittenCount: 3,
 			Model: "model-latest", ModelProvider: "openai", ModelMode: "cli", Effort: "high",
-			ContextTokens: 75, ContextWindowTokens: 100, ContextFreePercent: 25,
+			ContextTokens: 89595, ContextWindowTokens: 258400, ContextFreePercent: 69,
 			InputTokens: 130, OutputTokens: 62, ReasoningTokens: 31,
 			CacheReadTokens: 19, CacheWriteTokens: 8, TotalTokens: 250,
 			CostUSD: 0.65,

@@ -40,19 +40,19 @@ func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
 		// A verifier that runs an agent of its own inherits the run's model,
 		// permissions and budget from here. It is the resolved request — the same
 		// one the runner executes — and read-only to a factory.
-		opts.RunSpec = &in.Request
+		opts.RunSpec = &in.Resolved.Spec
 	}
-	verifyHooks, err := verify.HooksFor(ctx, in.Request.Workflow, opts)
+	verifyHooks, err := verify.HooksFor(ctx, in.Resolved.Spec.Workflow, opts)
 	if err != nil {
 		return nil, err
 	}
 	var hooks []any
 	if !in.CallerOwnsCommits {
-		hooks = append(hooks, commit.HooksForWorkflow(in.Request.Workflow)...)
+		hooks = append(hooks, commit.HooksForWorkflow(in.Resolved.Spec.Workflow)...)
 	}
 	hooks = append(hooks, verifyHooks...)
 	hooks = append(hooks, in.Hooks...)
-	if in.Provider == nil && in.Request.Setup != nil {
+	if in.Provider == nil && in.Resolved.Spec.Setup != nil {
 		hooks = append(hooks, &setup.Plugin{})
 	}
 	return hooks, nil

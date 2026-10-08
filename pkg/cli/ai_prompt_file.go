@@ -7,6 +7,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky"
 	"github.com/flanksource/commons-db/shell"
 )
 
@@ -31,17 +32,50 @@ func resolvePromptTemplate(opts AIPromptOptions, stdin string) (tmpl *prompt.Tem
 	}
 }
 
+// fileRefValue exists so a --var value can be expanded by clicky itself rather
+// than by a hand-rolled os.ReadFile. clicky gates `@` expansion on a struct tag
+// and refuses credential stores, private keys and kernel state; a second reader
+// here would quietly not do that, and `-V key=@~/.ssh/id_rsa` would succeed
+// where `-p @~/.ssh/id_rsa` is refused.
+type fileRefValue struct {
+	Value string `flag:"value" clicky:"cli-file-read"`
+}
+
+// expandValueRef resolves an `@file` or `@url` value; anything else is returned
+// unchanged.
+func expandValueRef(raw string) (string, error) {
+	if _, ok := promptFileRef(raw); !ok {
+		return raw, nil
+	}
+	out, err := clicky.BuildOpts[fileRefValue](map[string]string{"value": raw})
+	if err != nil {
+		return "", err
+	}
+	return out.Value, nil
+}
+
 // parseVars turns repeated --var key=value flags into the template data map.
-func parseVars(pairs []string) (map[string]any, error) {
-	data := make(map[string]any, len(pairs))
+// A value of "-" binds the piped stdin (reported back so the caller does not
+// also append it), and an "@file"/"@url" value is expanded to its contents.
+func parseVars(pairs []string, stdin string) (data map[string]any, boundStdin bool, err error) {
+	data = make(map[string]any, len(pairs))
 	for _, p := range pairs {
 		k, v, ok := strings.Cut(p, "=")
 		if !ok {
-			return nil, fmt.Errorf("invalid --var %q: want key=value", p)
+			return nil, false, fmt.Errorf("invalid --var %q: want key=value", p)
 		}
-		data[k] = v
+		if v == "-" {
+			if strings.TrimSpace(stdin) == "" {
+				return nil, false, fmt.Errorf("--var %s=- reads stdin, but nothing was piped in", k)
+			}
+			data[k], boundStdin = strings.TrimSpace(stdin), true
+			continue
+		}
+		if data[k], err = expandValueRef(v); err != nil {
+			return nil, false, fmt.Errorf("--var %s: %w", k, err)
+		}
 	}
-	return data, nil
+	return data, boundStdin, nil
 }
 
 // normalizePromptContextDir resolves the complete Setup through its owning

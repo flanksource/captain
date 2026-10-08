@@ -171,7 +171,7 @@ func partTool(m Message, p Part, agent *Agent) tools.Tool {
 		return newPrettyTool(name, toolPartInput(p), m.Provenance, agent)
 	case PartFile:
 		return newPrettyTool("File", map[string]any{
-			"filename": p.Filename, "url": p.URL, "mediaType": p.MediaType,
+			"filename": p.Filename, "url": p.URL, "mediaType": p.MediaType, "attachmentId": p.AttachmentID,
 		}, m.Provenance, agent)
 	case PartVerify:
 		input := verifyPartInput(p)
@@ -210,7 +210,7 @@ func verifyPartInput(p Part) map[string]any {
 	if err := json.Unmarshal(p.Data, &report); err != nil {
 		return map[string]any{"verify": compactWhitespace(string(p.Data))}
 	}
-	input := map[string]any{"name": report.Name, "state": string(report.State)}
+	input := map[string]any{"kind": report.Kind, "name": report.Name, "state": string(report.State)}
 	if report.Reason != "" {
 		input["reason"] = report.Reason
 	}

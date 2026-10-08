@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/ai/approval"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/budgets"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/google/uuid"
 )
 
@@ -50,14 +51,20 @@ func (a *DatabaseExecutionAuthority) Begin(
 	if request.Spec.Mode == "" || request.Spec.Provider == nil {
 		return nil, fmt.Errorf("authoritative chat execution requires a resolved (provider, mode) runtime")
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, request.Dimensions, request.Spec.Candidates())
 	if err != nil {
 		return nil, err
 	}
 	primaryAttributions, _ := budgetAdmission.ForModel(request.Spec.Model)
-	renderedSpec, err := renderedSpecMap(request.Spec, request.Profile)
+	renderedSpec, err := promptrun.SpecDocument(request.Spec)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("authoritative chat spec: %w", err)
+	}
+	// Chat composes its layers itself, so there is no runtime preset or profile
+	// resolution to record beyond the spec trace.
+	metadata, err := promptrun.RunMetadata(request.Profile, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("authoritative chat spec resolution: %w", err)
 	}
 	var session *database.Session
 	var execution *databaseExecution
@@ -103,7 +110,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 		resumed = !created
 		run, createErr := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
 			SessionID: session.ID, TurnID: &turn.ID, AdmissionKey: executionAdmissionKey(request),
-			Origin: "aichat", RenderedSpec: renderedSpec,
+			Origin: "aichat", RenderedSpec: renderedSpec, Metadata: metadata,
 			Runtime: database.PromptRunRuntime{
 				// Runtime.Mode here is the RUN mode; the runtime mechanism travels on
 				// the requested/resolved selections.
@@ -196,10 +203,10 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 		}
 		expectedTurnID = &parsed
 	}
-	request, err := a.db.ResolveToolApprovalRequest(ctx, database.ResolveToolApprovalRequestInput{
-		SessionID: sessionID, RequestID: approvalID, ExpectedTurnID: expectedTurnID,
-		Approved: resolution.Approved, UpdatedInput: resolution.UpdatedInput,
-		ResolvedBy: "chat", Reason: resolution.Reason,
+	request, err := approval.Resolve(ctx, a.db, approval.ResolveInput{
+		RequestID: approvalID, SessionID: sessionID, ExpectedTurnID: expectedTurnID,
+		Approved: resolution.Approved, UpdatedInput: resolution.UpdatedInput, ResolvedBy: "chat", Reason: resolution.Reason,
+		Interrupt: resolution.Interrupt, Scope: resolution.Scope, Grants: resolution.Grants,
 	})
 	if err != nil {
 		return nil, err
@@ -240,9 +247,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
-	renderedSpec := maps.Clone(run.RenderedSpec)
-	delete(renderedSpec, "resolution")
-	rendered, err := json.Marshal(renderedSpec)
+	rendered, err := json.Marshal(run.RenderedSpec)
 	if err != nil {
 		return nil, fmt.Errorf("encode prompt run %s rendered spec: %w", run.ID, err)
 	}
@@ -271,7 +276,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	if err != nil {
 		return nil, err
 	}
-	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Model.Candidates())
+	budgetAdmission, err := a.budgetAdmission(ctx, turn.Dimensions, spec.Candidates())
 	if err != nil {
 		return nil, err
 	}
@@ -386,32 +391,6 @@ func runtimeModel(selection database.PromptRunRuntimeSelection, base api.Model) 
 		base.Provider = p
 	}
 	return base
-}
-
-func renderedSpecMap(spec api.Spec, profile api.ResolvedSpec) (map[string]any, error) {
-	raw, err := json.Marshal(spec)
-	if err != nil {
-		return nil, fmt.Errorf("encode authoritative chat spec: %w", err)
-	}
-	var rendered map[string]any
-	if err := json.Unmarshal(raw, &rendered); err != nil {
-		return nil, fmt.Errorf("decode authoritative chat spec: %w", err)
-	}
-	if len(profile.Trace) > 0 {
-		resolution, err := json.Marshal(struct {
-			Constraints api.RuntimeConstraints `json:"constraints"`
-			Trace       []api.SpecLayer        `json:"trace"`
-		}{Constraints: profile.Constraints, Trace: profile.Trace})
-		if err != nil {
-			return nil, fmt.Errorf("encode authoritative chat profile: %w", err)
-		}
-		var value map[string]any
-		if err := json.Unmarshal(resolution, &value); err != nil {
-			return nil, fmt.Errorf("decode authoritative chat profile: %w", err)
-		}
-		rendered["resolution"] = value
-	}
-	return rendered, nil
 }
 
 func executionAdmissionKey(request ExecutionRequest) string {

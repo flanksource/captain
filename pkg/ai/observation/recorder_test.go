@@ -54,7 +54,7 @@ func TestRecorderCorrelatesDeniedPermissionWithUnstartedTool(t *testing.T) {
 		Kind: api.EventToolUse, Tool: "sentinel.write", ToolCallID: "call-1",
 		Input: map[string]any{"secret": "must-not-appear"},
 	})
-	decision, err := recorder.PermissionBroker(nil)(context.Background(), api.PermissionRequest{
+	decision, err := recorder.ApprovalBroker(nil)(context.Background(), api.ApprovalRequest{
 		Tool: "sentinel.write", ToolUseID: "call-1", Input: map[string]any{"secret": "must-not-appear"},
 	})
 	if err != nil || decision.Allow {

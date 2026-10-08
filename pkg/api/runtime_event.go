@@ -14,6 +14,7 @@ type Response struct {
 	Model           string
 	Runtime         Runtime
 	Usage           Usage
+	Context         *ContextUsage
 	// CostUSD is the response's reported cost: the provider's authoritative value
 	// when it supplies one (the claude CLI's total_cost_usd, the agent's cost_usd),
 	// otherwise the provider's list-price estimate. 0 means no cost was reported
@@ -41,9 +42,9 @@ const (
 	EventError       EventKind = "error"
 	EventInterrupted EventKind = "interrupted"
 	EventSystem      EventKind = "system"
-	// EventPermission surfaces a tool-permission request brokered via CanUseTool
+	// EventPermission surfaces a tool-permission request brokered via OnApproval
 	// so callers can observe what is awaiting approval. Tool/Input/ToolCallID carry
-	// the requested tool; the decision itself flows back through the CanUseTool
+	// the requested tool; the decision itself flows back through the OnApproval
 	// callback, not through the event stream.
 	EventPermission EventKind = "permission"
 
@@ -65,7 +66,31 @@ const (
 	// carries the same *VerifyReport the verdict will, so a renderer redraws the
 	// tree from one shape whether the check is running or done.
 	EventVerifyProgress EventKind = "verify_progress"
+
+	// EventToolProgress is one in-flight line of output from a tool call that has
+	// not returned yet — a long build or test run inside a turn, which otherwise
+	// shows nothing between the call and its result. Tool names the tool,
+	// ToolCallID correlates it with the call, and Text is the most recent line.
+	//
+	// Like EventVerifyProgress it is a superseded snapshot, not transcript: a
+	// consumer redraws it in place and never commits it, and a runtime with no
+	// incremental tool output simply never sends one.
+	EventToolProgress EventKind = "tool_progress"
+
+	// EventTurnStart is emitted by the loop before each iteration's
+	// ExecuteStream, never by a provider. Raw carries a *TurnStart naming the
+	// turn and the request it is about to send, Model the runtime's resolved
+	// model and SessionID the session being resumed (empty for a new one). It is
+	// loop metadata, so it is not recorded on LoopIteration.Events.
+	EventTurnStart EventKind = "turn_start"
 )
+
+// TurnStart is the Raw payload of an EventTurnStart.
+type TurnStart struct {
+	Iteration     int
+	MaxIterations int
+	Request       Spec
+}
 
 // Event is one item in a streaming provider's output channel.
 type Event struct {
@@ -79,14 +104,23 @@ type Event struct {
 	// (the call) and EventToolResult (its complete output). Backends that stream
 	// output incrementally accumulate it and emit a single EventToolResult.
 	ToolCallID string
+	// ParentToolCallID is set on a subagent's EventToolUse / EventToolResult: the
+	// call ID of the parent's Agent tool call that spawned the subagent. A
+	// background subagent can outlive the parent turn, so its calls do not count
+	// toward the turn's own completeness.
+	ParentToolCallID string
 	// ApprovalID is the durable captain_turn_requests UUID associated with an
 	// EventPermission. It is distinct from the provider's tool-call ID.
 	ApprovalID string
+	// Request is the full approval request behind an EventPermission. Tool,
+	// Input and ToolCallID stay set alongside it for hosts that read only those.
+	Request *ApprovalRequest
 
-	Usage     *Usage  // when Kind == EventResult
-	CostUSD   float64 // when Kind == EventResult
-	Success   bool    // when Kind == EventResult; for EventToolResult, false = the tool errored
-	SessionID string  // when Kind == EventSystem
+	Usage     *Usage        // when Kind == EventResult
+	Context   *ContextUsage // provider context snapshot, independent of Usage
+	CostUSD   float64       // when Kind == EventResult
+	Success   bool          // when Kind == EventResult; for EventToolResult, false = the tool errored
+	SessionID string        // when Kind == EventSystem
 	Model     string
 	Error     string // when Kind == EventError
 	Reason    string // when Kind == EventInterrupted or EventVerifyFailed

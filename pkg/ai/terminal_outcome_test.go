@@ -45,9 +45,10 @@ func TestTerminalOutcomeFromEventQuestions(t *testing.T) {
 	require.NotNil(t, outcome)
 	assert.Equal(t, TerminalOutcomeQuestions, outcome.Kind)
 	require.Equal(t, []TerminalQuestion{{
-		Text:    "Which database?",
-		Context: "Storage",
-		Options: []string{"PostgreSQL", "SQLite"},
+		Text:               "Which database?",
+		Context:            "Storage",
+		Options:            []string{"PostgreSQL", "SQLite"},
+		OptionDescriptions: map[string]string{"PostgreSQL": "Production database"},
 	}}, outcome.Questions)
 }
 

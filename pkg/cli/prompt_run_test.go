@@ -12,6 +12,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/api/registry"
 	clickyapi "github.com/flanksource/clicky/api"
 )
 
@@ -69,13 +70,23 @@ func TestExecuteSyncRunMultiModelsParallel(t *testing.T) {
 	if got.Status != "completed" || got.Total != 2 || got.Succeeded != 2 || got.Failed != 0 {
 		t.Fatalf("batch status = %s total=%d succeeded=%d failed=%d", got.Status, got.Total, got.Succeeded, got.Failed)
 	}
+	// Which model an alias names belongs to the catalog (pinned by the
+	// registry's own tests); this test checks each selector reaches its runtime.
+	resolve := func(mode api.RuntimeMode, alias string) string {
+		t.Helper()
+		model, ok := registry.Anthropic.ResolveExact(mode, alias)
+		if !ok {
+			t.Fatalf("catalog does not resolve %s:%s", mode, alias)
+		}
+		return model
+	}
 	want := []struct {
 		provider string
 		mode     api.RuntimeMode
 		model    string
 	}{
-		{api.Anthropic.Name, api.ModeCLI, "claude-sonnet-5"},
-		{api.Anthropic.Name, api.ModeCmux, "claude-opus-5"},
+		{api.Anthropic.Name, api.ModeCLI, resolve(api.ModeCLI, "sonnet-5")},
+		{api.Anthropic.Name, api.ModeCmux, resolve(api.ModeCmux, "opus")},
 	}
 	for i, w := range want {
 		if got.Runs[i].Provider != w.provider || got.Runs[i].Mode != string(w.mode) || got.Runs[i].Model != w.model {

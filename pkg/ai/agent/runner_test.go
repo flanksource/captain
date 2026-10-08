@@ -14,8 +14,9 @@ import (
 
 // fakeProvider emits a scripted set of events per iteration.
 type fakeProvider struct {
-	events func(iter int) []ai.Event
-	calls  int
+	events   func(iter int) []ai.Event
+	calls    int
+	requests []ai.Request
 }
 
 func (f *fakeProvider) GetModel() string       { return "fake" }
@@ -23,9 +24,10 @@ func (f *fakeProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropi
 func (f *fakeProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
 	return &ai.Response{}, nil
 }
-func (f *fakeProvider) ExecuteStream(_ context.Context, _ ai.Request) (<-chan ai.Event, error) {
+func (f *fakeProvider) ExecuteStream(_ context.Context, req ai.Request) (<-chan ai.Event, error) {
 	iter := f.calls
 	f.calls++
+	f.requests = append(f.requests, req)
 	ch := make(chan ai.Event, 16)
 	go func() {
 		defer close(ch)
@@ -168,6 +170,39 @@ func TestRunner_VerifyDrivesRerunThenStops(t *testing.T) {
 	require.Len(t, res.Verdicts, 2)
 	assert.False(t, res.Verdicts[0].Valid)
 	assert.True(t, res.Verdicts[1].Valid)
+}
+
+// TestRunner_VerifyRetryResumesTheProviderSession: a verify-driven retry must
+// continue the session that did the work. A fresh session loses the agent's
+// context and, under a recorded run, names a second provider session the
+// admission session is already bound against.
+func TestRunner_VerifyRetryResumesTheProviderSession(t *testing.T) {
+	const firstSession = "sess-first"
+	prov := &fakeProvider{events: func(int) []ai.Event {
+		return []ai.Event{
+			{Kind: ai.EventSystem, SessionID: firstSession},
+			{Kind: ai.EventResult, Success: true},
+		}
+	}}
+	var verifyCalls int
+	r := &Runner[string]{
+		Provider:      prov,
+		MaxIterations: 2,
+		Request:       ai.Request{Prompt: api.Prompt{User: "go"}},
+		Hooks: []any{
+			verifyHook{name: "fixture", fn: func(hc *HookContext) (VerifyResult, error) {
+				verifyCalls++
+				next := *hc.Request
+				return VerifyResult{Valid: verifyCalls > 1, Retry: &next}, nil
+			}},
+		},
+	}
+
+	_, err := r.Run(context.Background())
+	require.NoError(t, err)
+	require.Len(t, prov.requests, 2)
+	assert.Equal(t, []string{"", firstSession},
+		[]string{prov.requests[0].SessionID, prov.requests[1].SessionID})
 }
 
 func TestRunner_PhaseOrder(t *testing.T) {

@@ -22,53 +22,56 @@ const (
 // are aggregated only after pagination; other detail-only aggregates remain on
 // the overview path.
 type SessionListSummary struct {
-	ID                  uuid.UUID       `gorm:"column:id" json:"id"`
-	ProviderSessionID   *string         `gorm:"column:provider_session_id" json:"providerSessionId,omitempty"`
-	Source              string          `gorm:"column:source" json:"source"`
-	Provider            string          `gorm:"column:provider" json:"provider,omitempty"`
-	HostID              string          `gorm:"column:host_id" json:"hostId"`
-	ParentSessionID     *uuid.UUID      `gorm:"column:parent_session_id" json:"parentSessionId,omitempty"`
-	RootSessionID       *uuid.UUID      `gorm:"column:root_session_id" json:"rootSessionId,omitempty"`
-	Path                *string         `gorm:"column:path" json:"path,omitempty"`
-	HistoryFile         *string         `gorm:"column:history_file" json:"historyFile,omitempty"`
-	Project             *string         `gorm:"column:project" json:"project,omitempty"`
-	CWD                 *string         `gorm:"column:cwd" json:"cwd,omitempty"`
-	Title               *string         `gorm:"column:title" json:"title,omitempty"`
-	InitialPrompt       *string         `gorm:"column:initial_prompt" json:"initialPrompt,omitempty"`
-	Slug                *string         `gorm:"column:slug" json:"slug,omitempty"`
-	CLIVersion          *string         `gorm:"column:cli_version" json:"cliVersion,omitempty"`
-	LifecycleStatus     string          `gorm:"column:lifecycle_status" json:"lifecycleStatus"`
-	Git                 json.RawMessage `gorm:"column:git" json:"git,omitempty"`
-	Metadata            json.RawMessage `gorm:"column:metadata" json:"metadata,omitempty"`
-	StartedAt           *time.Time      `gorm:"column:started_at" json:"startedAt,omitempty"`
-	EndedAt             *time.Time      `gorm:"column:ended_at" json:"endedAt,omitempty"`
-	LastActivityAt      *time.Time      `gorm:"column:last_activity_at" json:"lastActivityAt,omitempty"`
-	ActivityAt          time.Time       `gorm:"column:activity_at" json:"-"`
-	PID                 *int64          `gorm:"column:pid" json:"pid,omitempty"`
-	ProcessStatus       *string         `gorm:"column:process_status" json:"processStatus,omitempty"`
-	ProcessCommand      *string         `gorm:"column:process_command" json:"processCommand,omitempty"`
-	ProcessCWD          *string         `gorm:"column:process_cwd" json:"processCwd,omitempty"`
-	ProcessStartedAt    *time.Time      `gorm:"column:process_started_at" json:"processStartedAt,omitempty"`
-	ProcessSampledAt    *time.Time      `gorm:"column:process_sampled_at" json:"processSampledAt,omitempty"`
-	LastHeartbeatAt     *time.Time      `gorm:"column:last_heartbeat_at" json:"lastHeartbeatAt,omitempty"`
-	LeaseOwner          *string         `gorm:"column:lease_owner" json:"leaseOwner,omitempty"`
-	LeaseExpiresAt      *time.Time      `gorm:"column:lease_expires_at" json:"leaseExpiresAt,omitempty"`
-	ProcessActive       bool            `gorm:"column:process_active" json:"processActive"`
-	CPUPercent          *float64        `gorm:"column:cpu_percent" json:"cpuPercent,omitempty"`
-	MemoryPercent       *float64        `gorm:"column:memory_percent" json:"memoryPercent,omitempty"`
-	Model               *string         `gorm:"column:model" json:"model,omitempty"`
-	ModelProvider       *string         `gorm:"column:model_provider" json:"modelProvider,omitempty"`
-	ModelMode           *string         `gorm:"column:model_mode" json:"modelMode,omitempty"`
-	Effort              *string         `gorm:"column:effort" json:"effort,omitempty"`
-	ContextTokens       *int64          `gorm:"column:context_tokens" json:"contextTokens,omitempty"`
-	ContextWindowTokens *int64          `gorm:"column:context_window_tokens" json:"contextWindowTokens,omitempty"`
-	ContextFreePercent  *int            `gorm:"column:context_free_percent" json:"contextFreePercent,omitempty"`
-	InputTokens         int64           `gorm:"column:input_tokens" json:"inputTokens"`
-	OutputTokens        int64           `gorm:"column:output_tokens" json:"outputTokens"`
-	CacheReadTokens     int64           `gorm:"column:cache_read_tokens" json:"cacheReadTokens"`
-	CacheWriteTokens    int64           `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
-	TotalTokens         int64           `gorm:"column:total_tokens" json:"totalTokens"`
-	CostUSD             float64         `gorm:"column:cost_usd" json:"costUsd"`
+	ID                  uuid.UUID             `gorm:"column:id" json:"id"`
+	ProviderSessionID   *string               `gorm:"column:provider_session_id" json:"providerSessionId,omitempty"`
+	Source              string                `gorm:"column:source" json:"source"`
+	Provider            string                `gorm:"column:provider" json:"provider,omitempty"`
+	HostID              string                `gorm:"column:host_id" json:"hostId"`
+	ParentSessionID     *uuid.UUID            `gorm:"column:parent_session_id" json:"parentSessionId,omitempty"`
+	ParentRelation      SessionParentRelation `gorm:"column:parent_relation" json:"parentRelation,omitempty"`
+	RootSessionID       *uuid.UUID            `gorm:"column:root_session_id" json:"rootSessionId,omitempty"`
+	Path                *string               `gorm:"column:path" json:"path,omitempty"`
+	HistoryFile         *string               `gorm:"column:history_file" json:"historyFile,omitempty"`
+	Project             *string               `gorm:"column:project" json:"project,omitempty"`
+	CWD                 *string               `gorm:"column:cwd" json:"cwd,omitempty"`
+	Title               *string               `gorm:"column:title" json:"title,omitempty"`
+	InitialPrompt       *string               `gorm:"column:initial_prompt" json:"initialPrompt,omitempty"`
+	Slug                *string               `gorm:"column:slug" json:"slug,omitempty"`
+	CLIVersion          *string               `gorm:"column:cli_version" json:"cliVersion,omitempty"`
+	LifecycleStatus     string                `gorm:"column:lifecycle_status" json:"lifecycleStatus"`
+	ActivityState       string                `gorm:"column:activity_state" json:"activityState"`
+	StateReason         *string               `gorm:"column:state_reason" json:"stateReason,omitempty"`
+	Git                 json.RawMessage       `gorm:"column:git" json:"git,omitempty"`
+	Metadata            json.RawMessage       `gorm:"column:metadata" json:"metadata,omitempty"`
+	StartedAt           *time.Time            `gorm:"column:started_at" json:"startedAt,omitempty"`
+	EndedAt             *time.Time            `gorm:"column:ended_at" json:"endedAt,omitempty"`
+	LastActivityAt      *time.Time            `gorm:"column:last_activity_at" json:"lastActivityAt,omitempty"`
+	ActivityAt          time.Time             `gorm:"column:activity_at" json:"-"`
+	PID                 *int64                `gorm:"column:pid" json:"pid,omitempty"`
+	ProcessStatus       *string               `gorm:"column:process_status" json:"processStatus,omitempty"`
+	ProcessCommand      *string               `gorm:"column:process_command" json:"processCommand,omitempty"`
+	ProcessCWD          *string               `gorm:"column:process_cwd" json:"processCwd,omitempty"`
+	ProcessStartedAt    *time.Time            `gorm:"column:process_started_at" json:"processStartedAt,omitempty"`
+	ProcessSampledAt    *time.Time            `gorm:"column:process_sampled_at" json:"processSampledAt,omitempty"`
+	LastHeartbeatAt     *time.Time            `gorm:"column:last_heartbeat_at" json:"lastHeartbeatAt,omitempty"`
+	LeaseOwner          *string               `gorm:"column:lease_owner" json:"leaseOwner,omitempty"`
+	LeaseExpiresAt      *time.Time            `gorm:"column:lease_expires_at" json:"leaseExpiresAt,omitempty"`
+	ProcessActive       bool                  `gorm:"column:process_active" json:"processActive"`
+	CPUPercent          *float64              `gorm:"column:cpu_percent" json:"cpuPercent,omitempty"`
+	MemoryPercent       *float64              `gorm:"column:memory_percent" json:"memoryPercent,omitempty"`
+	Model               *string               `gorm:"column:model" json:"model,omitempty"`
+	ModelProvider       *string               `gorm:"column:model_provider" json:"modelProvider,omitempty"`
+	ModelMode           *string               `gorm:"column:model_mode" json:"modelMode,omitempty"`
+	Effort              *string               `gorm:"column:effort" json:"effort,omitempty"`
+	ContextTokens       *int64                `gorm:"column:context_tokens" json:"contextTokens,omitempty"`
+	ContextWindowTokens *int64                `gorm:"column:context_window_tokens" json:"contextWindowTokens,omitempty"`
+	ContextFreePercent  *int                  `gorm:"column:context_free_percent" json:"contextFreePercent,omitempty"`
+	InputTokens         int64                 `gorm:"column:input_tokens" json:"inputTokens"`
+	OutputTokens        int64                 `gorm:"column:output_tokens" json:"outputTokens"`
+	CacheReadTokens     int64                 `gorm:"column:cache_read_tokens" json:"cacheReadTokens"`
+	CacheWriteTokens    int64                 `gorm:"column:cache_write_tokens" json:"cacheWriteTokens"`
+	TotalTokens         int64                 `gorm:"column:total_tokens" json:"totalTokens"`
+	CostUSD             float64               `gorm:"column:cost_usd" json:"costUsd"`
 	// ProviderCostUSD is how much of CostUSD the providers reported themselves.
 	// CostUSD falls back to list-priced buckets per call, so zero here means the
 	// total is a reconstruction and must be rendered as an estimate.
@@ -79,16 +82,20 @@ type SessionListSummary struct {
 }
 
 type SessionListFilter struct {
-	Source         string
-	Project        string
-	ProjectRoot    string
-	Query          string
-	RootsOnly      bool
-	LiveOnly       bool
-	ActivityFrom   *time.Time
-	ActivityBefore *time.Time
-	Limit          int
-	Cursor         string
+	Source      string
+	Project     string
+	ProjectRoot string
+	Query       string
+	RootsOnly   bool
+	// ExcludeSubagents drops "agent" children (subagents) and keeps roots and
+	// "transcript" children — the agent session a run binds under its
+	// admission row.
+	ExcludeSubagents bool
+	LiveOnly         bool
+	ActivityFrom     *time.Time
+	ActivityBefore   *time.Time
+	Limit            int
+	Cursor           string
 }
 
 type SessionListPage struct {
@@ -124,6 +131,7 @@ func (db *DB) ListSessionSummaries(ctx context.Context, filter SessionListFilter
 		sql.Named("project_prefix", escapeLike(projectRoot)+"/%"),
 		sql.Named("query", strings.TrimSpace(filter.Query)),
 		sql.Named("roots_only", filter.RootsOnly),
+		sql.Named("exclude_subagents", filter.ExcludeSubagents),
 		sql.Named("live_only", filter.LiveOnly),
 		sql.Named("activity_from", filter.ActivityFrom),
 		sql.Named("activity_before", filter.ActivityBefore),
@@ -203,7 +211,10 @@ func cursorID(cursor *sessionListCursor) any {
 const sessionListQuery = `
 WITH latest_call AS MATERIALIZED (
   SELECT DISTINCT ON (t.session_id)
-    t.session_id, c.model, c.provider AS model_provider, c.mode AS model_mode, c.effort, c.context_tokens, c.context_window_tokens
+    t.session_id, c.model, c.provider AS model_provider, c.mode AS model_mode, c.effort,
+    CASE WHEN c.context_free_percent IS NOT NULL THEN c.context_tokens END AS context_tokens,
+    CASE WHEN c.context_free_percent IS NOT NULL THEN c.context_window_tokens END AS context_window_tokens,
+    c.context_free_percent
   FROM captain_turns t
   JOIN captain_model_calls c ON c.turn_id = t.id
   ORDER BY t.session_id, COALESCE(c.ended_at, c.started_at, c.created_at) DESC, c.call_index DESC
@@ -216,15 +227,15 @@ WITH latest_call AS MATERIALIZED (
   ORDER BY p.session_id, COALESCE(p.last_heartbeat_at, p.process_started_at) DESC, p.id DESC
 ), eligible AS MATERIALIZED (
   SELECT
-    s.id, s.provider_session_id, s.source, s.provider, s.host_id, s.parent_session_id,
+    s.id, s.provider_session_id, s.source, s.provider, s.host_id, s.parent_session_id, s.parent_relation,
     s.root_session_id, s.path, s.project, s.cwd, s.title, s.initial_prompt, s.slug,
-    s.cli_version, s.lifecycle_status, s.git, s.metadata, s.started_at, s.ended_at,
+    s.cli_version, s.lifecycle_status, s.activity_state, s.state_reason, s.git, s.metadata, s.started_at, s.ended_at,
     s.last_activity_at, COALESCE(s.last_activity_at, s.started_at, s.created_at) AS activity_at,
     ap.pid, ap.status AS process_status, ap.command AS process_command, ap.cwd AS process_cwd,
     ap.process_started_at, ap.sampled_at AS process_sampled_at, ap.last_heartbeat_at,
     ap.lease_owner, ap.lease_expires_at, ap.session_id IS NOT NULL AS process_active,
     ap.cpu_percent, ap.memory_percent, lc.model, lc.model_provider, lc.model_mode, lc.effort,
-    lc.context_tokens, lc.context_window_tokens, count(*) OVER () AS total_count
+    lc.context_tokens, lc.context_window_tokens, lc.context_free_percent, count(*) OVER () AS total_count
   FROM captain_sessions s
   LEFT JOIN latest_call lc ON lc.session_id = s.id
   LEFT JOIN active_process ap ON ap.session_id = s.id
@@ -233,6 +244,7 @@ WITH latest_call AS MATERIALIZED (
     AND (@project = '' OR s.project = @project)
     AND (@project_root = '' OR s.cwd = @project_root OR s.cwd LIKE @project_prefix ESCAPE '\')
     AND (NOT @roots_only OR s.parent_session_id IS NULL)
+    AND (NOT @exclude_subagents OR s.parent_relation IS DISTINCT FROM 'agent')
     AND (NOT @live_only OR ap.session_id IS NOT NULL)
     AND (CAST(@activity_from AS timestamptz) IS NULL OR
       COALESCE(s.last_activity_at, s.started_at, s.created_at) >= CAST(@activity_from AS timestamptz))
@@ -296,16 +308,15 @@ WITH latest_call AS MATERIALIZED (
   GROUP BY m.session_id
 )
 SELECT
-  p.id, p.provider_session_id, p.source, p.provider, p.host_id, p.parent_session_id,
+  p.id, p.provider_session_id, p.source, p.provider, p.host_id, p.parent_session_id, p.parent_relation,
   p.root_session_id, p.path, COALESCE(src.path, p.path) AS history_file, p.project, p.cwd,
-  p.title, p.initial_prompt, p.slug, p.cli_version, p.lifecycle_status, p.git, p.metadata,
+  p.title, p.initial_prompt, p.slug, p.cli_version, p.lifecycle_status, p.activity_state, p.state_reason, p.git, p.metadata,
   p.started_at, p.ended_at, p.last_activity_at, p.activity_at, p.pid, p.process_status,
   p.process_command, p.process_cwd, p.process_started_at, p.process_sampled_at,
   p.last_heartbeat_at, p.lease_owner, p.lease_expires_at, p.process_active,
   p.cpu_percent, p.memory_percent, p.model, p.model_provider, p.model_mode, p.effort, p.context_tokens,
   p.context_window_tokens,
-  CASE WHEN p.context_window_tokens > 0 THEN GREATEST(0, LEAST(100,
-    round((1 - p.context_tokens::numeric / p.context_window_tokens::numeric) * 100)::integer)) END AS context_free_percent,
+  p.context_free_percent,
   COALESCE(cs.input_tokens, 0) AS input_tokens,
   COALESCE(cs.output_tokens, 0) AS output_tokens,
   COALESCE(cs.cache_read_tokens, 0) AS cache_read_tokens,

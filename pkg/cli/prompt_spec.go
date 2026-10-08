@@ -51,6 +51,11 @@ func mergePromptActionFlags(req *PromptRenderRequest, flags map[string]string) e
 		}
 		req.Variables = vars
 	}
+	if flagBool(flags["no-presets"]) {
+		req.Presets = []string{}
+	} else if raw, present := flags["preset"]; present {
+		req.Presets = flagSlice(raw)
+	}
 	if v := strings.TrimSpace(flags["runtime-profile"]); v != "" {
 		req.RuntimeProfile = v
 	}

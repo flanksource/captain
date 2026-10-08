@@ -9,6 +9,30 @@ import (
 )
 
 var _ = ginkgo.Describe("Codex file changes", func() {
+	ginkgo.It("classifies an attached image as read and emits a canonical file part", func() {
+		const digest = "7d432b84dfb5e1cda66c73adae2848da8f2afea3f6f1bd255f517ebce71b3d8e"
+		const imagePath = "/repo/.captain/attachments/sha256/7d/" + digest
+		stream := strings.Join([]string{
+			`{"timestamp":"2026-09-11T11:55:21Z","type":"session_meta","payload":{"id":"session-image","cwd":"/repo"}}`,
+			`{"timestamp":"2026-09-11T11:55:22Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<image name=[Image #1] path=\"` + imagePath + `\">"},{"type":"input_image","image_url":"data:image/png;base64,iVBORw0KGgo="},{"type":"input_text","text":"</image>"},{"type":"input_text","text":"Classify the attached report"}]}}`,
+		}, "\n")
+
+		uses, err := history.ExtractCodexToolUsesFromReader(strings.NewReader(stream))
+		Expect(err).NotTo(HaveOccurred())
+
+		built := buildCodexSession(uses, &history.CodexSessionInfo{ID: "session-image", CWD: "/repo"})
+
+		Expect(built.Files.Read).To(Equal([]string{".captain/attachments/sha256/7d/" + digest}))
+		Expect(built.Messages).To(HaveLen(1))
+		Expect(built.Messages[0].Parts).To(Equal([]Part{
+			{
+				Type: PartFile, MediaType: "image/png", URL: "/api/attachments/sha256:" + digest,
+				Filename: "Image #1", AttachmentID: "sha256:" + digest,
+			},
+			{Type: PartText, Text: "Classify the attached report"},
+		}))
+	})
+
 	ginkgo.It("collects native apply_patch write paths", func() {
 		stream := strings.Join([]string{
 			`{"timestamp":"2026-07-26T17:00:00Z","type":"session_meta","payload":{"id":"patch-session","cwd":"/repo"}}`,

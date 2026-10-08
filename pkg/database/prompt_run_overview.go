@@ -86,6 +86,7 @@ type promptRunOverviewRecord struct {
 	CurrentIteration       int             `gorm:"column:current_iteration"`
 	ResultText             *string         `gorm:"column:result_text"`
 	ResultJSON             json.RawMessage `gorm:"column:result_json"`
+	Workspace              json.RawMessage `gorm:"column:workspace"`
 	Error                  *string         `gorm:"column:error"`
 	Version                int64           `gorm:"column:version"`
 	QueuedAt               time.Time       `gorm:"column:queued_at"`
@@ -121,17 +122,8 @@ func (db *DB) ListPromptRunOverviews(ctx context.Context, filter PromptRunOvervi
 	}
 	query := db.gorm.WithContext(ctx).
 		Table("captain_prompt_runs AS run").
-		Select(`run.*, admission.provider_session_id,
-			execution.provider AS execution_provider,
-			execution.model_mode AS execution_runtime_mode,
-			execution.model AS execution_model,
-			execution.effort AS execution_effort,
-			execution.activity_state AS execution_activity,
-			execution.health_state AS execution_health,
-			execution.pid AS execution_pid,
-			execution.process_active AS execution_process_active`).
+		Select("run.*, admission.provider_session_id").
 		Joins("JOIN captain_sessions AS admission ON admission.id = run.session_id").
-		Joins("LEFT JOIN captain_session_overview AS execution ON execution.id = run.execution_session_id").
 		Order("run.queued_at DESC, run.id DESC")
 	if len(filter.IDs) > 0 {
 		for _, id := range filter.IDs {
@@ -157,6 +149,9 @@ func (db *DB) ListPromptRunOverviews(ctx context.Context, filter PromptRunOvervi
 	if err := query.Scan(&records).Error; err != nil {
 		return nil, fmt.Errorf("list Captain prompt-run overviews: %w", err)
 	}
+	if err := db.attachExecutionOverviews(ctx, records); err != nil {
+		return nil, err
+	}
 	rows := make([]PromptRunOverview, len(records))
 	for i := range records {
 		row, err := promptRunOverviewFromRecord(records[i])
@@ -169,6 +164,63 @@ func (db *DB) ListPromptRunOverviews(ctx context.Context, filter PromptRunOvervi
 		return nil, err
 	}
 	return rows, nil
+}
+
+// attachExecutionOverviews reads the execution sessions' overview columns in a
+// second query keyed by constant ids. captain_session_overview cannot be
+// flattened, so joining it against run.execution_session_id — plainly or
+// LATERAL — materialises the view for every session in the database instead of
+// pushing the id down.
+func (db *DB) attachExecutionOverviews(ctx context.Context, records []promptRunOverviewRecord) error {
+	ids := make([]uuid.UUID, 0, len(records))
+	for i := range records {
+		if records[i].ExecutionSessionID != nil {
+			ids = append(ids, *records[i].ExecutionSessionID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var executions []executionOverviewRecord
+	if err := db.gorm.WithContext(ctx).Table("captain_session_overview").
+		Select("id, provider, model_mode, model, effort, activity_state, health_state, pid, process_active").
+		Where("id IN ?", ids).Scan(&executions).Error; err != nil {
+		return fmt.Errorf("list Captain prompt-run execution sessions: %w", err)
+	}
+	byID := make(map[uuid.UUID]executionOverviewRecord, len(executions))
+	for _, execution := range executions {
+		byID[execution.ID] = execution
+	}
+	for i := range records {
+		if records[i].ExecutionSessionID == nil {
+			continue
+		}
+		execution, ok := byID[*records[i].ExecutionSessionID]
+		if !ok {
+			return fmt.Errorf("%w: prompt run %s execution session %s", ErrSessionNotFound, records[i].ID, *records[i].ExecutionSessionID)
+		}
+		records[i].ExecutionProvider = execution.Provider
+		records[i].ExecutionRuntimeMode = execution.ModelMode
+		records[i].ExecutionModel = execution.Model
+		records[i].ExecutionEffort = execution.Effort
+		records[i].ExecutionActivity = execution.ActivityState
+		records[i].ExecutionHealth = execution.HealthState
+		records[i].ExecutionPID = execution.PID
+		records[i].ExecutionProcessActive = execution.ProcessActive
+	}
+	return nil
+}
+
+type executionOverviewRecord struct {
+	ID            uuid.UUID `gorm:"column:id"`
+	Provider      *string   `gorm:"column:provider"`
+	ModelMode     *string   `gorm:"column:model_mode"`
+	Model         *string   `gorm:"column:model"`
+	Effort        *string   `gorm:"column:effort"`
+	ActivityState *string   `gorm:"column:activity_state"`
+	HealthState   *string   `gorm:"column:health_state"`
+	PID           *int64    `gorm:"column:pid"`
+	ProcessActive bool      `gorm:"column:process_active"`
 }
 
 // attachLatestVerifications resolves every listed run's newest verification in a
@@ -212,6 +264,12 @@ func promptRunOverviewFromRecord(record promptRunOverviewRecord) (PromptRunOverv
 			return PromptRunOverview{}, fmt.Errorf("decode result JSON: %w", err)
 		}
 	}
+	var workspace *api.WorkspaceRecord
+	if len(record.Workspace) > 0 && string(record.Workspace) != "null" {
+		if err := json.Unmarshal(record.Workspace, &workspace); err != nil {
+			return PromptRunOverview{}, fmt.Errorf("decode workspace: %w", err)
+		}
+	}
 	execution := PromptRunRuntimeSelection{
 		Provider: optionalString(record.ExecutionProvider), Mode: optionalString(record.ExecutionRuntimeMode),
 		Model: optionalString(record.ExecutionModel), Effort: optionalString(record.ExecutionEffort),
@@ -241,7 +299,7 @@ func promptRunOverviewFromRecord(record promptRunOverviewRecord) (PromptRunOverv
 			Origin: optionalString(record.Origin), SpecProfile: optionalString(record.SpecProfile), AdmissionKey: optionalString(record.AdmissionKey),
 			RenderedSpec: renderedSpec, Runtime: runtime, Phase: record.Phase, State: record.State,
 			CurrentIteration: record.CurrentIteration, ResultText: optionalString(record.ResultText), ResultJSON: resultJSON,
-			Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt,
+			Workspace: workspace, Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt,
 			StartedAt: record.StartedAt, FinishedAt: record.FinishedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 		},
 		ProviderSessionID: optionalString(record.ProviderSessionID), Requested: runtime.Requested, Resolved: runtime.Resolved,

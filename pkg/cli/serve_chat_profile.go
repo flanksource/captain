@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/aichat"
 	"github.com/flanksource/captain/pkg/api"
@@ -40,10 +39,11 @@ func captainChatProfileProvider(cwd string) aichat.RuntimeProfileProvider {
 		if err != nil {
 			return aichat.RuntimeProfile{}, err
 		}
-		composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: layers, Saved: &cfg.AI})
+		composed, err := api.ComposeSpecLayers(api.ResolveSpecOptions{Layers: layers.Layers, Saved: &cfg.AI})
 		if err != nil {
 			return aichat.RuntimeProfile{}, fmt.Errorf("resolve chat runtime profile: %w", err)
 		}
+		composed.Warnings = append(composed.Warnings, layers.Warnings...)
 		return aichat.RuntimeProfile{System: captainChatSystemPrompt, Composed: composed, Saved: &cfg.AI}, nil
 	})
 }
@@ -55,32 +55,29 @@ type chatProfileLayerOptions struct {
 	Cwd       string
 }
 
-// chatProfileLayers appends the selected profile's raw layers to the base. A
-// reference the caller supplied that resolves nowhere is the caller's error; a
-// configured default that fails stays a server error.
-func chatProfileLayers(ctx context.Context, options chatProfileLayerOptions) ([]api.SpecLayer, error) {
+// chatProfileLayers appends selected preset layers to the application base.
+// Deprecated profile references warn and do not affect the stack.
+func chatProfileLayers(ctx context.Context, options chatProfileLayerOptions) (runtimeprofiles.LayerResult, error) {
 	if err := api.ValidateSpecLayers(options.Base); err != nil {
-		return nil, fmt.Errorf("chat runtime profile base: %w", err)
+		return runtimeprofiles.LayerResult{}, fmt.Errorf("chat runtime preset base: %w", err)
 	}
-	ref := strings.TrimSpace(options.Selection.Ref)
-	requested := ref != ""
-	if !requested {
-		ref = strings.TrimSpace(options.Config.Chat.RuntimeProfile)
-	}
-	if ref == "" {
-		return []api.SpecLayer{options.Base}, nil
-	}
-	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{Config: &options.Config, Cwd: options.Cwd})
+	resolver := runtimeprofiles.NewResolver(func(ctx context.Context) (*runtimeprofiles.Catalog, error) {
+		return buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{Config: &options.Config, Cwd: options.Cwd})
+	})
+	result, err := resolver.Layers(ctx, runtimeprofiles.ResolveOptions{
+		BaseLayers:       []api.SpecLayer{options.Base},
+		RequestedPresets: options.Selection.Presets, RequestedPresetsSet: options.Selection.PresetsSet,
+		DefaultPresets:   options.Config.Chat.Presets,
+		RequestedProfile: options.Selection.Ref, DefaultProfile: options.Config.Chat.RuntimeProfile,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("chat runtime profile %q: %w", ref, err)
-	}
-	resolution, err := catalog.Layers(ctx, ref)
-	if err != nil {
+		var selection *runtimeprofiles.SelectionError
 		var owned *runtimeprofiles.OwnedLayersError
-		if requested && !errors.As(err, &owned) && (errors.Is(err, runtimeprofiles.ErrNotFound) || errors.Is(err, runtimeprofiles.ErrAmbiguous)) {
-			return nil, aichat.RequestError(http.StatusBadRequest, fmt.Sprintf("runtime profile %q: %v", ref, err))
+		if !errors.As(err, &owned) && errors.As(err, &selection) && selection.Origin == runtimeprofiles.SelectionRequested &&
+			(errors.Is(err, runtimeprofiles.ErrNotFound) || errors.Is(err, runtimeprofiles.ErrAmbiguous) || errors.Is(err, runtimeprofiles.ErrCatalogUnavailable)) {
+			return runtimeprofiles.LayerResult{}, aichat.RequestError(http.StatusBadRequest, selection.Error())
 		}
-		return nil, fmt.Errorf("chat runtime profile %q: %w", ref, err)
+		return runtimeprofiles.LayerResult{}, err
 	}
-	return append([]api.SpecLayer{options.Base}, resolution.Layers...), nil
+	return result, nil
 }

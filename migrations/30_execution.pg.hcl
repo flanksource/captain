@@ -190,6 +190,10 @@ table "captain_model_calls" {
     type    = bigint
     default = 0
   }
+  column "context_free_percent" {
+    null = true
+    type = integer
+  }
   column "input_cost" {
     null    = false
     type    = numeric(20, 8)
@@ -320,6 +324,9 @@ table "captain_model_calls" {
   }
   check "captain_model_calls_tokens_nonnegative" {
     expr = "input_tokens >= 0 AND output_tokens >= 0 AND reasoning_tokens >= 0 AND cache_read_tokens >= 0 AND cache_write_tokens >= 0 AND context_tokens >= 0 AND context_window_tokens >= 0"
+  }
+  check "captain_model_calls_context_valid" {
+    expr = "context_free_percent IS NULL OR (context_free_percent BETWEEN 0 AND 100 AND context_window_tokens > 0)"
   }
   check "captain_model_calls_costs_nonnegative" {
     expr = "input_cost >= 0 AND output_cost >= 0 AND reasoning_cost >= 0 AND cache_read_cost >= 0 AND cache_write_cost >= 0 AND provider_cost_usd >= 0"

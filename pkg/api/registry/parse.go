@@ -8,7 +8,7 @@ import (
 
 // The model grammar
 //
-//	sonnet                   → {model: claude-sonnet-5, mode: api}
+//	sonnet                   → {model: claude-sonnet-5-5, mode: api}
 //	sonnet:high              → + effort high
 //	agent:sonnet:high        → + mode agent
 //	*:fable                  → every mode of the claiming family (multi only)

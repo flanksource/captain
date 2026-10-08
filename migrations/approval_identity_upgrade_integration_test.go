@@ -14,9 +14,15 @@ import (
 )
 
 const (
+	approvalBackfillMigration         = "03_turn_request_approval_backfill.sql"
 	approvalIdentityMigration         = "74_turn_request_approval_identity.sql"
 	providerApprovalIdentityMigration = "81_turn_request_provider_approval_identity.sql"
 )
+
+// legacyApprovalUpgrade is the ledger a database holding legacy caller-tool
+// approvals has: it predates both the pre-phase backfill and 74, so forgetting
+// them puts a seeded database back in that state.
+var legacyApprovalUpgrade = []string{approvalBackfillMigration, approvalIdentityMigration}
 
 var _ = Describe("Tool approval identity migration", func() {
 	It("backfills an unambiguous legacy approval and replaces the credential constraint", func(ctx SpecContext) {
@@ -25,7 +31,7 @@ var _ = Describe("Tool approval identity migration", func() {
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		ids := seedLegacyToolApproval(ctx, db, 1)
-		Expect(resetMigrationScripts(ctx, db, approvalIdentityMigration)).To(Succeed())
+		Expect(resetMigrationScripts(ctx, db, legacyApprovalUpgrade...)).To(Succeed())
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		var turnID, modelCallID uuid.UUID
@@ -57,7 +63,7 @@ var _ = Describe("Tool approval identity migration", func() {
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		ids := seedLegacyToolApproval(ctx, db, 1)
-		Expect(resetMigrationScripts(ctx, db, approvalIdentityMigration)).To(Succeed())
+		Expect(resetMigrationScripts(ctx, db, legacyApprovalUpgrade...)).To(Succeed())
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		// This is the row `captain prompt run` writes: a session and a prompt run,
@@ -72,7 +78,7 @@ var _ = Describe("Tool approval identity migration", func() {
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		ids := seedLegacyToolApproval(ctx, db, 1)
-		Expect(resetMigrationScripts(ctx, db, approvalIdentityMigration)).To(Succeed())
+		Expect(resetMigrationScripts(ctx, db, legacyApprovalUpgrade...)).To(Succeed())
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		// A credential means the approval was raised inside a turn, so the turn
@@ -95,7 +101,7 @@ var _ = Describe("Tool approval identity migration", func() {
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		ids := seedLegacyToolApproval(ctx, db, 1)
-		Expect(resetMigrationScripts(ctx, db, approvalIdentityMigration)).To(Succeed())
+		Expect(resetMigrationScripts(ctx, db, legacyApprovalUpgrade...)).To(Succeed())
 		Expect(Apply(ctx, dsn)).To(Succeed())
 		Expect(insertProviderApproval(ctx, db, ids, "provider-call")).To(Succeed())
 
@@ -117,7 +123,7 @@ var _ = Describe("Tool approval identity migration", func() {
 		Expect(Apply(ctx, dsn)).To(Succeed())
 
 		ids := seedLegacyToolApproval(ctx, db, 2)
-		Expect(resetMigrationScripts(ctx, db, approvalIdentityMigration)).To(Succeed())
+		Expect(resetMigrationScripts(ctx, db, legacyApprovalUpgrade...)).To(Succeed())
 		err := Apply(ctx, dsn)
 		Expect(err).To(MatchError(And(
 			ContainSubstring("ambiguous legacy tool approval identity"),
@@ -125,17 +131,19 @@ var _ = Describe("Tool approval identity migration", func() {
 		)))
 	})
 
-	It("rejects a legacy constraint after its upgrade script is already recorded", func(ctx SpecContext) {
+	It("repairs a legacy constraint that drifts back after its upgrade script is recorded", func(ctx SpecContext) {
 		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_approval_identity_drift"})
 		dsn, db := handle.DSN(), handle.SQL()
 		Expect(Apply(ctx, dsn)).To(Succeed())
 		Expect(installLegacyApprovalConstraint(ctx, db)).To(Succeed())
 
-		err := Apply(ctx, dsn)
-		Expect(err).To(MatchError(And(
-			ContainSubstring("verify Captain database"),
-			ContainSubstring("credential_id IS NOT NULL"),
-		)))
+		// 74 and 81 are recorded and do not re-run; the schema phase reconciles
+		// the edited CHECK against the HCL, and verify then accepts the result.
+		Expect(Apply(ctx, dsn)).To(Succeed())
+		Expect(approvalIdentityConstraint(ctx, db)).To(And(
+			ContainSubstring("credential_id IS NULL"),
+			Not(ContainSubstring("credential_id IS NOT NULL")),
+		))
 	})
 })
 

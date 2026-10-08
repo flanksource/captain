@@ -11,7 +11,7 @@ import (
 )
 
 // ErrCatalogUnavailable reports selection against a resolver with no catalog.
-var ErrCatalogUnavailable = errors.New("runtime profile catalog is not configured")
+var ErrCatalogUnavailable = errors.New("runtime preset catalog is not configured")
 
 // SelectionOrigin identifies which precedence input selected a profile.
 type SelectionOrigin string
@@ -22,7 +22,7 @@ const (
 	SelectionDefaulted SelectionOrigin = "default"
 )
 
-// SelectionError retains the profile reference and the input that selected it.
+// SelectionError retains the preset references and the input that selected them.
 type SelectionError struct {
 	Origin SelectionOrigin
 	Ref    string
@@ -30,7 +30,7 @@ type SelectionError struct {
 }
 
 func (e *SelectionError) Error() string {
-	return fmt.Sprintf("runtime profile %q selected by %s: %v", e.Ref, e.Origin, e.Err)
+	return fmt.Sprintf("runtime presets %q selected by %s: %v", e.Ref, e.Origin, e.Err)
 }
 
 func (e *SelectionError) Unwrap() error { return e.Err }
@@ -38,7 +38,7 @@ func (e *SelectionError) Unwrap() error { return e.Err }
 // CatalogFactory lazily constructs a runtime profile catalog.
 type CatalogFactory func(context.Context) (*Catalog, error)
 
-// Resolver assembles host, profile, surface, and request layers.
+// Resolver assembles host, preset, surface, and request layers.
 type Resolver struct {
 	catalog CatalogFactory
 }
@@ -50,7 +50,14 @@ func NewResolver(catalog CatalogFactory) *Resolver {
 
 // ResolveOptions contains the ordered inputs to one layered resolution.
 type ResolveOptions struct {
-	BaseLayers       []api.SpecLayer
+	BaseLayers          []api.SpecLayer
+	RequestedPresets    []string
+	RequestedPresetsSet bool
+	PinnedPresets       []string
+	PinnedPresetsSet    bool
+	DefaultPresets      []string
+	// Deprecated profile fields are retained until the final API-removal
+	// release. Any non-empty value emits a warning and contributes no layers.
 	RequestedProfile string
 	PinnedProfile    string
 	DefaultProfile   string
@@ -63,40 +70,46 @@ type ResolveOptions struct {
 
 // ResolveResult retains the selected catalog records and effective spec.
 type ResolveResult struct {
+	Presets  *PresetResolution
 	Profile  *Resolution
+	Warnings []string
 	Resolved api.ResolvedSpec
 }
 
 // LayerResult retains the selected catalog records and unresolved layer stack.
 type LayerResult struct {
-	Profile *Resolution
-	Layers  []api.SpecLayer
+	Presets  *PresetResolution
+	Profile  *Resolution
+	Warnings []string
+	Layers   []api.SpecLayer
 }
 
-// Layers selects one profile and assembles its layers without resolving a model.
+// Layers selects ordered presets and assembles their layers without resolving a
+// model. Deprecated profile selections warn and otherwise have no effect.
 func (r *Resolver) Layers(ctx context.Context, options ResolveOptions) (LayerResult, error) {
 	if r == nil {
-		return LayerResult{}, fmt.Errorf("runtime profile resolver is required")
+		return LayerResult{}, fmt.Errorf("runtime preset resolver is required")
 	}
-	ref, origin := selectProfile(options)
+	refs, origin := selectPresets(options)
 	layers := append([]api.SpecLayer(nil), options.BaseLayers...)
-	var profile *Resolution
-	if ref != "" {
+	var presets *PresetResolution
+	if len(refs) > 0 {
+		selection := strings.Join(refs, ",")
 		if r.catalog == nil {
-			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: ErrCatalogUnavailable}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: selection, Err: ErrCatalogUnavailable}
 		}
 		catalog, err := r.catalog(ctx)
 		if err != nil {
-			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: err}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: selection, Err: err}
 		}
 		if catalog == nil {
-			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: ErrCatalogUnavailable}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: selection, Err: ErrCatalogUnavailable}
 		}
-		resolution, err := catalog.Layers(ctx, ref)
+		resolution, err := catalog.PresetLayers(ctx, refs)
 		if err != nil {
-			return LayerResult{}, &SelectionError{Origin: origin, Ref: ref, Err: err}
+			return LayerResult{}, &SelectionError{Origin: origin, Ref: selection, Err: err}
 		}
-		profile = &resolution
+		presets = &resolution
 		layers = append(layers, resolution.Layers...)
 	}
 	layers = append(layers, options.SurfaceLayers...)
@@ -104,7 +117,7 @@ func (r *Resolver) Layers(ctx context.Context, options ResolveOptions) (LayerRes
 	if err := api.ValidateSpecLayers(layers...); err != nil {
 		return LayerResult{}, err
 	}
-	return LayerResult{Profile: profile, Layers: api.OrderSpecLayers(layers...)}, nil
+	return LayerResult{Presets: presets, Warnings: profileWarnings(options), Layers: api.OrderSpecLayers(layers...)}, nil
 }
 
 // Resolve selects one profile and resolves every layer exactly once.
@@ -115,20 +128,35 @@ func (r *Resolver) Resolve(ctx context.Context, options ResolveOptions) (Resolve
 	}
 	resolved, err := api.ResolveSpecLayers(api.ResolveSpecOptions{Layers: layers.Layers, Saved: options.Saved, RequireModel: options.RequireModel, Normalize: options.Normalize})
 	if err != nil {
-		return ResolveResult{}, fmt.Errorf("resolve runtime profile layers: %w", err)
+		return ResolveResult{}, fmt.Errorf("resolve runtime preset layers: %w", err)
 	}
-	return ResolveResult{Profile: layers.Profile, Resolved: resolved}, nil
+	return ResolveResult{Presets: layers.Presets, Warnings: layers.Warnings, Resolved: resolved}, nil
 }
 
-func selectProfile(options ResolveOptions) (string, SelectionOrigin) {
-	if ref := strings.TrimSpace(options.RequestedProfile); ref != "" {
-		return ref, SelectionRequested
+func selectPresets(options ResolveOptions) ([]string, SelectionOrigin) {
+	if options.RequestedPresetsSet || options.RequestedPresets != nil {
+		return trimPresetRefs(options.RequestedPresets), SelectionRequested
 	}
-	if ref := strings.TrimSpace(options.PinnedProfile); ref != "" {
-		return ref, SelectionPinned
+	if options.PinnedPresetsSet || options.PinnedPresets != nil {
+		return trimPresetRefs(options.PinnedPresets), SelectionPinned
 	}
-	if ref := strings.TrimSpace(options.DefaultProfile); ref != "" {
-		return ref, SelectionDefaulted
+	if len(options.DefaultPresets) > 0 {
+		return trimPresetRefs(options.DefaultPresets), SelectionDefaulted
 	}
-	return "", ""
+	return nil, ""
+}
+
+func trimPresetRefs(refs []string) []string {
+	trimmed := make([]string, len(refs))
+	for i, ref := range refs {
+		trimmed[i] = strings.TrimSpace(ref)
+	}
+	return trimmed
+}
+
+func profileWarnings(options ResolveOptions) []string {
+	if strings.TrimSpace(options.RequestedProfile) != "" || strings.TrimSpace(options.PinnedProfile) != "" || strings.TrimSpace(options.DefaultProfile) != "" {
+		return []string{api.RuntimeProfileDeprecationWarning}
+	}
+	return nil
 }

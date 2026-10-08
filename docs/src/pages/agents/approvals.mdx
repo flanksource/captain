@@ -9,9 +9,58 @@ import CodeExample from "../../components/CodeExample.tsx";
 
 # Approvals
 
-`pkg/ai/approval.Broker` is the `api.PermissionFunc` every execution path that owns a session and a prompt run shares: it records one pending `captain_turn_requests` row, hands the host an `api.EventPermission` frame to surface, and blocks until that row is resolved, expires, or the caller's context ends.
+`pkg/ai/approval.Broker` is the `api.ApprovalFunc` every execution path that owns a session and a prompt run shares: it records one pending `captain_turn_requests` row, hands the host an `api.EventPermission` frame to surface, and blocks until that row is resolved, expires, or the caller's context ends.
 
 The aichat execution path supplies its caller-tool credential, turn, and model call; a streaming provider run (`captain prompt run`) or an external host such as a dashboard supplies none of the three and is identified by its prompt run and tool call alone.
+
+## Request kinds
+
+Every provider sends approvals, questions, and elicitations through the one `Config.OnApproval` callback. `ApprovalRequest.Kind` says which one arrived, and exactly one payload field matches it:
+
+| Kind | Payload | Raised by |
+| --- | --- | --- |
+| `tool` | `Tool`, `Input` | Claude `canUseTool`, caller tools, genkit, openai, cmux |
+| `command` | `Command` (command, cwd, stdin write, proposed policy) | Codex command and `writeStdin` approvals |
+| `filesystem` | `Filesystem` (operation, paths, changes) | Codex file-change approvals |
+| `network` | `Network` (host, protocol) | Codex network approvals |
+| `permissions` | `Permissions` (a `NativeSandboxPolicy`) | Codex permission requests |
+| `question` | `Questions` | Claude `AskUserQuestion`, Codex `requestUserInput` |
+| `elicitation` | `Elicitation` (form schema, or url) | MCP elicitation on Claude and Codex |
+| `plan` | `Plan` (plan text and file) | `ExitPlanMode` outside a plan-only run, on Claude and the cmux plan dialog |
+
+`Tool` and `Input` are always set, so a host that only reads those two fields still shows every request.
+
+A decision is `Allow`, `Message`, and `UpdatedInput` as before. Approving a `plan` leaves plan mode and implements it as written; a deny keeps planning and hands `Message` back as feedback. In a plan-only run `ExitPlanMode` is the turn's result, not an approval. Three optional fields are new: `Interrupt` (a deny that also ends the turn), `Scope` (`request`, `turn`, `session`; only one the request lists in `SupportedScopes`), and `Grants` (the approved subset of a `permissions` request). Answers to a question go in `UpdatedInput["answers"]`, and form content goes in `UpdatedInput`. `approval.Resolve` checks each decision against the stored request with `ApprovalDecision.Validate` and refuses a bad one with `ErrInvalidResolution`, leaving the row pending.
+
+Two rules apply to every callback:
+
+- **Deny is a hard floor.** A tool the run's permission strategy denies, and anything plan mode forbids, is rejected before `OnApproval` runs. No row is written and no event is sent, and no decision, scope, or grant can override it.
+- **Any approval may escalate.** An approved `command`, `filesystem`, `network`, or `permissions` request can go beyond the run's initial sandbox posture. `Escalates` marks the ones that do.
+
+## Migrating from `CanUseTool`
+
+The approval callback was renamed and widened. The old names remain as deprecated aliases until the unified-approval Phase 6.
+
+| Deprecated | Use |
+| --- | --- |
+| `api.PermissionFunc`, `api.PermissionRequest`, `api.PermissionDecision` (and the `ai.` aliases) | `api.ApprovalFunc`, `api.ApprovalRequest`, `api.ApprovalDecision` |
+| `Config.CanUseTool` | `Config.OnApproval` |
+| `callertools.Options.CanUseTool` | `callertools.Options.OnApproval` |
+| `approval.Broker.CanUseTool` | `approval.Broker.OnApproval` |
+| `observation.Recorder.PermissionBroker` | `observation.Recorder.ApprovalBroker` |
+
+A callback registered through `Config.CanUseTool`, `callertools.Options.CanUseTool`, or `Recorder.PermissionBroker` runs in **legacy mode**. It receives only the `tool` and `question` requests it always received. Every other kind is answered as it was before this change: the Codex sandbox posture answers commands and file changes, a permission request gets no extra grants, and an elicitation is declined. Captain logs one `WARN` per process for each deprecated entry point, and one `WARN` per run and kind for each request it answers natively. Setting both `OnApproval` and `CanUseTool` is an error.
+
+Behaviour changes for callbacks registered through `OnApproval`:
+
+- **New kinds (BC-1).** The callback now receives Codex command, file-change, network, permission and elicitation requests, and Claude elicitations. A callback that approves everything also approves escalations and grants all requested permissions. Switch on `Kind` to tell them apart.
+- **Different answers (BC-2).** A Codex run with a callback now waits for the callback instead of answering from the sandbox posture. A denied tool never becomes a request. A Claude approval with no active turn fails closed. A Claude caller-tool approval ends with its turn and follows `approvalTimeout`, instead of a fixed 5 minutes. cmux presses Escape when the callback fails or the approval expires. A Codex elicitation with no callback is declined.
+- **One event per request (BC-3).** `EventPermission` is sent once, by the broker, or by `promptrun` for a direct callback. The event now carries the typed request in `Event.Request`. Claude and cmux no longer send an extra event without an `ApprovalID`.
+- **Claude bridge protocol 2 (BC-4).** The bridge gained `interrupt` and `elicit`. A bridge process still running the old protocol is refused with an error asking for a restart.
+
+Stored approvals keep `kind = 'tool_approval'`. The request document gains `kind` and the typed payload beside `tool` and `input`, and a row with no `kind` reads as a `tool` request.
+
+Phase 6 deletes the deprecated names, the legacy mode, and its warnings. It happens once no Flanksource module uses the old names and no deprecation warning has been logged for a release. Nothing stored or sent over the wire changes then, only Go source.
 
 ## Fields
 
@@ -40,7 +89,7 @@ type Broker struct {
 
     // ClaimToolUseID resolves a locally generated tool-use ID onto the provider's
     // own tool-call ID. Required only when a caller can set ToolUseIDGenerated.
-    ClaimToolUseID func(context.Context, api.PermissionRequest) (string, error)
+    ClaimToolUseID func(context.Context, api.ApprovalRequest) (string, error)
 }
 `} />
 
@@ -48,7 +97,7 @@ type Broker struct {
 
 ## `Notify`, `OnWaiting` / `OnRunning`
 
-`CanUseTool` (the `PermissionFunc`) records the pending approval idempotently, calls `Notify` with the `EventPermission` frame, and blocks. `OnWaiting` and `OnRunning` bracket that wait with the host's own state: once the host has been told the run is waiting, **every** way out of `CanUseTool` tells it the run is running again — a cancelled caller resumes on a context with cancellation stripped (`context.WithoutCancel`), because ending the wait is the response to the cancellation, not a victim of it. A credential-less (provider or host) approval depends on `OnWaiting`: the store only resolves such an approval while its prompt run is in the `waiting` state.
+`OnApproval` (the `ApprovalFunc`) records the pending approval idempotently, calls `Notify` with the `EventPermission` frame, and blocks. `OnWaiting` and `OnRunning` bracket that wait with the host's own state: once the host has been told the run is waiting, **every** way out of `OnApproval` tells it the run is running again — a cancelled caller resumes on a context with cancellation stripped (`context.WithoutCancel`), because ending the wait is the response to the cancellation, not a victim of it. A credential-less (provider or host) approval depends on `OnWaiting`: the store only resolves such an approval while its prompt run is in the `waiting` state.
 
 ## The provider path: no turn, no model call
 
@@ -84,4 +133,4 @@ db.CancelPendingTurnRequests(ctx, sessionID, promptRunID, "run cancelled")
 
 One entry is exempt: an `allow` that names another agent's built-in (Claude's `Read: allow` on a codex run) is skipped, because an allow only pre-approves a tool the agent already has and constrains nothing on an agent without it. That lets one spec carry a Claude-style allowlist across backends. The exemption is deliberately narrow — a `deny` or `ask` on a foreign name is still refused, since Claude's `Bash` is codex's `shell` under another name and dropping the deny would hand the agent the very tool the spec forbade; and a name no agent declares is never treated as foreign, so a stale vocabulary table fails loud instead of waving a new built-in through.
 
-That check is about the runtime's declarative filter, not about whether a broker exists — an `ask` decision made per call, live, is a different mechanism: it is what `approval.Broker.CanUseTool` implements as the `PermissionFunc` itself, and it is how the caller-tool path (aichat) honours a per-tool `ask` policy today. A streaming provider run's declared `permissions.tools` still cannot say `ask` — only `allow`/`deny` — regardless of whether a broker is attached.
+That check is about the runtime's declarative filter, not about whether a broker exists — an `ask` decision made per call, live, is a different mechanism: it is what `approval.Broker.OnApproval` implements as the `ApprovalFunc` itself, and it is how the caller-tool path (aichat) honours a per-tool `ask` policy today. A streaming provider run's declared `permissions.tools` still cannot say `ask` — only `allow`/`deny` — regardless of whether a broker is attached.

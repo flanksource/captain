@@ -44,6 +44,13 @@ type CodexAppServer struct {
 	// rpc read loop, not the turn goroutine, so it cannot reach the request; the
 	// posture is recorded here when the turn starts.
 	posture codexPosture
+	// sandbox is the current run's isolation boundary, which a posture switch
+	// must stay compatible with.
+	sandbox *api.SandboxRef
+	// permissionMode is a posture switched mid-session; it replaces the posture
+	// of every later turn, the way Codex keeps a turn/start override for the
+	// rest of the thread.
+	permissionMode api.PermissionMode
 	// runLabels is the host's identification of the current run, recorded here
 	// for the same reason posture is: the spawn path cannot reach the request.
 	runLabels map[string]string
@@ -78,7 +85,10 @@ func (c *CodexAppServer) GetModel() string          { return c.model }
 func (c *CodexAppServer) GetRuntime() ai.Runtime    { return ai.RuntimeOf(ai.OpenAI, ai.ModeAgent) }
 func (c *CodexAppServer) SupportsCallerTools() bool { return true }
 
-var _ api.ToolCapableProvider = (*CodexAppServer)(nil)
+var (
+	_ api.ToolCapableProvider          = (*CodexAppServer)(nil)
+	_ api.PermissionSwitchableProvider = (*CodexAppServer)(nil)
+)
 
 // Execute drains the streaming output into a buffered ai.Response. When the
 // request carries a structured-output schema, the final agent message's JSON is
@@ -137,7 +147,7 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	if _, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), req); err != nil {
 		return nil, err
 	}
-	c.beginTurn(req)
+	req = c.beginTurn(req)
 	if err := c.ensureStarted(ctx); err != nil {
 		c.turnMu.Unlock()
 		return nil, err
@@ -146,15 +156,18 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	rpcDone := c.rpcDone
 	c.mu.Unlock()
 
+	questionCtx, cancelQuestions := context.WithCancel(ctx)
 	ts := &turnState{
-		ch:           make(chan ai.Event, 16),
-		usage:        &ai.Usage{},
-		model:        c.model,
-		streamed:     map[string]string{},
-		toolOutput:   map[string]string{},
-		terminal:     make(chan struct{}),
-		started:      make(chan struct{}),
-		outputSchema: schema,
+		ctx:             questionCtx,
+		cancelQuestions: cancelQuestions,
+		ch:              make(chan ai.Event, 16),
+		usage:           &ai.Usage{},
+		model:           c.model,
+		streamed:        map[string]string{},
+		toolOutput:      map[string]string{},
+		terminal:        make(chan struct{}),
+		started:         make(chan struct{}),
+		outputSchema:    schema,
 	}
 	c.setActive(ts)
 
@@ -208,10 +221,39 @@ func (c *CodexAppServer) failTurn(ts *turnState, err error) {
 // but never before the lock: a second, more permissive ExecuteStream queued
 // behind an in-flight turn would otherwise overwrite the posture that turn's
 // approvals are still being judged against. driveTurn releases turnMu.
-func (c *CodexAppServer) beginTurn(req ai.Request) {
+//
+// A posture switched mid-session replaces the request's, so the returned request
+// is the one the turn must run.
+func (c *CodexAppServer) beginTurn(req ai.Request) ai.Request {
 	c.turnMu.Lock()
-	c.setPosture(postureFor(req))
+	c.mu.Lock()
+	if c.permissionMode != "" {
+		req.Permissions.Mode = c.permissionMode
+	}
+	c.sandbox = req.Sandbox
+	c.posture = postureFor(req)
+	c.mu.Unlock()
 	c.rememberRunLabels(req)
+	return req
+}
+
+// SetPermissionMode switches the thread's posture. Captain's own approval
+// answers change at once; Codex accepts approval policy and reviewer only on
+// turn/start, so its side of the posture takes effect from the next turn.
+func (c *CodexAppServer) SetPermissionMode(_ context.Context, mode api.PermissionMode) error {
+	if mode == "" {
+		return fmt.Errorf("codex app-server: permission mode is required")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), c.sandbox, mode); err != nil {
+		return err
+	}
+	c.permissionMode = mode
+	run := c.posture.run
+	run.Sandbox, run.Permissions.Mode = c.sandbox, mode
+	c.posture = postureFor(run)
+	return nil
 }
 
 func (c *CodexAppServer) setActive(ts *turnState) { c.mu.Lock(); c.active = ts; c.mu.Unlock() }
@@ -330,7 +372,12 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 		return threadID, nil
 	}
 	if req.SessionID != "" {
-		raw, err := rpc.Call(ctx, "thread/resume", buildResumeParams(req, c.callerTools))
+		params, err := buildResumeParams(req, c.callerTools)
+		if err != nil {
+			return "", err
+		}
+		c.applyApprovalPolicy(params)
+		raw, err := rpc.Call(ctx, "thread/resume", params)
 		if err != nil {
 			return "", err
 		}
@@ -342,6 +389,7 @@ func (c *CodexAppServer) startThread(ctx context.Context, req ai.Request) (strin
 	if err != nil {
 		return "", err
 	}
+	c.applyApprovalPolicy(params)
 	raw, err := rpc.Call(ctx, "thread/start", params)
 	if err != nil {
 		return "", err
@@ -369,6 +417,7 @@ func (c *CodexAppServer) startTurn(ctx context.Context, req ai.Request, threadID
 	if err != nil {
 		return "", err
 	}
+	c.applyApprovalPolicy(params)
 	effort, present := params["effort"].(string)
 	observation.RecordReasoningDispatch(ctx, "codex.turn/start", present, effort)
 	raw, err := rpc.Call(ctx, "turn/start", params)
@@ -424,9 +473,6 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	c.callerToolsMu.Lock()
 	defer c.callerToolsMu.Unlock()
 	if c.callerTools != nil {
-		if req.Permissions.MCP.Disabled {
-			return fmt.Errorf("codex app-server: caller tools require MCP but MCP is disabled")
-		}
 		return c.callerTools.Validate()
 	}
 	if len(c.cfg.Tools) == 0 {
@@ -439,13 +485,11 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	if len(definitions) == 0 {
 		return nil
 	}
-	if req.Permissions.MCP.Disabled {
-		return fmt.Errorf("codex app-server: caller tools require MCP but MCP is disabled")
+	options, err := c.callerToolOptions(req, definitions)
+	if err != nil {
+		return err
 	}
-	runtime, err := callertools.New(callertools.Options{
-		Definitions: definitions, CanUseTool: c.cfg.CanUseTool,
-		SessionID: firstNonEmpty(c.cfg.CaptainSessionID, req.SessionID, c.cfg.SessionID),
-	})
+	runtime, err := callertools.New(options)
 	if err != nil {
 		return fmt.Errorf("start codex app-server caller tools: %w", err)
 	}
@@ -453,6 +497,27 @@ func (c *CodexAppServer) prepareCallerTools(req ai.Request) error {
 	c.callerToolsRuntime = runtime
 	c.callerTools = &endpoint
 	return nil
+}
+
+func (c *CodexAppServer) callerToolOptions(req ai.Request, definitions []api.ToolDefinition) (callertools.Options, error) {
+	approvalTimeout, err := req.Permissions.ParseApprovalTimeout()
+	if err != nil {
+		return callertools.Options{}, fmt.Errorf("codex app-server caller tools: %w", err)
+	}
+	return callertools.Options{
+		// Owned by the provider, which outlives any one request.
+		Context: context.Background(),
+		ContextForCall: func() context.Context {
+			if turn := c.currentTurn(); turn != nil {
+				return turn.ctx
+			}
+			return nil
+		},
+		Definitions:     definitions,
+		OnApproval:      c.cfg.OnApproval,
+		SessionID:       firstNonEmpty(c.cfg.CaptainSessionID, req.SessionID, c.cfg.SessionID),
+		ApprovalTimeout: approvalTimeout,
+	}, nil
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
@@ -474,7 +539,10 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if ts == nil {
 		return
 	}
-	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage, UsagePresent: &ts.usagePresent}
+	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage, UsagePresent: &ts.usagePresent, Context: &ts.context}
+	if ts.recordFileChange(method, params) {
+		return
+	}
 	switch method {
 	case "item/agentMessage/delta":
 		notification := parseAppServerNotif(params)
@@ -494,6 +562,12 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 		n := parseAppServerNotif(params)
 		if n.ItemID != "" && n.Delta != "" {
 			ts.toolOutput[n.ItemID] += n.Delta
+			// The full output is still buffered for the tool result; this only
+			// reports where a long command has got to, so a turn spent inside a
+			// build is not silent for its whole length.
+			if ev, ok := ts.toolProgressEvent(n.ItemID); ok {
+				ts.send(ev)
+			}
 		}
 		return
 	case "item/completed":
@@ -529,6 +603,18 @@ func (c *CodexAppServer) handleNotification(method string, params json.RawMessag
 	if ev, ok := mapAppServerNotification(method, params, ctx); ok {
 		if ev.Kind == ai.EventResult && len(ts.outputSchema) > 0 {
 			ev.StructuredData = json.RawMessage(ts.lastAgentMessage)
+		}
+		// Codex reports tokens but never a price, so a consumer reading the event
+		// saw a free run. The loop backfills the same way for its own rollup; doing
+		// it here as well means the event and the rollup agree instead of one of
+		// them reading zero.
+		if ev.Kind == ai.EventResult && ev.CostUSD == 0 && ev.Usage != nil {
+			modelProvider, _ := c.GetRuntime().ModelProvider()
+			model := firstNonEmpty(ev.Model, c.model)
+			ev.CostUSD = ai.PriceUsage(modelProvider, model, *ev.Usage, 0).Total()
+		}
+		if ev.Kind == ai.EventToolUse {
+			ts.rememberToolName(ev.ToolCallID, ev.Tool)
 		}
 		if method == "item/completed" && ev.Kind == ai.EventToolResult {
 			it := parseAppServerNotif(params).Item

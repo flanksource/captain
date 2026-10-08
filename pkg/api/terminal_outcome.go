@@ -21,9 +21,19 @@ type TerminalPlan struct {
 
 // TerminalQuestion is one question returned by a native ask-user tool.
 type TerminalQuestion struct {
+	// ID is the identity the agent gave the question, when it gave one. Codex
+	// always does and keys its answers on it; Claude's AskUserQuestion never
+	// does, and keys on the text instead.
+	ID      string   `json:"id,omitempty"`
 	Text    string   `json:"text"`
 	Context string   `json:"context,omitempty"`
 	Options []string `json:"options,omitempty"`
+	// OptionDescriptions explains the options the agent described, by label.
+	OptionDescriptions map[string]string `json:"optionDescriptions,omitempty"`
+	// MultiSelect lets the person pick several options.
+	MultiSelect bool `json:"multiSelect,omitempty"`
+	// Secret marks an answer that must not be persisted, such as a credential.
+	Secret bool `json:"secret,omitempty"`
 }
 
 // TerminalOutcome carries native plan or question completion independently of

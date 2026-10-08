@@ -14,7 +14,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 		Expect(err).To(HaveOccurred())
 		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{profile, request}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resolved.Spec.Name).To(Equal("claude-sonnet-5"))
+		Expect(resolved.Spec.Name).To(Equal("claude-sonnet-5-5"))
 		Expect(resolved.Spec.Provider).To(Equal(Anthropic))
 		Expect(resolved.Spec.Mode).To(Equal(ModeCLI))
 		Expect(resolved.Trace).To(Equal([]SpecLayer{profile, request}))
@@ -39,7 +39,7 @@ var _ = Describe("Effective layered runtime validation", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolved.Warnings).To(ConsistOf(
 			"resource policy plugins=enabled is not available for anthropic agent",
-			`fallback[0] "gpt-5.6-sol": resource policy plugins=enabled is not available for openai cli`,
+			`fallback[0] "gpt-6.1-sol": resource policy plugins=enabled is not available for openai cli`,
 		))
 		Expect(resolved.Trace).To(Equal([]SpecLayer{layer}))
 	})
@@ -50,6 +50,30 @@ var _ = Describe("Effective layered runtime validation", func() {
 	},
 		Entry("primary", Model{Name: "api:sonnet"}),
 		Entry("fallback", Model{Name: "agent:sonnet", Fallbacks: []Model{{Name: "api:sol"}}}),
+	)
+
+	It("accepts a restrict-only native policy on the API mode, which has no provider process to isolate", func() {
+		readOnly := &NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly}}
+		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{
+			Model: Model{Name: "api:sonnet"}, Sandbox: &SandboxRef{Mode: SandboxNative, Policy: readOnly},
+		})}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved.Warnings).To(ContainElement(
+			`sandbox mode "native" is vacuous on anthropic api: it runs no provider process, so its restrict-only policy already holds`))
+	})
+
+	DescribeTable("refuses a native policy on the API mode that grants access or demands real isolation",
+		func(policy NativeSandboxPolicy) {
+			_, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{PromptSpecLayer("profile", Spec{
+				Model: Model{Name: "api:sonnet"}, Sandbox: &SandboxRef{Mode: SandboxNative, Policy: &policy},
+			})}})
+			Expect(err).To(MatchError(ContainSubstring(`sandbox mode "native" is not available`)))
+		},
+		Entry("required", NativeSandboxPolicy{Required: new(true), Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly}}),
+		Entry("workspace write", NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemWorkspaceWrite}}),
+		Entry("writable roots", NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly, WritableRoots: []string{"/tmp"}}}),
+		Entry("allowed domains", NativeSandboxPolicy{Network: &SandboxNetworkPolicy{Access: SandboxNetworkRestricted, AllowedDomains: []string{"example.com"}}}),
+		Entry("unsandboxed commands", NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{Access: SandboxFilesystemReadOnly}, Commands: &SandboxCommandPolicy{AllowUnsandboxed: new(true)}}),
 	)
 
 	It("retains hard agent-tool policy refusal for fallback runtimes", func() {
@@ -95,16 +119,13 @@ var _ = Describe("Effective layered runtime validation", func() {
 		Expect(resolved.Trace).To(Equal([]SpecLayer{layer}))
 	})
 
-	It("matches an authored alias constraint against the canonical primary and fallback", func() {
+	It("canonicalizes an authored alias for both the primary model and its fallback", func() {
 		layer := SpecLayer{Name: "catalog", Scope: SpecLayerGlobal,
-			Constraints: RuntimeConstraints{Models: []string{"sol", "sonnet"}},
-			Spec:        Spec{Model: Model{Name: "sol", Fallbacks: []Model{{Name: "sonnet"}}}},
+			Spec: Spec{Model: Model{Name: "sol", Fallbacks: []Model{{Name: "sonnet"}}}},
 		}
 		resolved, err := ResolveSpecLayers(ResolveSpecOptions{Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(resolved.Spec.Name).To(Equal("gpt-5.6-sol"))
-		Expect(resolved.Spec.Fallbacks[0].Name).To(Equal("claude-sonnet-5"))
-		Expect(resolved.Constraints).To(Equal(layer.Constraints))
-		Expect(ValidateRuntimeConstraints(resolved, resolved.Spec.Model, 0)).To(Succeed())
+		Expect(resolved.Spec.Name).To(Equal("gpt-6.1-sol"))
+		Expect(resolved.Spec.Fallbacks[0].Name).To(Equal("claude-sonnet-5-5"))
 	})
 })

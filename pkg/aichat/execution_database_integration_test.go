@@ -20,7 +20,71 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+type requestScopeKey struct{}
+
 var _ = Describe("Database execution authority", func() {
+	It("runs caller tools with the values of the request that admitted the execution", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_request_scope"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		seen := make(chan any, 1)
+		execution, err := authority.Begin(context.WithValue(ctx, requestScopeKey{}, "org-acme"), aichat.ExecutionRequest{
+			ThreadID: uuid.NewString(), RequestID: "request-title-1", Title: "Accounts",
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "sonnet", Mode: api.ModeAgent})},
+			Definitions: []api.ToolDefinition{{
+				Name: "SessionTitle", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(ctx context.Context, input map[string]any) (any, error) {
+					seen <- ctx.Value(requestScopeKey{})
+					return input, nil
+				},
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(execution.Close)
+
+		client := executionMCPClient(ctx, *execution.CallerTools())
+		DeferCleanup(client.Close)
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "SessionTitle"
+		request.Params.Arguments = map[string]any{"aiTitle": "Account 721 review"}
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.IsError).To(BeFalse())
+		Expect(seen).To(Receive(Equal("org-acme")))
+	})
+
+	It("links the provider transcript under the identity the local monitor ingests it with", func(ctx SpecContext) {
+		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_transcript_host"})
+		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(db.Close)
+
+		authority, err := aichat.NewDatabaseExecutionAuthority(db)
+		Expect(err).NotTo(HaveOccurred())
+		threadID := uuid.New()
+		providerSessionID := uuid.NewString()
+		execution, err := authority.Begin(ctx, aichat.ExecutionRequest{
+			ThreadID: threadID.String(), RequestID: "request-transcript-1", Title: "Accounts",
+			Spec: api.Spec{Model: withCaps(api.Model{Name: "sonnet", Mode: api.ModeAgent})},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(execution.Close)
+		_, err = execution.Observe(ctx, api.Event{Kind: api.EventText, SessionID: providerSessionID})
+		Expect(err).NotTo(HaveOccurred())
+
+		ingested, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			Source: "claude", Provider: "anthropic", HostID: database.LocalHostID(),
+			ProviderSessionID: providerSessionID,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ingested.ParentSessionID).To(Equal(&threadID))
+		Expect(ingested.ParentRelation).To(Equal(database.SessionParentRelationTranscript))
+	})
+
 	It("blocks an ask tool on its durable approval and revokes the credential at completion", func(ctx SpecContext) {
 		testDB := dbtest.ForGinkgo(dbtest.Options{Name: "captain_aichat_execution"})
 		db, err := database.Open(ctx, database.WithDSN(testDB.DSN()), database.WithMigrations())

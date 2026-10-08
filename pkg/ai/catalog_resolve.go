@@ -248,8 +248,12 @@ func unionLive(ctx context.Context, opts ResolveOptions, credentials CredentialS
 			}
 			index[key] = len(*rows)
 			*rows = append(*rows, ResolvedModel{
-				Model: Model{ID: d.ID, Provider: p, Mode: ModeAPI, Label: d.Name, ReleaseDate: d.ReleaseDate},
-				Live:  true,
+				Model: Model{
+					ID: d.ID, Provider: p, Mode: ModeAPI, Label: d.Name, ReleaseDate: d.ReleaseDate,
+					Reasoning: d.Reasoning, Temperature: d.Temperature, Priority: d.Priority,
+					SupportedEfforts: append([]api.Effort(nil), d.SupportedEfforts...), DefaultEffort: d.DefaultEffort,
+				},
+				Live: true,
 			})
 		}
 	}
@@ -285,7 +289,10 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 //     prices from the static fallback table are stale.
 //   - v3: live sources are namespaced by exact credential and model endpoint,
 //     using a machine-local keyed HMAC instead of a comparable fixed-salt hash.
-const resolveSchemaVersion = "v3"
+//   - v4: live-only rows (non-preferred registry models such as claude-opus-5)
+//     keep the reasoning, temperature, effort and priority the live fetcher
+//     resolved; v3 rows cached them stripped.
+const resolveSchemaVersion = "v4"
 
 type resolveCacheSource struct {
 	// Provider names the family whose endpoint was listed. A live listing is an

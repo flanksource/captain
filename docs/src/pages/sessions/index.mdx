@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Sessions
-description: Placeholder for Captain session documentation.
+description: Inspect Claude and Codex session history and estimated tool costs.
 section: Next Sections
 ---
 
@@ -9,3 +9,43 @@ section: Next Sections
 
 This section is scaffolded for Claude and Codex history, live prompt run entries, session browser behavior, cost analysis, and change tracking.
 
+## Estimated tool cost
+
+In a session's transcript, open the three-dot menu and enable **Show estimated tool cost**. It is off by default. Each tool's summary line shows a compact estimated USD amount and its cache-read token delta when nonzero, such as `+8k` tokens. Hover the cache-read indicator for the exact count. Expand the tool row to see its token usage, reasoning tokens when available, and cache reads and writes in a footer beneath the details.
+
+In **Compact** density, structured tool inputs and JSON responses use the collapsible YAML view. **Comfortable** and **Spacious** density keep the JSON view.
+
+Claude and Codex use the same allocation and display:
+
+- Claude usage belongs to a response ID. Content-block records sharing that ID are grouped, and repeated usage is counted once. Each subagent transcript has its own response groups.
+- Codex cumulative usage is converted into request deltas and matched to the preceding batch of tool calls.
+- A request's tokens and cost are shared equally across its native tool calls. Token rounding preserves the batch totals. Prose, narrative plans, tool results and synthetic transcript events receive no allocation.
+
+These estimates include conversation context and the model output that generated the calls. The model reads tool results in subsequent requests, so an estimate does not measure the isolated cost of a tool's returned text. Calls without usage data show a dash with an **Estimate unavailable** label. When usage is available but the model has no catalog price, the breakdown keeps its token counts and shows **Cost unavailable**.
+
+The CLI and session API include the same data. For example:
+
+```sh
+captain sessions get 01a10698-d1e2-7282-885f-6e6aa640a3ae --json --limit 0
+```
+
+Each priced tool part has an optional `estimatedCost` object. Its `cost` field is the canonical token and cost breakdown; `sharedCalls` is the number of calls sharing that model request. Provider adapters identify the request and normalize its usage before the shared allocator attaches this object, so consumers do not need provider-specific costing logic.
+
+## Calculate row footprints
+
+The transcript's three-dot menu offers **Estimate tokens/cost for all rows**, including loaded rows hidden by filters or scrolling, and **Calculate missing rows**. A row without an allocated cost also offers **Calculate tokens/cost** in its own three-dot menu. Pending approval rows are excluded until they are available in the canonical transcript. These actions are explicit: opening a session or running a prompt never calls a count endpoint automatically. Calculations are cached while viewing the transcript and invalidate when its model, revision or row content changes.
+
+Local estimates use one token per four UTF-8 bytes, rounded up, over complete text and serialized tool payloads. **Calculate** calls the model family's count endpoint: Anthropic Messages, OpenAI Responses or Gemini. DeepSeek has no supported dedicated count endpoint and reports an error for provider calculation; its local estimates and recorded usage remain available. Non-API sessions still use their family's API credentials for provider counting.
+
+A **Footprint** measures isolated row content, not the model request's historical bill. User text and tool results use input rates; assistant text and tool arguments use output rates; visible reasoning has its own token bucket. The tooltip identifies the source, model and excluded context. Hidden runtime instructions, surrounding conversation, historical cache usage, unavailable attachments and encrypted reasoning cannot be reconstructed from an isolated row. Missing prices appear as **price unavailable**. Existing allocated tool costs, recorded usage and session totals remain unchanged.
+
+```sh
+captain ai tokens --model api:claude-sonnet-4-6 --prompt 'Explain this example' --method estimate --json
+captain ai tokens --model api:gpt-5 --prompt 'Explain this example' --method provider --json
+captain sessions tokens SESSION_ID --method estimate --json
+captain sessions tokens SESSION_ID --row-id MESSAGE_ID-0 --method provider --json
+```
+
+The Go entry point is `ai.SizeTokens(ctx, ai.TokenSizeOptions{Request: spec, Config: cfg, Method: "estimate"})`. Use `Direction: "output"` or `"reasoning"` when pricing isolated output; a complete preflight request uses the default input direction. Optional `api.TokenCountingProvider` implementations expose counting through provider wrappers.
+
+The session HTTP endpoint is `POST /api/captain/sessions/{id}/tokens` with `{"method":"estimate","rowIds":["MESSAGE_ID-0"],"revision":3}`. Omit `rowIds` for the complete canonical transcript; an optional `revision` rejects stale requests. Results contain `sessionId`, `revision` and `rows`, each with either a `size` footprint or an explicit `error`. The server reads the canonical row content; clients cannot submit replacement text. The generated command HTTP endpoint also exposes `ai tokens` under `/api/v1`.

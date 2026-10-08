@@ -132,6 +132,7 @@ var _ = Describe("PermissionCapabilities", func() {
 						Expect(translation.Sandbox).To(Equal(api.CodexSandboxReadOnly))
 						Expect(support.Effects.Sandbox).To(BeEmpty())
 						Expect(support.Effects.Approval).To(Equal(string(translation.Approval)))
+						Expect(support.Effects.Reviewer).To(Equal(string(translation.ApprovalsReviewer)))
 					})
 				}
 			})
@@ -228,7 +229,9 @@ var _ = Describe("PermissionCapabilities", func() {
 		It("silences MCP only where a provider actually sends the empty server set", func() {
 			for _, runtime := range api.AllRuntimes() {
 				want := api.SupportUnsupported
-				if runtime == (api.Runtime{Provider: "anthropic", Mode: api.ModeCLI}) || runtime == (api.Runtime{Provider: "openai", Mode: api.ModeAgent}) {
+				if runtime == (api.Runtime{Provider: "anthropic", Mode: api.ModeCLI}) ||
+					runtime == (api.Runtime{Provider: "anthropic", Mode: api.ModeAgent}) ||
+					runtime == (api.Runtime{Provider: "openai", Mode: api.ModeAgent}) {
 					want = api.SupportNative
 				}
 				Expect(api.PermissionCapabilitiesFor(runtime).

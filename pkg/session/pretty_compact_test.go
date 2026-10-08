@@ -11,9 +11,9 @@ import (
 )
 
 // TestSessionSummaryRows_TokensSurfaceEveryBucket guards the Tokens summary
-// line against reporting a total that its own breakdown cannot account for.
+// line against reporting cumulative traffic that its own breakdown cannot account for.
 // Cache traffic dominates real sessions, so omitting it made the line read as
-// an arithmetic contradiction (70.0M total shown as 1.6K input + 477.6K output).
+// an arithmetic contradiction (70.0M shown as 1.6K input + 477.6K output).
 func TestSessionSummaryRows_TokensSurfaceEveryBucket(t *testing.T) {
 	s := &Session{Usage: api.Usage{
 		InputTokens:      1_646,
@@ -23,7 +23,7 @@ func TestSessionSummaryRows_TokensSurfaceEveryBucket(t *testing.T) {
 	}}
 
 	tokens := summaryRowValue(t, s, "Tokens")
-	for _, want := range []string{"70.0M total", "66.5M cache read", "3.1M cache write", "477.6K output", "1.6K input"} {
+	for _, want := range []string{"70.0M cumulative", "66.5M cache read", "3.1M cache write", "477.6K output", "1.6K input"} {
 		assert.Contains(t, tokens, want)
 	}
 }
@@ -34,7 +34,7 @@ func TestSessionSummaryRows_TokensOmitZeroBuckets(t *testing.T) {
 	s := &Session{Usage: api.Usage{InputTokens: 1_000, OutputTokens: 2_000}}
 
 	tokens := summaryRowValue(t, s, "Tokens")
-	assert.Contains(t, tokens, "3.0K total")
+	assert.Contains(t, tokens, "3.0K cumulative")
 	assert.NotContains(t, tokens, "cache")
 	assert.NotContains(t, tokens, "reasoning")
 }

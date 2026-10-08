@@ -65,6 +65,9 @@ func NewProvider(cfg Config) (Provider, error) {
 	if cfg.Model.Name == "" {
 		return nil, fmt.Errorf("model cannot be empty; pass --model or run `captain configure` to set a default")
 	}
+	if err := cfg.resolveApprovals(); err != nil {
+		return nil, err
+	}
 
 	resolved, err := registry.ResolveModel(cfg.Model)
 	if err != nil {

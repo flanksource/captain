@@ -68,8 +68,8 @@ var _ = Describe("admitted prompt runtime variants", func() {
 		rendered, err := renderPromptCLI(context.Background(), path, options, "", "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rendered.Runtimes).To(HaveExactElements(
-			SatisfyAll(HaveField("Name", "claude-sonnet-5"), HaveField("Mode", api.ModeCLI)),
-			SatisfyAll(HaveField("Name", "claude-sonnet-5"), HaveField("Mode", api.ModeCmux)),
+			SatisfyAll(HaveField("Name", "claude-sonnet-5-5"), HaveField("Mode", api.ModeCLI)),
+			SatisfyAll(HaveField("Name", "claude-sonnet-5-5"), HaveField("Mode", api.ModeCmux)),
 		))
 	})
 

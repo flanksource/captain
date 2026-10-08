@@ -15,19 +15,30 @@ func runtimeSandboxArgumentBindings(p *ModelProvider, mode RuntimeMode) []runtim
 		for _, path := range claudeNativeSandboxFields {
 			bindings = append(bindings, mappedArgument(claudeSandboxSettingPath(path), path))
 		}
-	case RuntimeOf(OpenAI, ModeCLI):
+	case RuntimeOf(OpenAI, ModeCLI), RuntimeOf(OpenAI, ModeCmux):
 		bindings = append(bindings,
 			mappedArgument("--sandbox", "sandbox.policy.filesystem.access"),
 			mappedArgument("sandbox_workspace_write.writable_roots", "sandbox.policy.filesystem.writableRoots"),
 			mappedArgument("sandbox_workspace_write.exclude_*_tmp", "sandbox.policy.filesystem.includeSystemTemp"),
 			mappedArgument("sandbox_workspace_write.network_access", "sandbox.policy.network.access"),
 		)
-	case RuntimeOf(OpenAI, ModeAgent), RuntimeOf(OpenAI, ModeCmux):
+	case RuntimeOf(OpenAI, ModeAgent):
 		bindings = append(bindings,
+			mappedArgument("thread/start.sandbox", "sandbox.mode"),
+			mappedArgument("thread/resume.sandbox", "sandbox.mode"),
+			mappedArgument("turn/start.sandboxPolicy", "sandbox.mode"),
 			mappedArgument("thread/start.sandbox", "sandbox.policy.filesystem.access"),
-			mappedArgument("config.sandbox_workspace_write.writable_roots", "sandbox.policy.filesystem.writableRoots"),
-			mappedArgument("config.sandbox_workspace_write.exclude_*_tmp", "sandbox.policy.filesystem.includeSystemTemp"),
-			mappedArgument("config.sandbox_workspace_write.network_access", "sandbox.policy.network.access"),
+			mappedArgument("thread/resume.sandbox", "sandbox.policy.filesystem.access"),
+			mappedArgument("turn/start.sandboxPolicy", "sandbox.policy.filesystem.access"),
+			mappedArgument("thread/start.config.sandbox_workspace_write.writable_roots", "sandbox.policy.filesystem.writableRoots"),
+			mappedArgument("thread/resume.config.sandbox_workspace_write.writable_roots", "sandbox.policy.filesystem.writableRoots"),
+			mappedArgument("turn/start.sandboxPolicy", "sandbox.policy.filesystem.writableRoots"),
+			mappedArgument("thread/start.config.sandbox_workspace_write.exclude_*_tmp", "sandbox.policy.filesystem.includeSystemTemp"),
+			mappedArgument("thread/resume.config.sandbox_workspace_write.exclude_*_tmp", "sandbox.policy.filesystem.includeSystemTemp"),
+			mappedArgument("turn/start.sandboxPolicy", "sandbox.policy.filesystem.includeSystemTemp"),
+			mappedArgument("thread/start.config.sandbox_workspace_write.network_access", "sandbox.policy.network.access"),
+			mappedArgument("thread/resume.config.sandbox_workspace_write.network_access", "sandbox.policy.network.access"),
+			mappedArgument("turn/start.sandboxPolicy", "sandbox.policy.network.access"),
 		)
 	}
 	return bindings

@@ -38,8 +38,9 @@ var _ = Describe("CLI runtime catalog discovery", func() {
 		actual, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(actual.Sources()).To(Equal(expected.Sources()))
-		Expect(actual.Sources()).To(HaveLen(5))
+		Expect(actual.Sources()).To(HaveLen(6))
 		Expect(actual.Sources()[0].Kind).To(Equal(runtimeprofiles.SourceDB))
+		Expect(actual.Sources()[5].Kind).To(Equal(runtimeprofiles.SourceBuiltin))
 	})
 
 	It("reports invalid configured discovery directories", func(ctx SpecContext) {

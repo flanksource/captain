@@ -315,6 +315,10 @@ func threadSummaryFromOverview(overview database.SessionOverview) (*Thread, erro
 	if err != nil {
 		return nil, fmt.Errorf("decode Captain chat session %s metadata: %w", overview.ID, err)
 	}
+	var context *api.ContextUsage
+	if overview.ContextTokens != nil && overview.ContextWindowTokens != nil && overview.ContextFreePercent != nil {
+		context = &api.ContextUsage{UsedTokens: int(*overview.ContextTokens), WindowTokens: int(*overview.ContextWindowTokens), FreePercent: *overview.ContextFreePercent}
+	}
 	// Summaries intentionally carry no transcript. GET /sessions/{id} is the
 	// only hydration path, keeping the picker bounded as threads grow.
 	return &Thread{
@@ -324,7 +328,8 @@ func threadSummaryFromOverview(overview database.SessionOverview) (*Thread, erro
 		Messages: nil, TotalInputTokens: int(overview.InputTokens), TotalOutputTokens: int(overview.OutputTokens),
 		TotalReasoningTokens: int(overview.ReasoningTokens), TotalCacheReadTokens: int(overview.CacheReadTokens),
 		TotalCacheWriteTokens: int(overview.CacheWriteTokens), TotalCostUSD: overview.CostUSD,
-		LastContextTokens: intPointer(overview.ContextTokens), ProviderSessionID: stringPointer(overview.ProviderSessionID),
+		ProviderSessionID: stringPointer(overview.ProviderSessionID),
+		Context:           context,
 	}, nil
 }
 
@@ -362,11 +367,4 @@ func stringPointer(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-func intPointer(value *int64) int {
-	if value == nil {
-		return 0
-	}
-	return int(*value)
 }

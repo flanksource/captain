@@ -58,12 +58,16 @@ func buildHierarchy(ps claude.ParsedSession, turnByEntry map[string]string) hier
 		}
 
 		costs := newResponseCosts()
+		var toolCosts claudeToolCosts
 		for _, e := range t.Entries {
 			costs.add(e)
-			if m, ok := entryToMessage(e, node.ID, turnByEntry[e.UUID]); ok {
+			m, ok := entryToMessage(e, node.ID, turnByEntry[e.UUID])
+			toolCosts.add(e, m)
+			if ok {
 				messages = append(messages, m)
 			}
 		}
+		toolCosts.estimate()
 		node.Cost = costs.costs.Sum()
 		node.Usage = usageFromCost(node.Cost)
 	}
@@ -111,9 +115,13 @@ func entryToMessage(e claude.HistoryEntry, agentID, turnID string) (Message, boo
 	if len(parts) == 0 {
 		return Message{}, false
 	}
+	role := string(e.Message.Role)
+	if e.Injected {
+		role = "system"
+	}
 	m := Message{
 		ID:         e.UUID,
-		Role:       string(e.Message.Role),
+		Role:       role,
 		Parts:      parts,
 		Provenance: provenanceFromEntry(e, agentID),
 		AgentID:    agentID,

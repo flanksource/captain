@@ -23,6 +23,8 @@ type Part struct {
 	Dynamic    bool   `json:"dynamic,omitempty"`
 	ApprovalID string `json:"approvalId,omitempty"`
 
+	ToolMetadata *ToolMetadata `json:"toolMetadata,omitempty"`
+
 	Data            any              `json:"data,omitempty"`
 	ErrorText       string           `json:"errorText,omitempty"`
 	MessageMetadata *MessageMetadata `json:"messageMetadata,omitempty"`
@@ -72,10 +74,10 @@ type MessageMetadata struct {
 	// ThreadCostUSD is the conversation's cumulative spend. Cost above is this
 	// turn alone; a UI showing a running total must read this field, since the
 	// two differ by the number of turns taken.
-	ThreadCostUSD float64 `json:"threadCostUsd,omitempty"`
-	ContextTokens int     `json:"contextTokens,omitempty"`
-	Success       *bool   `json:"success,omitempty"`
-	Interrupted   bool    `json:"interrupted,omitempty"`
+	ThreadCostUSD float64           `json:"threadCostUsd,omitempty"`
+	Context       *api.ContextUsage `json:"context,omitempty"`
+	Success       *bool             `json:"success,omitempty"`
+	Interrupted   bool              `json:"interrupted,omitempty"`
 }
 
 type terminalMetadataContext struct {

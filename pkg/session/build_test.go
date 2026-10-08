@@ -388,8 +388,8 @@ func TestBuildSession_MetadataTurnsCapabilitiesBudget(t *testing.T) {
 	if s.Budget == nil || s.Budget.Used != 1.25 || s.Budget.Total != 5.0 || s.Budget.Remaining != 3.75 {
 		t.Fatalf("budget = %+v, want transcript budget", s.Budget)
 	}
-	if s.Context == nil || s.Context.UsedTokens != 1500 || s.Context.WindowTokens != claudeContextWindow {
-		t.Fatalf("context = %+v, want input+cache occupancy", s.Context)
+	if s.Context != nil {
+		t.Fatalf("context = %+v, want unavailable without provider context telemetry", s.Context)
 	}
 	if len(s.Events) != 4 {
 		t.Fatalf("session events = %d, want 4", len(s.Events))

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
 )
 
@@ -228,6 +229,55 @@ func commitAmend(dir string) (string, error) {
 		return "", err
 	}
 	return git(dir, "rev-parse", "HEAD")
+}
+
+// headSHA returns the commit HEAD names, or "" when HEAD is unborn (a repo with
+// no commits yet). `rev-parse --verify --quiet` exits 1 silently for exactly
+// that case, so the code is read before res.Error — clicky reports every
+// non-zero exit as one — and anything else is a real failure.
+func headSHA(dir string) (string, error) {
+	res := exec.NewExec("git", "rev-parse", "--verify", "--quiet", "HEAD").WithCwd(dir).Run().Result()
+	switch {
+	case res.ExitCode == 0:
+		return strings.TrimSpace(res.Stdout), nil
+	case res.ExitCode == 1 && strings.TrimSpace(res.Stdout) == "":
+		return "", nil
+	case res.Error != nil:
+		return "", fmt.Errorf("git rev-parse HEAD in %s: %w: %s", dir, res.Error, strings.TrimSpace(res.Stderr))
+	}
+	return "", fmt.Errorf("git rev-parse HEAD in %s: exit %d: %s", dir, res.ExitCode, strings.TrimSpace(res.Stderr))
+}
+
+// sinceRange is the git range of the commits on HEAD after since; an empty
+// since (HEAD was unborn) covers all of HEAD's history.
+func sinceRange(since string) string {
+	if since == "" {
+		return "HEAD"
+	}
+	return since + "..HEAD"
+}
+
+// commitsSince reads the commits on HEAD after since, oldest first, with the
+// messages git actually stored — the record of what was committed, whoever
+// composed the message. Records are NUL/RS-delimited so a multi-line body
+// round-trips verbatim.
+func commitsSince(dir, since string) ([]api.CommitRecord, error) {
+	out, err := git(dir, "log", "--reverse", "--format=%H%x00%B%x1e", sinceRange(since))
+	if err != nil {
+		return nil, err
+	}
+	var commits []api.CommitRecord
+	for _, entry := range strings.Split(out, "\x1e") {
+		if entry = strings.TrimSpace(entry); entry == "" {
+			continue
+		}
+		sha, message, ok := strings.Cut(entry, "\x00")
+		if !ok {
+			return nil, fmt.Errorf("git log %s in %s: malformed entry %q", sinceRange(since), dir, entry)
+		}
+		commits = append(commits, api.CommitRecord{SHA: sha, Message: strings.TrimSpace(message)})
+	}
+	return commits, nil
 }
 
 // resolveRef verifies a ref exists and returns the commit it names.

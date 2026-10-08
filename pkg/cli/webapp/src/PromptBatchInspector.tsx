@@ -14,6 +14,7 @@ import {
 } from "./hooks/usePromptRunStream";
 import { useSessionChat, mergeSessionMessages } from "./hooks/useSessionChat";
 import { fetchSession } from "./sessionData";
+import { sizeSessionTokens } from "./sessionTokens";
 import {
   batchChatTargetState,
   batchChatTargets,
@@ -116,7 +117,7 @@ export function PromptBatchInspector({
       <SessionInspector
         className="min-h-0 flex-1"
         session={collection}
-        transcriptProps={{ defaultExpanded: false }}
+        transcriptProps={{ defaultExpanded: false, sizeTokens: sizeSessionTokens }}
         renderSessionActions={(item) => {
           const run = handle.runs.find(
             (candidate) => candidate.sessionId === item.id,

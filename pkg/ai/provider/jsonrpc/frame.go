@@ -57,5 +57,13 @@ type Handlers struct {
 	// non-nil *RPCError is sent as the error instead. It runs on its own goroutine
 	// (one per request), so it may block — awaiting a human approval, say — without
 	// stalling the read loop or other concurrent requests.
-	OnRequest func(method string, params json.RawMessage) (any, *RPCError)
+	OnRequest func(req ServerRequest) (any, *RPCError)
+}
+
+// ServerRequest is one id-bearing server→client request. ID is the peer's own
+// request identity, stable for the life of the connection.
+type ServerRequest struct {
+	ID     json.RawMessage
+	Method string
+	Params json.RawMessage
 }

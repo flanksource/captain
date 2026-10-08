@@ -97,6 +97,7 @@ func registerRuntimeProfileEntity() {
 }
 
 func listRuntimeProfiles(ctx context.Context, opts RuntimeProfileListOptions) ([]RuntimeProfileRecord, error) {
+	warnRuntimeProfilesDeprecated()
 	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return nil, err
@@ -132,6 +133,7 @@ func runtimeProfileCandidates(ctx context.Context, catalog *runtimeprofiles.Cata
 }
 
 func getRuntimeProfile(ctx context.Context, id string) (RuntimeProfileRecord, error) {
+	warnRuntimeProfilesDeprecated()
 	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return RuntimeProfileRecord{}, err
@@ -144,6 +146,7 @@ func getRuntimeProfile(ctx context.Context, id string) (RuntimeProfileRecord, er
 }
 
 func createRuntimeProfile(ctx context.Context, body map[string]any) (RuntimeProfileRecord, error) {
+	warnRuntimeProfilesDeprecated()
 	var req RuntimeProfileWriteRequest
 	if err := decodeRuntimeBody(ctx, body, &req); err != nil {
 		return RuntimeProfileRecord{}, err
@@ -170,6 +173,7 @@ func createRuntimeProfile(ctx context.Context, body map[string]any) (RuntimeProf
 }
 
 func updateRuntimeProfile(ctx context.Context, id string, body map[string]any) (RuntimeProfileRecord, error) {
+	warnRuntimeProfilesDeprecated()
 	var req RuntimeProfileWriteRequest
 	if err := decodeRuntimeBody(ctx, body, &req); err != nil {
 		return RuntimeProfileRecord{}, err
@@ -193,6 +197,7 @@ func updateRuntimeProfile(ctx context.Context, id string, body map[string]any) (
 }
 
 func deleteRuntimeProfile(ctx context.Context, id string) error {
+	warnRuntimeProfilesDeprecated()
 	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
 	if err != nil {
 		return err
@@ -200,17 +205,13 @@ func deleteRuntimeProfile(ctx context.Context, id string) error {
 	return runtimeCatalogError(catalog.DeleteProfile(ctx, id))
 }
 
-// resolveRuntimeProfileAction serves `captain runtime-profile resolve <id>` and
-// GET /api/v1/runtime-profile/{id}/resolve: the profile with its references
-// canonicalised, the presets in reference order, and the resolved spec.
+// resolveRuntimeProfileAction retains the deprecated action shape while making
+// profile selection a warning-only no-op.
 func resolveRuntimeProfileAction(ctx context.Context, id string, _ map[string]string) (runtimeprofiles.Resolution, error) {
-	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
-	if err != nil {
-		return runtimeprofiles.Resolution{}, err
-	}
-	resolution, err := catalog.Resolve(ctx, id)
-	if err != nil {
-		return runtimeprofiles.Resolution{}, runtimeCatalogError(err)
-	}
-	return resolution, nil
+	warnRuntimeProfilesDeprecated()
+	return runtimeprofiles.Resolution{Warnings: []string{api.RuntimeProfileDeprecationWarning}}, nil
+}
+
+func warnRuntimeProfilesDeprecated() {
+	log.Warnf("%s", api.RuntimeProfileDeprecationWarning)
 }

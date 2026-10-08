@@ -20,7 +20,7 @@ var _ = Describe("Transcript and Database", func() {
 			Turns:    []session.Turn{{ID: marker + "-t1"}},
 			Usage:    api.Usage{InputTokens: 11, OutputTokens: 3},
 			Cost:     api.Cost{TotalTokens: 14, ProviderCostUSD: 0.42},
-			Context:  &session.Context{UsedTokens: 900, WindowTokens: 2000, FreePercent: 55},
+			Context:  &api.ContextUsage{UsedTokens: 900, WindowTokens: 2000, FreePercent: 55},
 			Files:    session.ChangedFiles{Written: []string{marker + ".go"}},
 		}
 	}

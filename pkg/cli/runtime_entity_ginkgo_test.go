@@ -131,7 +131,7 @@ var _ = Describe("runtime entities over file sources", func() {
 		Expect(record.ID).To(Equal(runtimeprofiles.EncodeID(runtimeprofiles.KindPreset, f.presets.ID, "organization")))
 		Expect(record.Source.Kind).To(Equal(runtimeprofiles.SourceFile))
 		Expect(record.Spec.Budget.MaxTurns).To(Equal(20))
-		Expect(jsonKeys(record)).To(ConsistOf("id", "key", "source", "name", "description", "scope", "spec", "updatedAt"))
+		Expect(jsonKeys(record)).To(ConsistOf("id", "key", "source", "name", "description", "scope", "spec", "presets", "updatedAt"))
 		Expect(jsonKeys(record.Source)).To(ConsistOf("kind", "id", "label", "root", "writable", "implicit", "records"))
 		printJSON("preset list item", record)
 	})
@@ -153,6 +153,24 @@ var _ = Describe("runtime entities over file sources", func() {
 		Expect(listRuntimePresets(f.ctx, RuntimePresetListOptions{Scope: "user"})).To(HaveLen(1))
 		_, err = listRuntimePresets(f.ctx, RuntimePresetListOptions{Scope: "team"})
 		Expect(statusOf(err)).To(Equal(http.StatusBadRequest))
+	})
+
+	It("lists built-in presets after every other source and refuses to delete one", func() {
+		f := newRuntimeEntityFixture(runtimeprofiles.NewBuiltinSource())
+		f.createPreset(withTarget(map[string]any{"name": "Zeta", "scope": "user"}, f.presets.ID))
+
+		listed, err := listRuntimePresets(f.ctx, RuntimePresetListOptions{})
+		Expect(err).NotTo(HaveOccurred())
+		names := make([]string, 0, len(listed))
+		for _, record := range listed {
+			names = append(names, string(record.Source.Kind)+":"+record.Name)
+		}
+		Expect(names).To(Equal([]string{"file:Zeta", "builtin:Edit", "builtin:Plan", "builtin:Read-only"}))
+		Expect(listRuntimePresets(f.ctx, RuntimePresetListOptions{Source: "builtin"})).To(HaveLen(3))
+
+		err = deleteRuntimePreset(f.ctx, "plan")
+		Expect(statusOf(err)).To(Equal(http.StatusConflict))
+		Expect(err).To(MatchError(ContainSubstring(runtimeprofiles.ErrReadOnly.Error())))
 	})
 
 	It("gets a preset by unique name or encoded id", func() {
@@ -218,30 +236,23 @@ var _ = Describe("runtime entities over file sources", func() {
 		Expect(record.Spec.Budget.MaxTurns).To(Equal(3))
 	})
 
-	It("resolves a profile through its presets in reference order", func() {
+	// Profiles are deprecated in favour of presets: resolve keeps its route and
+	// shape but no longer layers anything, so a caller is told to move on rather
+	// than handed a spec that no run would apply. Preset layering is covered by
+	// the runtimeprofiles catalog specs.
+	It("answers profile resolve with the deprecation warning and no resolution", func() {
 		organization := f.createPreset(withTarget(organizationPresetBody, f.presets.ID))
-		personal := f.createPreset(withTarget(personalPresetBody, f.presets.ID))
 		f.createProfile(withTarget(map[string]any{
-			"name": "Review", "presets": []string{"personal", organization.ID},
-			"spec": map[string]any{"budget": map[string]any{"maxTurns": 5}},
+			"name": "Review", "presets": []string{organization.ID},
 		}, f.profiles.ID))
 
-		resolution, err := resolveRuntimeProfileAction(f.ctx, "review", nil)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(resolution.Profile.Presets).To(Equal([]string{personal.ID, organization.ID}))
-		Expect(resolution.Presets).To(Equal([]runtimeprofiles.Preset{personal.Preset, organization.Preset}))
-		names := make([]string, 0, len(resolution.Resolved.Trace))
-		for _, layer := range resolution.Resolved.Trace {
-			names = append(names, layer.Name)
+		for _, ref := range []string{"review", "missing"} {
+			resolution, err := resolveRuntimeProfileAction(f.ctx, ref, nil)
+			Expect(err).NotTo(HaveOccurred(), ref)
+			Expect(resolution).To(Equal(runtimeprofiles.Resolution{
+				Warnings: []string{api.RuntimeProfileDeprecationWarning},
+			}), ref)
 		}
-		Expect(names).To(Equal([]string{"Organization", "Review run spec", "Personal"}))
-		Expect(resolution.Resolved.Spec.Budget.MaxTurns).To(Equal(5))
-		Expect(resolution.Resolved.Spec.Model.Mode).To(Equal(api.ModeCLI))
-		Expect(jsonKeys(resolution)).To(ConsistOf("profile", "presets", "resolved"))
-		printJSON("resolve response", resolution)
-
-		_, err = resolveRuntimeProfileAction(f.ctx, "missing", nil)
-		Expect(statusOf(err)).To(Equal(http.StatusNotFound))
 	})
 
 	It("lists only the profiles referencing a preset when asked", func() {

@@ -188,9 +188,6 @@ type FinishChatModelCallInput struct {
 	// Cost is the priced breakdown for Event.Usage, built by the caller via
 	// ai.PriceUsage. Nil when the call ended without usage (interrupt, error).
 	Cost *api.Cost
-	// ContextWindowTokens is the resolved model's context window, so context
-	// occupancy is reportable server-side rather than only from the UI catalog.
-	ContextWindowTokens int
 }
 
 func (db *DB) GetChatTurn(ctx context.Context, id uuid.UUID) (*ChatTurn, error) {
@@ -267,8 +264,10 @@ func (db *DB) FinishChatModelCall(ctx context.Context, input FinishChatModelCall
 		updates["cache_read_cost"] = input.Cost.CacheReadCost
 		updates["cache_write_cost"] = input.Cost.CacheWriteCost
 	}
-	if input.ContextWindowTokens > 0 {
-		updates["context_window_tokens"] = input.ContextWindowTokens
+	if input.Event.Context != nil {
+		updates["context_tokens"] = input.Event.Context.UsedTokens
+		updates["context_window_tokens"] = input.Event.Context.WindowTokens
+		updates["context_free_percent"] = input.Event.Context.FreePercent
 	}
 	if input.Event.Usage != nil {
 		updates["input_tokens"] = input.Event.Usage.InputTokens
@@ -276,11 +275,6 @@ func (db *DB) FinishChatModelCall(ctx context.Context, input FinishChatModelCall
 		updates["reasoning_tokens"] = input.Event.Usage.ReasoningTokens
 		updates["cache_read_tokens"] = input.Event.Usage.CacheReadTokens
 		updates["cache_write_tokens"] = input.Event.Usage.CacheWriteTokens
-		// Context occupancy is the whole prompt, and the buckets are disjoint
-		// (pkg/api/cost.go): cache reads are context too. Counting InputTokens
-		// alone reports "5 / 1,000,000" for a 115K-token anthropic agent turn.
-		updates["context_tokens"] = input.Event.Usage.InputTokens +
-			input.Event.Usage.CacheReadTokens + input.Event.Usage.CacheWriteTokens
 	}
 	if input.Event.Error != "" {
 		updates["error"] = input.Event.Error

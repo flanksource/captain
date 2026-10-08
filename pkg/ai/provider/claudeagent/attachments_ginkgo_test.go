@@ -15,10 +15,10 @@ var _ = Describe("Claude Agent prompt parameters", func() {
 	It("derives the required SDK version from the embedded package manifest", func() {
 		version, err := requiredSDKVersion()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(version).To(Equal("0.3.210"))
+		Expect(version).To(Equal("0.3.280"))
 	})
 
-	It("materializes the structured attachment bridge source", func() {
+	It("materializes the SDK bridge source", func() {
 		directory, err := prepareAgentDir()
 		Expect(err).NotTo(HaveOccurred())
 		content, err := os.ReadFile(filepath.Join(directory, "protocol.ts"))
@@ -27,6 +27,17 @@ var _ = Describe("Claude Agent prompt parameters", func() {
 		agent, err := os.ReadFile(filepath.Join(directory, "agent.ts"))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(agent)).To(ContainSubstring(`from "./protocol.js"`))
+		Expect(string(agent)).To(ContainSubstring(`effort?: Options["effort"]`))
+		Expect(string(agent)).To(ContainSubstring("effort: params.effort"))
+		for module, export := range map[string]string{
+			"elicitation": "export async function elicitHost(",
+			"messages":    "export function handleMessage(",
+		} {
+			Expect(string(agent)).To(ContainSubstring(`from "./` + module + `.js"`))
+			source, err := os.ReadFile(filepath.Join(directory, module+".ts"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(source)).To(ContainSubstring(export))
+		}
 	})
 
 	It("encodes prepared image and PDF data as ordered structured inputs", func() {

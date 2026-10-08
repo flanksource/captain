@@ -61,7 +61,8 @@ var _ = Describe("Approval expiry under a run deadline", Ordered, func() {
 		deadline := time.Now().Add(10 * time.Minute)
 		broker.Deadline = deadline
 
-		outcomes := run.callTool(context.WithoutCancel(ctx), broker, api.PermissionRequest{
+		outcomes := run.callTool(context.WithoutCancel(ctx), broker, api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "main.go"}, ToolUseID: "toolu_deadline_bound",
 		})
 		DeferCleanup(func() { run.resolve(ctx, outcomes) })
@@ -80,7 +81,8 @@ var _ = Describe("Approval expiry under a run deadline", Ordered, func() {
 		broker := run.broker(time.Minute)
 		broker.Deadline = time.Now().Add(24 * time.Hour)
 
-		outcomes := run.callTool(context.WithoutCancel(ctx), broker, api.PermissionRequest{
+		outcomes := run.callTool(context.WithoutCancel(ctx), broker, api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "go.mod"}, ToolUseID: "toolu_timeout_bound",
 		})
 		DeferCleanup(func() { run.resolve(ctx, outcomes) })
@@ -96,7 +98,8 @@ var _ = Describe("Approval expiry under a run deadline", Ordered, func() {
 		broker := run.broker(24 * time.Hour)
 		broker.Deadline = time.Now().Add(2 * time.Second)
 
-		_, err := broker.CanUseTool(ctx, api.PermissionRequest{
+		_, err := broker.OnApproval(ctx, api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "main.go"}, ToolUseID: "toolu_deadline_passed",
 		})
 		Expect(err).To(MatchError(ContainSubstring("Write")))
@@ -112,7 +115,8 @@ var _ = Describe("Approval expiry under a run deadline", Ordered, func() {
 
 	It("leaves the window unbounded by a deadline the caller did not set", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		outcomes := run.callTool(context.WithoutCancel(ctx), run.broker(time.Hour), api.PermissionRequest{
+		outcomes := run.callTool(context.WithoutCancel(ctx), run.broker(time.Hour), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "README.md"}, ToolUseID: "toolu_no_deadline",
 		})
 		DeferCleanup(func() { run.resolve(ctx, outcomes) })
@@ -132,7 +136,8 @@ var _ = Describe("Approval expiry under a run deadline", Ordered, func() {
 		callCtx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 		DeferCleanup(cancel)
 
-		outcomes := run.callTool(callCtx, run.broker(24*time.Hour), api.PermissionRequest{
+		outcomes := run.callTool(callCtx, run.broker(24*time.Hour), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "main.go"}, ToolUseID: "toolu_ctx_deadline",
 		})
 		DeferCleanup(func() { run.resolve(ctx, outcomes) })
@@ -156,7 +161,8 @@ var _ = Describe("Approval expiry reporting", Ordered, func() {
 
 	It("names the tool, the approval and the wait when nobody answers", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		outcomes := run.callTool(ctx, run.broker(150*time.Millisecond), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.broker(150*time.Millisecond), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "main.go"}, ToolUseID: "toolu_expiry_message",
 		})
 		event := run.awaitPermission()
@@ -172,7 +178,8 @@ var _ = Describe("Approval expiry reporting", Ordered, func() {
 
 	It("narrates the expiry so a reader learns the wait ended", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		outcomes := run.callTool(ctx, run.broker(150*time.Millisecond), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.broker(150*time.Millisecond), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Write", Input: map[string]any{"path": "main.go"}, ToolUseID: "toolu_expiry_notify",
 		})
 		asked := run.awaitPermission()
@@ -189,7 +196,8 @@ var _ = Describe("Approval expiry reporting", Ordered, func() {
 
 	It("narrates an approval another writer swept out from under the wait", func(ctx SpecContext) {
 		run := newProviderRun(ctx, db)
-		outcomes := run.callTool(ctx, run.broker(time.Hour), api.PermissionRequest{
+		outcomes := run.callTool(ctx, run.broker(time.Hour), api.ApprovalRequest{
+			Kind: api.ApprovalKindTool,
 			Tool: "Bash", Input: map[string]any{"command": "rm -rf /"}, ToolUseID: "toolu_swept",
 		})
 		asked := run.awaitPermission()

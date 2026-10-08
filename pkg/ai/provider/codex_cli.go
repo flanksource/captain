@@ -167,6 +167,9 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	if translation.Approval != "" {
 		args = append(args, "-c", fmt.Sprintf("approval_policy=%q", translation.Approval))
 	}
+	if translation.ApprovalsReviewer != "" {
+		args = append(args, "-c", fmt.Sprintf("approvals_reviewer=%q", translation.ApprovalsReviewer))
+	}
 	for _, config := range translation.ConfigArgs() {
 		args = append(args, "-c", config)
 	}

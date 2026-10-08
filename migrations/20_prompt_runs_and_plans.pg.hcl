@@ -60,6 +60,11 @@ table "captain_prompt_runs" {
     type    = jsonb
     default = sql("'{}'::jsonb")
   }
+  column "metadata" {
+    null    = false
+    type    = jsonb
+    default = sql("'{}'::jsonb")
+  }
   column "prompt_markdown" {
     null = true
     type = text
@@ -92,6 +97,13 @@ table "captain_prompt_runs" {
     type = jsonb
   }
   column "approval_state" {
+    null = true
+    type = jsonb
+  }
+  # The run's durable workspace record (api.WorkspaceRecord): where it ran, the
+  # worktree it was isolated in and what became of it, and what it committed.
+  # Null until the run finishes, and for a run that reported no workspace.
+  column "workspace" {
     null = true
     type = jsonb
   }
@@ -206,6 +218,12 @@ table "captain_prompt_runs" {
     unique  = true
     columns = [column.admission_key]
     where   = "admission_key IS NOT NULL"
+  }
+  # The partial active key above covers only live runs; the session overview's
+  # per-session run count and the lifecycle projection's latest-run lookup scan
+  # every run of a session.
+  index "captain_prompt_runs_session_created_idx" {
+    columns = [column.session_id, column.created_at]
   }
   index "captain_prompt_runs_batch_id_idx" {
     columns = [column.batch_id]

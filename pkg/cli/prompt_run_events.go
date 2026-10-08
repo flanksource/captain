@@ -78,6 +78,11 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 		a.model = ev.Model
 	}
 	switch ev.Kind {
+	case ai.EventTurnStart:
+		a.flush()
+		if start, ok := ev.Raw.(*ai.TurnStart); ok && start != nil {
+			a.task.Infof("turn %d/%d · %s", start.Iteration+1, start.MaxIterations, firstNonEmpty(ev.Model, start.Request.Name))
+		}
 	case ai.EventSystem:
 		if ev.SessionID != "" {
 			a.sessionID = ev.SessionID

@@ -5,8 +5,10 @@ import {
   SessionContextMeter,
   SessionInspector,
   getSessionMetadata,
+  type SessionToolDecision,
 } from "@flanksource/clicky-ui/ai";
 
+import { askAnswerTools, formatAskAnswer } from "./askAnswer";
 import {
   type SessionGetItem,
   type SessionGetResult,
@@ -16,9 +18,11 @@ import { sessionResultCollection } from "./sessionCollection";
 import {
   findSessionForApproval,
   resolveSessionApproval,
+  type ApprovalDecisionExtras,
   type ApprovalResolveAction,
 } from "./sessionApprovals";
 import { RunVerification } from "./RunVerification";
+import { sizeSessionTokens } from "./sessionTokens";
 import {
   mergeSessionMessages,
   useSessionChat,
@@ -67,13 +71,13 @@ export function SessionDetail({
         <div className="min-h-80 flex-1">
           <SessionInspector
             session={collection}
-            transcriptProps={{ defaultExpanded: false }}
+            transcriptProps={{ defaultExpanded: false, sizeTokens: sizeSessionTokens }}
             onResolveApproval={onResolveApproval}
           />
         </div>
         {result.sessions.map((item) => (
           <RunVerification key={item.captainId}
-            storedReport={item.detail?.structuredOutput?.verify}
+            storedReport={item.detail?.verifications?.slice(-1)[0]?.report}
             title={`Verification · ${item.summary.title || item.captainId}`}
           />
         ))}
@@ -108,6 +112,7 @@ function SessionGetItemDetail({
     approvalId: string,
     action: ApprovalResolveAction,
     message?: string,
+    decision?: ApprovalDecisionExtras,
   ) => Promise<void>;
 }) {
   const chat = useSessionChat({
@@ -117,6 +122,8 @@ function SessionGetItemDetail({
     initialState: item.chatState,
     clearOnTerminal: true,
     onTerminal: onRefresh,
+    initialPermissionMode: item.detail?.permissionMode,
+    permissionModes: item.permissionModes,
   });
   const detail = useMemo(
     () =>
@@ -130,6 +137,25 @@ function SessionGetItemDetail({
           }
         : undefined,
     [chat.messages, item.detail],
+  );
+  // Questions are answerable only by resuming the session, and not while a run
+  // is already carrying an answer.
+  const awaitingInput =
+    item.chat?.resume && !chat.activeRunID ? detail?.awaitingInput : undefined;
+  const { send } = chat;
+  const transcriptProps = useMemo(
+    () => ({
+      defaultExpanded: false,
+      sizeTokens: sizeSessionTokens,
+      ...(awaitingInput
+        ? {
+            pendingTools: askAnswerTools(awaitingInput),
+            onPendingToolDecision: (decision: SessionToolDecision) =>
+              send(formatAskAnswer(awaitingInput, decision)),
+          }
+        : {}),
+    }),
+    [awaitingInput, send],
   );
   const composerToolbar = useMemo(() => {
     const metadata = detail ? getSessionMetadata(detail) : undefined;
@@ -150,6 +176,12 @@ function SessionGetItemDetail({
         error={chat.actionError}
         onSubmit={chat.send}
         onInterrupt={chat.interrupt}
+        {...(chat.permissionMode ? { permissionMode: chat.permissionMode } : {})}
+        permissionModes={chat.permissionModes}
+        permissionFamily={item.execution?.source ?? item.summary.source}
+        {...(chat.canSetPermissionMode
+          ? { onPermissionModeChange: chat.setPermissionMode }
+          : {})}
         {...(composerToolbar ? { toolbar: composerToolbar } : {})}
       />
     ) : undefined;
@@ -183,7 +215,7 @@ function SessionGetItemDetail({
         <div className={single ? "min-h-80 flex-1" : "h-[70vh] min-h-[32rem]"}>
           <SessionInspector
             session={detail}
-            transcriptProps={{ defaultExpanded: false }}
+            transcriptProps={transcriptProps}
             onResolveApproval={onResolveApproval}
             {...(composer ? { composer } : {})}
           />
@@ -193,7 +225,7 @@ function SessionGetItemDetail({
           Transcript unavailable.
         </div>
       )}
-      <RunVerification frame={chat.verify} storedReport={detail?.structuredOutput?.verify} />
+      <RunVerification frame={chat.verify} storedReport={detail?.verifications?.slice(-1)[0]?.report} />
     </section>
   );
 }
@@ -207,7 +239,12 @@ function useResolveApproval(
   onRefresh: () => Promise<unknown>,
 ) {
   return useCallback(
-    async (approvalId: string, action: ApprovalResolveAction, message?: string) => {
+    async (
+      approvalId: string,
+      action: ApprovalResolveAction,
+      message?: string,
+      decision?: ApprovalDecisionExtras,
+    ) => {
       const sessionId = findSessionForApproval(sessions ?? [], approvalId);
       if (!sessionId) {
         throw new Error(`No session found for approval ${approvalId}.`);
@@ -218,6 +255,7 @@ function useResolveApproval(
         approvalId,
         approved: action === "approve",
         ...(message ? { reason: message } : {}),
+        ...(decision ? { decision } : {}),
       });
       await onRefresh();
     },

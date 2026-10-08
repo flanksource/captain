@@ -100,6 +100,7 @@ func finaliseCoalescedResponse(runtime ai.Runtime, model, text string, usage ai.
 		Duration: time.Since(start),
 	}
 	if lastResult != nil {
+		resp.Context = lastResult.Context
 		resp.Raw = lastResult.Input
 		// Carry the provider-reported cost (e.g. claude-cli total_cost_usd) so the
 		// buffered Execute path does not lose it — buffered callers otherwise fall

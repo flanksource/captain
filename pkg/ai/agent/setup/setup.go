@@ -21,6 +21,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/api"
 	dbcontext "github.com/flanksource/commons-db/context"
 	"github.com/flanksource/commons-db/shell"
 )
@@ -118,6 +119,35 @@ type Plugin struct {
 	BaseDir string
 
 	prepared *shell.SetupResult
+	// relocation describes the tree PreRun moved the run into, so teardown can
+	// report what became of it; nil when the setup relocated nothing.
+	relocation *relocation
+	// worktree is the recorded state of the worktree the run was moved into —
+	// the same value the run's Workspace carries — which teardown completes. Nil
+	// when there is none, or PreRun failed before recording it.
+	worktree *api.WorktreeState
+}
+
+type relocation struct {
+	kind, path string
+	// keep is the checkout's explicit request to leave the worktree in place;
+	// existing marks a worktree the run was pointed at rather than one setup
+	// created, which teardown never removes either. existingBranch marks a
+	// branch the run continued on: it predates the run, so teardown never
+	// deletes it.
+	keep, existing, existingBranch bool
+}
+
+// retainReason is why teardown must keep the worktree whatever its state; empty
+// means its git state decides.
+func (r *relocation) retainReason() string {
+	switch {
+	case r.keep:
+		return keptKeepRequested
+	case r.existing:
+		return keptExisting
+	}
+	return ""
 }
 
 func (p *Plugin) Name() string { return "setup" }
@@ -140,12 +170,39 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 	if baseDir == "" {
 		baseDir = hc.Workspace().Cwd
 	}
+	// Read before Apply, which consumes the checkout it performs.
+	checkout := hc.Request.Setup.Checkout
 	res, err := Apply(hc, hc.Request, baseDir)
 	if err != nil {
 		return err
 	}
 	p.prepared = res
 	hc.Workspace().Cwd = res.Cwd
+	if !Relocates(checkout) {
+		return nil
+	}
+	p.relocation = &relocation{kind: "checkout", path: res.Cwd}
+	wt := checkout.Worktree
+	if wt == nil || wt.Mode == "" || wt.Mode == shell.WorktreeNone {
+		hc.Notify("[pre-run] checkout %s", res.Cwd)
+		return nil
+	}
+	p.relocation.kind = "worktree"
+	p.relocation.keep, p.relocation.existing = wt.Keep, wt.Mode == shell.WorktreeExisting
+	p.relocation.existingBranch = wt.Mode == shell.WorktreeBranch
+	// Only a worktree setup created holds a copy of the source's work-in-progress;
+	// an existing one's uncommitted state is its owner's, and never committed here.
+	state, err := recordWorktree(res.Cwd, wt.Mode == shell.WorktreeNew)
+	if err != nil {
+		return err
+	}
+	// Worktree is how later hooks tell an isolated tree from the caller's own
+	// checkout — the commit hook stages the whole tree only when it is set — so a
+	// worktree that does not record one reads as shared.
+	p.worktree = state
+	ws := hc.Workspace()
+	ws.Worktree, ws.Repo = state, state.Repo
+	hc.Notify("[pre-run] worktree %s on %s from %s", res.Cwd, state.Branch, shortSHA(state.Base))
 	return nil
 }
 
@@ -156,11 +213,34 @@ func (p *Plugin) Phases() []agent.Phase { return []agent.Phase{agent.PhaseRun} }
 // Post tears the prepared setup down. It runs even when the run failed — that is
 // what makes teardown reliable — and clears its own state so a re-dispatched
 // phase cannot tear the same workspace down twice.
-func (p *Plugin) Post(_ *agent.HookContext, _ agent.Phase) error {
-	if p.prepared == nil || p.prepared.Cleanup == nil {
+//
+// A recorded worktree's fate is decided by its git state (teardownWorktree): it
+// runs after the commit hooks, so a failed or skipped commit leaves a dirty tree
+// that is kept rather than force-removed with the agent's edits in it.
+func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
+	if p.prepared == nil {
 		return nil
 	}
-	cleanup := p.prepared.Cleanup
-	p.prepared = nil
-	return cleanup()
+	cleanup, moved, wt := p.prepared.Cleanup, p.relocation, p.worktree
+	p.prepared, p.relocation, p.worktree = nil, nil, nil
+	if wt != nil {
+		if err := teardownWorktree(wt, moved, cleanup); err != nil {
+			return err
+		}
+		hc.Notify("%s", teardownNotice(wt))
+		return nil
+	}
+	if cleanup != nil {
+		if err := cleanup(); err != nil {
+			return err
+		}
+	}
+	if moved != nil {
+		verb := "removed"
+		if moved.keep || cleanup == nil {
+			verb = "kept"
+		}
+		hc.Notify("[post-run] %s %s %s", verb, moved.kind, moved.path)
+	}
+	return nil
 }

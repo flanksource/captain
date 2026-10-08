@@ -4,28 +4,34 @@
 //
 // Protocol (newline-delimited JSON, one object per line on stdout):
 //   client -> server requests:
-//     initialize {cwd, model, systemPrompt, appendSystemPrompt, allowedTools,
-//                 maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
+//     initialize {cwd, model, effort, systemPrompt, appendSystemPrompt,
+//                 allowedTools, maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema, mcpServers}
-//                 -> reply {ok:true}
+//                 -> reply {ok:true, protocolVersion}
 //     prompt {text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
+//     set_permission_mode {mode} -> reply {} (applies to the live query)
 //     shutdown           -> reply {} then exit
 //   server -> client notifications:
 //     session/init   {session_id, model, tools}
-//     message/text   {text}
-//     message/thinking {text}
-//     message/tool_use {tool, input, id}
-//     message/tool_result {id, content, is_error}
+//     message/text   {text}      (one per streamed delta; the host concatenates)
+//     message/thinking {text}    (likewise)
+//     message/tool_use {tool, input, id, parent_tool_use_id}
+//     message/tool_result {id, content, is_error, parent_tool_use_id}
 //     turn/completed {success, subtype, session_id, cost_usd, usage, num_turns,
 //                     result_text, structured_output}
+//     session/state  {state}     (idle | running | requires_action; idle ends
+//                                 the host's turn, after background agents)
 //     turn/error     {message}
 //   server -> client requests (only when approvalMode === "ask"):
 //     can_use_tool {tool, input, tool_use_id}
-//                 -> reply {allow, message?, updatedInput?}
-//   The transport is bidirectional: the host's reply to can_use_tool arrives on
-//   stdin as an id-bearing response (no method) and resolves the pending callHost
-//   promise, so a tool call blocks only until the host decides.
+//                 -> reply {allow, message?, updatedInput?, interrupt?}
+//     elicit {bridgeId, requestId, serverName, message, mode, requestedSchema?,
+//             url?, elicitationId?}
+//                 -> reply {action: accept|decline|cancel, content?}
+//   The transport is bidirectional: the host's reply arrives on stdin as an
+//   id-bearing response (no method) and resolves the pending callHost promise,
+//   so a tool call or elicitation blocks only until the host decides.
 //
 // One query({prompt, options}) SDK session stays alive for the whole process;
 // turns are fed by pushing user messages onto TurnQueue (a push async-iterable),
@@ -36,15 +42,17 @@ import type {
   Options,
   PreToolUseHookInput,
   Query,
-  SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
+import { elicitHost } from "./elicitation.js";
+import { handleMessage } from "./messages.js";
 import {
   callHost,
   diag,
   handleResponse,
   type JsonRpcId,
   notify,
+  PROTOCOL_VERSION,
   type PromptParams,
   reply,
   replyError,
@@ -57,10 +65,15 @@ import {
 // the SDK reads process.env at query() time.
 delete process.env.CLAUDECODE;
 delete process.env.CLAUDE_CODE_ENTRYPOINT;
+// The host ends a turn on session_state_changed "idle", which the CLI emits only
+// with this set: a turn's first result can precede background agents' follow-up
+// turns.
+process.env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS = "1";
 
 interface InitializeParams {
   cwd?: string;
   model?: string;
+  effort?: Options["effort"];
   systemPrompt?: string;
   appendSystemPrompt?: string;
   allowedTools?: string[];
@@ -86,19 +99,27 @@ interface InitializeParams {
     string,
     { type: "http"; url: string; headers?: Record<string, string> }
   >;
+  // strictMcpConfig limits the session to mcpServers. Absent, the SDK also
+  // loads every ambient server: .mcp.json, user settings, plugins.
+  strictMcpConfig?: boolean;
   callerToolUseIDKey?: string;
 }
 
-// HostDecision is the can_use_tool reply shape from the Go host.
+// HostDecision is the can_use_tool reply shape from the Go host. interrupt
+// denies the tool and ends the turn.
 interface HostDecision {
   allow?: boolean;
   message?: string;
   updatedInput?: Record<string, unknown>;
+  interrupt?: boolean;
 }
 
 let turns: TurnQueue | null = null;
 let activeQuery: Query | null = null;
 let callerToolServers: string[] = [];
+// bypassAllowed mirrors the query's allowDangerouslySkipPermissions, which the
+// SDK requires before it will enter bypassPermissions.
+let bypassAllowed = false;
 
 function callerToolName(toolName: string): string | undefined {
   for (const server of callerToolServers) {
@@ -124,9 +145,16 @@ function buildOptions(params: InitializeParams): Options {
   const options: Options = {
     cwd: params.cwd,
     model: params.model,
+    effort: params.effort,
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode,
+    // Stream text and thinking as they are produced. Without it the SDK reports
+    // only whole assistant messages, so a host rendering live progress showed
+    // nothing for the length of a reasoning block and then the whole block at
+    // once — the one way this runtime read as frozen next to a delta-streaming
+    // one. handleMessage drops the final copy of a block already streamed.
+    includePartialMessages: true,
     sandbox: params.sandbox,
     allowDangerouslySkipPermissions:
       !brokered && permissionMode === "bypassPermissions",
@@ -143,6 +171,7 @@ function buildOptions(params: InitializeParams): Options {
         ? params.additionalDirectories
         : undefined,
     mcpServers: params.mcpServers,
+    strictMcpConfig: params.strictMcpConfig || undefined,
     stderr: (data: string) => process.stderr.write(data),
     hooks: {
       PreToolUse: [
@@ -303,8 +332,15 @@ function buildOptions(params: InitializeParams): Options {
       if (decision?.allow) {
         return { behavior: "allow", updatedInput: decision.updatedInput ?? input };
       }
-      return { behavior: "deny", message: decision?.message || "denied by host" };
+      return {
+        behavior: "deny",
+        message: decision?.message || "denied by host",
+        interrupt: decision?.interrupt === true,
+      };
     };
+    // MCP elicitations are answered by the same host broker. Without this the
+    // SDK declines every elicitation no hook handles.
+    options.onElicitation = (request) => elicitHost(request);
   }
 
   return options;
@@ -314,14 +350,16 @@ function handleInitialize(id: JsonRpcId, params: InitializeParams) {
   if (turns) {
     // Already initialized; treat as idempotent so a re-bind after a restart is
     // not fatal.
-    reply(id, { ok: true });
+    reply(id, { ok: true, protocolVersion: PROTOCOL_VERSION });
     return;
   }
   try {
     callerToolServers = Object.keys(params.mcpServers ?? {});
     turns = new TurnQueue();
-    activeQuery = query({ prompt: turns, options: buildOptions(params) });
-    reply(id, { ok: true });
+    const options = buildOptions(params);
+    bypassAllowed = options.allowDangerouslySkipPermissions === true;
+    activeQuery = query({ prompt: turns, options });
+    reply(id, { ok: true, protocolVersion: PROTOCOL_VERSION });
     pump(activeQuery).catch((err) => {
       notify("turn/error", { message: err?.message || String(err) });
     });
@@ -357,6 +395,38 @@ async function handleInterrupt(id: JsonRpcId) {
   reply(id, {});
 }
 
+async function handleSetPermissionMode(
+  id: JsonRpcId,
+  params: { mode?: Options["permissionMode"] },
+) {
+  if (!activeQuery) {
+    replyError(id, -32002, "not initialized");
+    return;
+  }
+  if (!params.mode) {
+    replyError(id, -32602, "set_permission_mode requires a mode");
+    return;
+  }
+  if (params.mode === "bypassPermissions" && !bypassAllowed) {
+    replyError(
+      id,
+      -32602,
+      "bypassPermissions requires a session started in bypassPermissions",
+    );
+    return;
+  }
+  try {
+    await activeQuery.setPermissionMode(params.mode);
+    reply(id, {});
+  } catch (err) {
+    replyError(
+      id,
+      -32603,
+      `set_permission_mode failed: ${(err as Error)?.message || err}`,
+    );
+  }
+}
+
 function handleShutdown(id: JsonRpcId) {
   if (turns) {
     turns.end();
@@ -368,90 +438,7 @@ function handleShutdown(id: JsonRpcId) {
 
 async function pump(stream: Query) {
   for await (const message of stream) {
-    handleMessage(message);
-  }
-}
-
-// stringifyToolResult flattens an SDK tool_result `content` (a string, or an
-// array of content blocks) into plain text for the message/tool_result payload.
-function stringifyToolResult(content: unknown): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (Array.isArray(content)) {
-    return content
-      .map((block) => {
-        const rec = block as Record<string, unknown>;
-        return typeof rec.text === "string" ? rec.text : JSON.stringify(block);
-      })
-      .join("");
-  }
-  if (content == null) {
-    return "";
-  }
-  return JSON.stringify(content);
-}
-
-function handleMessage(message: SDKMessage) {
-  switch (message.type) {
-    case "system":
-      if ((message as { subtype?: string }).subtype === "init") {
-        notify("session/init", {
-          session_id: message.session_id,
-          model: (message as { model?: string }).model,
-          tools: (message as { tools?: string[] }).tools,
-        });
-      }
-      break;
-
-    case "assistant": {
-      const content =
-        (message as { message?: { content?: unknown[] } }).message?.content ?? [];
-      for (const block of content as Array<Record<string, unknown>>) {
-        if (block.type === "text") {
-          notify("message/text", { text: block.text });
-        } else if (block.type === "thinking") {
-          notify("message/thinking", { text: block.thinking });
-        } else if (block.type === "tool_use") {
-          notify("message/tool_use", {
-            tool: callerToolName(String(block.name)) ?? block.name,
-            input: block.input,
-            id: block.id,
-          });
-        }
-      }
-      break;
-    }
-
-    case "user": {
-      // Tool results arrive as tool_result blocks on user-role messages.
-      const content =
-        (message as { message?: { content?: unknown[] } }).message?.content ?? [];
-      for (const block of content as Array<Record<string, unknown>>) {
-        if (block.type === "tool_result") {
-          notify("message/tool_result", {
-            id: block.tool_use_id,
-            content: stringifyToolResult(block.content),
-            is_error: block.is_error === true,
-          });
-        }
-      }
-      break;
-    }
-
-    case "result":
-      notify("turn/completed", {
-        success: !(message as { is_error?: boolean }).is_error,
-        subtype: (message as { subtype?: string }).subtype,
-        session_id: message.session_id,
-        cost_usd: (message as { total_cost_usd?: number }).total_cost_usd,
-        usage: (message as { usage?: unknown }).usage,
-        num_turns: (message as { num_turns?: number }).num_turns,
-        result_text: (message as { result?: string }).result,
-        structured_output: (message as { structured_output?: unknown })
-          .structured_output,
-      });
-      break;
+    handleMessage(message, (name) => callerToolName(name) ?? name);
   }
 }
 
@@ -488,6 +475,12 @@ rl.on("line", (line) => {
       break;
     case "interrupt":
       handleInterrupt(id);
+      break;
+    case "set_permission_mode":
+      handleSetPermissionMode(
+        id,
+        (req.params as { mode?: Options["permissionMode"] }) || {},
+      );
       break;
     case "shutdown":
       handleShutdown(id);

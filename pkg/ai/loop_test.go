@@ -224,6 +224,73 @@ func TestRunUntil_SessionReuse(t *testing.T) {
 	}
 }
 
+// Every turn announces itself before the provider's first event, naming the
+// turn, the resolved model and the session it resumes, so a renderer can head
+// the turn even when the session id never changes.
+func TestRunUntil_EmitsTurnStartBeforeEachIteration(t *testing.T) {
+	const model, sessionID = "claude-test", "sess-A"
+	p := &fakeStreamingProvider{
+		model: model,
+		scripts: [][]Event{
+			{systemEvent(sessionID), resultEvent(0, true)},
+			{systemEvent(sessionID), resultEvent(0, true)},
+		},
+	}
+	var seen []Event
+	var seenIters []int
+	res, err := RunUntil(context.Background(), LoopOptions{
+		Provider:      p,
+		MaxIterations: 2,
+		SessionReuse:  true,
+		OnEvent: func(iter int, ev Event) {
+			seen = append(seen, ev)
+			seenIters = append(seenIters, iter)
+		},
+		BuildRequest: func(iter int, prev *LoopIteration) (Request, bool) {
+			return Request{Prompt: api.Prompt{User: "loop"}}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunUntil err: %v", err)
+	}
+
+	wantKinds := []EventKind{EventTurnStart, EventSystem, EventResult, EventTurnStart, EventSystem, EventResult}
+	if len(seen) != len(wantKinds) {
+		t.Fatalf("saw %d events, want %d", len(seen), len(wantKinds))
+	}
+	for i, kind := range wantKinds {
+		if seen[i].Kind != kind {
+			t.Errorf("event %d kind = %q, want %q", i, seen[i].Kind, kind)
+		}
+	}
+	for turn, idx := range []int{0, 3} {
+		ev := seen[idx]
+		start, ok := ev.Raw.(*TurnStart)
+		if !ok {
+			t.Fatalf("turn %d Raw = %T, want *TurnStart", turn, ev.Raw)
+		}
+		if start.Iteration != turn || start.MaxIterations != 2 || seenIters[idx] != turn {
+			t.Errorf("turn %d start = %+v (iter %d)", turn, *start, seenIters[idx])
+		}
+		if ev.Model != model {
+			t.Errorf("turn %d Model = %q, want %q", turn, ev.Model, model)
+		}
+	}
+	if seen[0].SessionID != "" {
+		t.Errorf("first turn SessionID = %q, want empty (new session)", seen[0].SessionID)
+	}
+	if seen[3].SessionID != sessionID || seen[3].Raw.(*TurnStart).Request.SessionID != sessionID {
+		t.Errorf("second turn SessionID = %q, want resumed %q", seen[3].SessionID, sessionID)
+	}
+	for i, iter := range res.Iterations {
+		for _, ev := range iter.Events {
+			if ev.Kind == EventTurnStart {
+				t.Errorf("iteration %d recorded the loop's own turn_start event", i)
+			}
+		}
+	}
+}
+
 func TestRunUntil_PropagatesProviderError(t *testing.T) {
 	wantErr := errors.New("boom")
 	p := &fakeStreamingProvider{err: wantErr}

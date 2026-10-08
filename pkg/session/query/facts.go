@@ -111,6 +111,7 @@ func PromptRunFacts(run database.PromptRun) load.PromptRunFacts {
 		ResultText:     run.ResultText,
 		ResultJSON:     run.ResultJSON,
 		RenderedSpec:   run.RenderedSpec,
+		Metadata:       run.Metadata,
 		Error:          run.Error,
 		Provider:       firstNonEmpty(resolved.Provider, requested.Provider),
 		Model:          firstNonEmpty(resolved.Model, requested.Model),

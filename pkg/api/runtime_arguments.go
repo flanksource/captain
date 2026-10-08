@@ -69,6 +69,7 @@ var claudeCLIArguments = []runtimeArgumentBinding{
 var claudeAgentArguments = []runtimeArgumentBinding{
 	mappedArgument("cwd", "setup.cwd"),
 	mappedArgument("model", "model"),
+	mappedArgument("effort", "effort"),
 	mappedArgument("systemPrompt", "prompt.system"),
 	mappedArgument("appendSystemPrompt", "prompt.appendSystem"),
 	mappedArgument("allowedTools", "permissions.tools"),
@@ -95,6 +96,7 @@ var codexCLIArguments = []runtimeArgumentBinding{
 	mappedArgument("--add-dir", "permissions.directories"),
 	mappedArgument("--sandbox", "sandbox.mode"),
 	mappedArgument("approval_policy", "permissions.mode"),
+	mappedArgument("approvals_reviewer", "permissions.mode"),
 	mappedArgument("--ephemeral", "memory.skipMemory|memory.bare"),
 	mappedArgument("--ignore-user-config", "memory.skipUser"),
 	mappedArgument("--ignore-rules", "memory.skipProject|memory.skipHooks"),
@@ -107,16 +109,29 @@ var codexCLIArguments = []runtimeArgumentBinding{
 var codexAgentArguments = []runtimeArgumentBinding{
 	mappedArgument("thread/start.cwd", "setup.cwd"),
 	mappedArgument("thread/start.model", "model"),
-	mappedArgument("thread/start.sandbox", "sandbox.mode"),
 	mappedArgument("thread/start.approvalPolicy", "permissions.mode"),
-	mappedArgument("thread/start.ephemeral", "memory.skipMemory|memory.bare"),
+	mappedArgument("thread/start.approvalsReviewer", "permissions.mode"),
+	mappedArgument("thread/start.runtimeWorkspaceRoots", "permissions.directories"),
+	mappedArgument("thread/start.ephemeral", "memory.skipMemory|memory.bare|permissions.presets"),
 	mappedArgument("thread/resume.threadId", "sessionId"),
+	mappedArgument("thread/resume.cwd", "setup.cwd"),
+	mappedArgument("thread/resume.approvalPolicy", "permissions.mode"),
+	mappedArgument("thread/resume.approvalsReviewer", "permissions.mode"),
+	mappedArgument("thread/resume.runtimeWorkspaceRoots", "permissions.directories"),
+	mappedArgument("turn/start.input", "prompt.user|prompt.system|prompt.appendSystem|prompt.attachments"),
 	mappedArgument("turn/start.model", "model"),
 	mappedArgument("turn/start.effort", "effort"),
-	mappedArgument("turn/start.outputSchema", "prompt.schema"),
-	managedArgument("turn/start.input", "Captain composes text and prepared local-image inputs."),
-	mappedArgument("config.mcp_servers", "permissions.mcp.disabled"),
-	managedArgument("config.mcp_servers.caller", "Captain projects registered caller tools into an MCP server."),
+	mappedArgument("turn/start.outputSchema", "prompt.schema|prompt.schemaJSON"),
+	mappedArgument("turn/start.cwd", "setup.cwd"),
+	mappedArgument("turn/start.approvalPolicy", "permissions.mode"),
+	mappedArgument("turn/start.approvalsReviewer", "permissions.mode"),
+	mappedArgument("turn/start.collaborationMode", "permissions.mode|model|effort"),
+	mappedArgument("turn/start.runtimeWorkspaceRoots", "permissions.directories"),
+	mappedArgument("thread/start.config.mcp_servers", "permissions.mcp.disabled"),
+	mappedArgument("thread/resume.config.mcp_servers", "permissions.mcp.disabled"),
+	mappedArgument("Captain caller-tool approval timeout", "permissions.approvalTimeout"),
+	managedArgument("thread/start.config.mcp_servers.caller", "Captain projects registered caller tools into an MCP server."),
+	managedArgument("thread/resume.config.mcp_servers.caller", "Captain restores registered caller tools when resuming a thread."),
 }
 
 var geminiCLIArguments = []runtimeArgumentBinding{
@@ -358,7 +373,7 @@ func runtimeFieldType(path string) string {
 		"sandbox.policy.platform.allowAppleEvents", "sandbox.policy.platform.weakerNestedIsolation",
 		"sandbox.policy.platform.weakerNetworkIsolation":
 		return "boolean"
-	case "fallbacks", "prompt.attachments", "memory.skills", "setup.envVars", "toolPolicy", "cliArgs.addDir",
+	case "fallbacks", "prompt.attachments", "memory.skills", "permissions.directories", "permissions.presets", "setup.envVars", "toolPolicy", "cliArgs.addDir",
 		"cliArgs.betas", "cliArgs.excludeDynamicSystemPromptSections", "cliArgs.enable", "cliArgs.disable",
 		"cliArgs.image", "sandbox.policy.filesystem.writableRoots", "sandbox.policy.filesystem.readableRoots",
 		"sandbox.policy.filesystem.deniedReadRoots", "sandbox.policy.filesystem.deniedWriteRoots",
@@ -369,7 +384,7 @@ func runtimeFieldType(path string) string {
 		return "array"
 	case "sandbox.policy.network.httpProxyPort", "sandbox.policy.network.socksProxyPort", "sandbox.dispatch.maxAttempts":
 		return "integer"
-	case "prompt.schema", "permissions.tools", "permissions.skills", "toolPreferences",
+	case "prompt.schema", "prompt.schemaJSON", "permissions.tools", "permissions.skills", "toolPreferences",
 		"cliArgs.config":
 		return "object"
 	default:

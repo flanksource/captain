@@ -6,10 +6,13 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/google/uuid"
 )
 
 // Result is one run's outcome.
 type Result struct {
+	// PromptRunID is the recorded run's id; nil when Input.Record was not set.
+	PromptRunID uuid.UUID
 	// Response is the runner's accumulated response: final text, structured
 	// data, terminal outcome, and the Workspace (cwd, changed files, notices).
 	Response *ai.Response

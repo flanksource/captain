@@ -70,6 +70,41 @@ The prompt file provides the base request, but it is not the last word. Captain 
 }
 `} />
 
+## Built-in runtime presets
+
+`permissions.presets: ["edit"]` above is a permission bundle: acceptEdits plus a curated Read/Edit/Write/Glob/Grep allowlist, the same thing `--edit` sets. Runtime presets are a separate, larger unit: named, reusable spec layers stored in the database or in preset directories, selected by id or name. Captain ships three runtime presets that every catalog lists last, with source `builtin`:
+
+| Preset | Permissions |
+|---|---|
+| Edit | `mode: acceptEdits`, `presets: [edit]` (uses the bundle above) |
+| Plan | `mode: plan`; `read: allow`, `shell: deny`; sets no `web_search` or `web_fetch` policy |
+| Read-only | no mode; `edit`, `write`, `shell`, `web_search`, `web_fetch` denied; sets no `read` policy |
+
+A built-in only names the tools it has an opinion about, so layering one never loosens a deny another layer set: `presets: [Read-only, Plan]` keeps Read-only's web denies.
+
+Tool keys such as `shell` and `edit` are portable aliases that each runtime translates to its own tool names (`Bash` on claude, `shell` on codex, `run_shell_command` on gemini). A `claude:Bash` prefix scopes a key to one provider. When keys collide on one tool, deny wins. On agent runtimes, a name that is neither an alias, an `mcp__` tool, nor any agent's built-in is ignored (caller tools are governed by `toolPolicy`, not `permissions.tools`). On runtimes that cannot filter tools (codex, gemini), an allow written as an alias, such as `shell: allow`, is inert, while a deny is refused loudly.
+
+Built-ins are read-only. To change one, create a preset with the same name in the database or a preset directory: `~/.config/captain/presets`, a `runtime.presetDirs` entry, or `<repo>/.captain/presets`. It overrides the built-in everywhere, including runs and profiles that stored the built-in's id, and deleting it brings the built-in back.
+
+<CodeExample client:load language="yaml" title="~/.config/captain/presets/plan.yaml" source={`
+name: Plan
+description: Plan mode that may run go test on claude without asking
+scope: context
+spec:
+  permissions:
+    mode: plan
+    tools:
+      read: allow
+      "Bash(go test:*)": allow
+`} />
+
+Because deny wins, the override drops `shell: deny` rather than trying to lift it with a narrower allow.
+
+<CodeExample client:load language="bash" title="Inspect the override" source={`
+captain runtime-preset list            # the override replaces the built-in Plan row
+captain runtime-preset resolve Plan    # shows the override's layer and effective spec
+`} />
+
 ## Model and mode
 
 A runtime is the pair `(model, mode)`: the mode is the mechanism — `api`, `agent`, `cli`, or `cmux` — and the provider family is derived from the model name, never authored. The prompt workbench keeps runtime selection catalog-backed: the UI groups by provider family first, then mode, then the model list filtered to that runtime. Prompt files can name `model` and `mode` directly when the runtime should be pinned.

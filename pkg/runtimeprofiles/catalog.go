@@ -8,7 +8,12 @@ import (
 
 // Catalog unifies every source. Reads fan out across sources in registration
 // order; writes go to the named target source, or the database when none is
-// named. Names are unique case-insensitively across all sources.
+// named. Names are unique case-insensitively across all sources, with one
+// exception: a database or file record named like a built-in shadows it, and
+// among built-in sources (captain's own and any a host embeds) the one
+// registered first shadows the rest. The shadowed built-in drops out of
+// listings and name lookups, and reading its id resolves to the record that
+// overrides it; writing through its id is refused.
 type Catalog struct {
 	sources []Source
 	byID    map[string]Source
@@ -141,7 +146,34 @@ func listAll[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stor
 		}
 		records = append(records, items...)
 	}
-	return records, nil
+	effective := make([]R, 0, len(records))
+	for index, item := range records {
+		if shadowed(records, index) {
+			continue
+		}
+		effective = append(effective, item)
+	}
+	return effective, nil
+}
+
+// shadowed reports whether records[index] is a built-in that yields its name:
+// to a record that is not a built-in, or to a built-in of a source registered
+// before its own. records is in source registration order.
+func shadowed[R record](records []R, index int) bool {
+	meta := records[index].meta()
+	if meta.Source.Kind != SourceBuiltin {
+		return false
+	}
+	for other, item := range records {
+		candidate := item.meta()
+		if candidate.Source.ID == meta.Source.ID || !strings.EqualFold(candidate.Name, meta.Name) {
+			continue
+		}
+		if candidate.Source.Kind != SourceBuiltin || other < index {
+			return true
+		}
+	}
+	return false
 }
 
 func get[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stores[R, I], kind Kind, ref string) (R, error) {
@@ -161,7 +193,40 @@ func get[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stores[R
 	if err != nil {
 		return zero, err
 	}
-	return store.Get(ctx, decoded.Key)
+	found, err := store.Get(ctx, decoded.Key)
+	if err != nil {
+		return zero, err
+	}
+	if found.meta().Source.Kind != SourceBuiltin {
+		return found, nil
+	}
+	// A stored built-in id follows the name, so a run or profile that saved it
+	// picks up an override; with none, the name resolves back to the built-in.
+	return findByName(ctx, c, pick, kind, found.meta().Name)
+}
+
+// getForWrite resolves the record an update or delete targets. Unlike get, an
+// encoded built-in id names the built-in itself rather than the override that
+// answers reads for it, so a stale built-in row can never rewrite or delete the
+// user's override. A bare name still targets the effective record.
+func getForWrite[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stores[R, I], kind Kind, ref string) (R, error) {
+	var zero R
+	decoded, err := DecodeID(strings.TrimSpace(ref))
+	if err != nil || decoded.Kind != kind {
+		return get(ctx, c, pick, kind, ref)
+	}
+	source, ok := c.byID[decoded.SourceID]
+	if !ok || source.Info().Kind != SourceBuiltin {
+		return get(ctx, c, pick, kind, ref)
+	}
+	store, err := storeIn(c, pick, kind, decoded.SourceID)
+	if err != nil {
+		return zero, err
+	}
+	if _, err := store.Get(ctx, decoded.Key); err != nil {
+		return zero, err
+	}
+	return zero, fmt.Errorf("%w: %s", ErrReadOnly, source.Info().Label)
 }
 
 // findByName matches a bare name case-insensitively across every source. One
@@ -194,7 +259,8 @@ func findByName[R record, I input[R, I]](ctx context.Context, c *Catalog, pick s
 }
 
 // requireNameFree enforces case-insensitive uniqueness across sources, ignoring
-// the record identified by exceptID (the one being renamed).
+// the record identified by exceptID (the one being renamed). A built-in never
+// takes a name: the new record overrides it instead.
 func requireNameFree[R record, I input[R, I]](ctx context.Context, c *Catalog, pick stores[R, I], kind Kind, name, exceptID string) error {
 	all, err := listAll(ctx, c, pick)
 	if err != nil {
@@ -202,7 +268,7 @@ func requireNameFree[R record, I input[R, I]](ctx context.Context, c *Catalog, p
 	}
 	for _, item := range all {
 		meta := item.meta()
-		if meta.ID != exceptID && strings.EqualFold(meta.Name, name) {
+		if meta.Source.Kind != SourceBuiltin && meta.ID != exceptID && strings.EqualFold(meta.Name, name) {
 			return fmt.Errorf("%w: %s %q already exists in %s", ErrNameTaken, kind, meta.Name, meta.Source.Label)
 		}
 	}
@@ -238,7 +304,7 @@ func update[R record, I input[R, I]](ctx context.Context, c *Catalog, pick store
 	if err := in.validate(); err != nil {
 		return zero, err
 	}
-	current, err := get(ctx, c, pick, kind, ref)
+	current, err := getForWrite(ctx, c, pick, kind, ref)
 	if err != nil {
 		return zero, err
 	}

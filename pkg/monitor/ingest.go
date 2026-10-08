@@ -21,7 +21,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 5
+const parserVersion = 6
 
 type codexCheckpoint struct {
 	parser      *history.CodexParser
@@ -506,6 +506,7 @@ func unifiedIngestInput(s *session.Session, source string, sequence func(session
 		if turn.Context != nil {
 			ingestTurn.Call.ContextTokens = int64(turn.Context.UsedTokens)
 			ingestTurn.Call.ContextWindowTokens = int64(turn.Context.WindowTokens)
+			ingestTurn.Call.ContextFreePercent = &turn.Context.FreePercent
 		}
 		input.Turns = append(input.Turns, ingestTurn)
 	}
@@ -558,11 +559,12 @@ func gitMetadata(s *session.Session) map[string]any {
 
 // sessionMetadata is the monitor-owned dashboard projection that is not
 // derivable from turn/message rows: model/provider labels, changed files,
-// approval stats, and the transcript-recovered plan reference.
+// approval stats, the transcript-recovered plan reference, and the last recorded
+// permission mode.
 func sessionMetadata(s *session.Session) map[string]any {
 	return session.Metadata{
 		Model: s.Model, Provider: s.Provider, Files: s.Files,
-		Todos: s.Todos, Approvals: s.Approvals, Plan: s.Plan,
+		Todos: s.Todos, Approvals: s.Approvals, Plan: s.Plan, PermissionMode: s.PermissionMode,
 	}.Encode()
 }
 

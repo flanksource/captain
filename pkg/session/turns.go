@@ -7,20 +7,17 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 )
 
-const (
-	claudeContextWindow = 1_000_000
-	codexContextWindow  = 200_000
-)
-
 type sessionMetadataBuild struct {
-	events       []Event
-	capabilities Capabilities
-	budget       *Budget
-	turns        []Turn
-	turnByEntry  map[string]string
+	events         []Event
+	capabilities   Capabilities
+	budget         *Budget
+	turns          []Turn
+	turnByEntry    map[string]string
+	permissionMode api.PermissionMode
 }
 
 func buildTranscriptMetadata(parsed claude.ParsedSession) sessionMetadataBuild {
@@ -30,7 +27,10 @@ func buildTranscriptMetadata(parsed claude.ParsedSession) sessionMetadataBuild {
 		if transcript.IsAgent {
 			agentID = transcript.AgentID
 		}
-		current := buildSessionMetadata("claude", transcript.Entries)
+		current := buildSessionMetadata(transcript.Entries)
+		if !transcript.IsAgent && current.permissionMode != "" {
+			combined.permissionMode = current.permissionMode
+		}
 		namespaceTurns(&current, agentID)
 		combined.events = append(combined.events, current.events...)
 		combined.turns = append(combined.turns, current.turns...)
@@ -100,7 +100,7 @@ func budgetIsLater(candidate, current *Budget) bool {
 	return current == nil || current.UpdatedAt == nil || candidate.UpdatedAt.After(*current.UpdatedAt)
 }
 
-func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionMetadataBuild {
+func buildSessionMetadata(entries []claude.HistoryEntry) sessionMetadataBuild {
 	b := sessionMetadataBuild{turnByEntry: map[string]string{}}
 	var current *Turn
 	var latestTurnTime *time.Time
@@ -144,9 +144,6 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 		if ts != nil {
 			current.EndedAt = cloneTime(latestTurnTime)
 		}
-		if current.Context == nil {
-			setTurnContext(current, source)
-		}
 		b.turns = append(b.turns, *current)
 		current = nil
 		latestTurnTime = nil
@@ -163,6 +160,12 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 			seenEntries[entry.UUID] = struct{}{}
 		}
 		ts := entryTime(entry)
+		if entry.Event != nil && entry.Event.Type == claude.PermissionModeEvent {
+			if mode, _ := entry.Event.Data["permissionMode"].(string); mode != "" {
+				b.permissionMode = api.PermissionMode(mode)
+			}
+			continue
+		}
 		if entry.Event != nil {
 			ev := eventFromEntry(entry)
 			switch entry.Event.Scope {
@@ -229,7 +232,6 @@ func buildSessionMetadata(source string, entries []claude.HistoryEntry) sessionM
 			cost := CostFromUsage(entry.Message.Usage, entry.Message.Model)
 			turn.Cost = turn.Cost.Add(cost)
 			turn.Usage = usageFromCost(turn.Cost)
-			turn.Context = contextFromUsage(entry.Message.Usage, source)
 		}
 		if entry.Message.StopReason != "" && entry.Message.StopReason != claude.StopReasonToolUse {
 			turn.StopReason = string(entry.Message.StopReason)
@@ -258,7 +260,7 @@ func eventFromEntry(entry claude.HistoryEntry) Event {
 	return ev
 }
 
-func latestContext(turns []Turn) *Context {
+func latestContext(turns []Turn) *api.ContextUsage {
 	for i := len(turns) - 1; i >= 0; i-- {
 		if turns[i].Context != nil {
 			return turns[i].Context
@@ -280,35 +282,6 @@ func cloneTime(ts *time.Time) *time.Time {
 	}
 	v := *ts
 	return &v
-}
-
-func contextFromUsage(usage *claude.Usage, source string) *Context {
-	if usage == nil {
-		return nil
-	}
-	used := usage.InputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-	window := contextWindow(source)
-	return &Context{
-		UsedTokens:   used,
-		WindowTokens: window,
-		FreePercent:  freeContextPercent(used, window),
-	}
-}
-
-func setTurnContext(turn *Turn, source string) {
-	if turn == nil || turn.Context != nil {
-		return
-	}
-	if turn.Usage.TotalTokens() == 0 {
-		return
-	}
-	used := turn.Usage.InputTokens + turn.Usage.CacheReadTokens + turn.Usage.CacheWriteTokens
-	window := contextWindow(source)
-	turn.Context = &Context{
-		UsedTokens:   used,
-		WindowTokens: window,
-		FreePercent:  freeContextPercent(used, window),
-	}
 }
 
 func budgetFromData(data map[string]any, ts *time.Time) *Budget {
@@ -446,34 +419,4 @@ func sortedStrings(in []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// ContextWindow returns the default context window used for list/detail
-// occupancy calculations for a source.
-func ContextWindow(source string) int {
-	return contextWindow(source)
-}
-
-func contextWindow(source string) int {
-	if source == "codex" {
-		return codexContextWindow
-	}
-	return claudeContextWindow
-}
-
-func freeContextPercent(used, window int) int {
-	if window <= 0 {
-		return 0
-	}
-	if used < 0 {
-		used = 0
-	}
-	free := 100 - int(float64(used)/float64(window)*100)
-	if free < 0 {
-		return 0
-	}
-	if free > 100 {
-		return 100
-	}
-	return free
 }

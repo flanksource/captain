@@ -9,11 +9,11 @@ import (
 // surface (aichat SSE `finish` part, clicky-ui) rides on a message. Field names
 // match the clicky-ui ChatMessageMetadata shape.
 type ChatMessageMetadata struct {
-	Usage         *api.Usage `json:"usage,omitempty"`
-	CostBreakdown *api.Cost  `json:"costBreakdown,omitempty"`
-	Cost          float64    `json:"cost,omitempty"`          // this session's USD
-	ThreadCostUSD float64    `json:"threadCostUsd,omitempty"` // cumulative USD
-	ContextTokens int        `json:"contextTokens,omitempty"` // last-turn input tokens
+	Usage         *api.Usage        `json:"usage,omitempty"`
+	CostBreakdown *api.Cost         `json:"costBreakdown,omitempty"`
+	Cost          float64           `json:"cost,omitempty"`          // this session's USD
+	ThreadCostUSD float64           `json:"threadCostUsd,omitempty"` // cumulative USD
+	Context       *api.ContextUsage `json:"context,omitempty"`
 }
 
 // ToUIMessages projects the session into the Vercel AI SDK v6 chat shape:
@@ -61,6 +61,7 @@ func (s *Session) ToUIMessages() ([]Message, ChatMessageMetadata) {
 	usage := s.Usage
 	cost := s.Cost
 	meta := ChatMessageMetadata{
+		Context:       s.Context,
 		Usage:         &usage,
 		CostBreakdown: &cost,
 		Cost:          cost.Total(),

@@ -9,9 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.11.0
-	github.com/flanksource/clicky v1.21.68
+	github.com/flanksource/clicky v1.21.70
 	github.com/flanksource/clicky/aichat v1.21.68
-	github.com/flanksource/commons v1.59.0
+	github.com/flanksource/commons v1.60.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
@@ -39,14 +39,15 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.31
+	github.com/flanksource/commons-db v0.1.50
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pelletier/go-toml/v2 v2.4.3
-	modernc.org/sqlite v1.55.0
 )
 
 require (
 	github.com/alpkeskin/gotoon v0.1.1 // indirect
+	github.com/atombender/go-jsonschema v0.24.1 // indirect
+	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.4 // indirect
 	github.com/go-openapi/swag/conv v0.25.4 // indirect
 	github.com/go-openapi/swag/fileutils v0.25.4 // indirect
@@ -57,11 +58,15 @@ require (
 	github.com/go-openapi/swag/stringutils v0.25.4 // indirect
 	github.com/go-openapi/swag/typeutils v0.25.4 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
+	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/sanity-io/litter v1.5.8 // indirect
+	github.com/sosodev/duration v1.4.0 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.55.0 // indirect
 )
 
 require (
@@ -124,7 +129,7 @@ require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/antchfx/xmlquery v1.5.1 // indirect
 	github.com/antchfx/xpath v1.3.6 // indirect
-	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
+	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/armon/go-socks5 v0.0.0-20160902184237-e75332964ef5 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
@@ -182,8 +187,8 @@ require (
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/flanksource/gomplate/v3 v3.24.89 // indirect
-	github.com/flanksource/is-healthy v1.0.90 // indirect
+	github.com/flanksource/gomplate/v3 v3.24.90 // indirect
+	github.com/flanksource/is-healthy v1.0.92 // indirect
 	github.com/flanksource/kubectl-neat v1.0.4 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
@@ -235,7 +240,7 @@ require (
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.10.0 // indirect
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/jeremywohl/flatten v1.0.1 // indirect
@@ -373,7 +378,7 @@ require (
 	golang.org/x/tools v0.47.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.286.0 // indirect
-	google.golang.org/genai v1.57.0 // indirect
+	google.golang.org/genai v1.57.0
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260622175928-b703f567277d // indirect
@@ -405,3 +410,5 @@ require (
 // modernc.org/sqlite/lib instead of vendoring, so there is exactly one
 // registration. gavel and oipa-cli carry the identical replace.
 replace github.com/glebarez/sqlite => github.com/clarkmcc/gorm-sqlite v0.0.0-20240426202654-00ed082c0311
+
+tool github.com/atombender/go-jsonschema

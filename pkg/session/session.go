@@ -11,7 +11,7 @@ import (
 // TranscriptParserVersion identifies the persisted transcript projection shape.
 // Consumers that parse a complete source use it when registering that source so
 // the monitor resumes from the recorded offset instead of replaying old events.
-const TranscriptParserVersion = 4
+const TranscriptParserVersion = 6
 
 // Session is the unified session aggregate. It is the single source of truth the
 // history/sessions commands render, the viewer consumes, and the chat/live
@@ -44,17 +44,19 @@ type Session struct {
 	Runtime         *api.RuntimeIdentity `json:"runtime,omitempty"`
 	ForkedFrom      string               `json:"forkedFrom,omitempty"`
 	ReasoningEffort string               `json:"reasoningEffort,omitempty"`
-	HistoryFile     string               `json:"historyFile,omitempty"`
+	// PermissionMode is the last permission posture the transcript recorded.
+	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
+	HistoryFile    string             `json:"historyFile,omitempty"`
 
 	Git       GitState   `json:"git,omitempty"`
 	StartedAt *time.Time `json:"startedAt,omitempty"`
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
 
-	Usage     api.Usage `json:"usage,omitempty"`
-	Cost      api.Cost  `json:"cost,omitempty"`
-	ToolCosts api.Costs `json:"toolCosts,omitempty"` // per-model breakdown
-	Context   *Context  `json:"context,omitempty"`
-	Budget    *Budget   `json:"budget,omitempty"`
+	Usage     api.Usage         `json:"usage,omitempty"`
+	Cost      api.Cost          `json:"cost,omitempty"`
+	ToolCosts api.Costs         `json:"toolCosts,omitempty"` // per-model breakdown
+	Context   *api.ContextUsage `json:"context,omitempty"`
+	Budget    *Budget           `json:"budget,omitempty"`
 
 	Capabilities Capabilities `json:"capabilities,omitempty"`
 	Events       []Event      `json:"events,omitempty"`
@@ -73,14 +75,25 @@ type Session struct {
 	Health    []Health          `json:"health,omitempty"`
 	Live      *LiveProcess      `json:"live,omitempty"`
 
-	// Prompt is the realized prompt that launched this session (opaque JSON of
-	// the render result), attached from the persistent store for captain-launched
-	// sessions; nil for external sessions.
+	// Prompt is the spec the captain-launched run executed (the prompt run's
+	// rendered spec), attached from the persistent store; nil for external sessions.
 	Prompt json.RawMessage `json:"prompt,omitempty"`
+	// PromptRunMetadata is how that spec was resolved — its layer trace,
+	// provenance, warnings and runtime catalog selections — as the run recorded it.
+	PromptRunMetadata map[string]any `json:"promptRunMetadata,omitempty"`
 
 	// StructuredOutput is the decoded object returned by a schema-constrained
 	// prompt run. Messages retain the JSON text for transcript compatibility.
 	StructuredOutput map[string]any `json:"structuredOutput,omitempty"`
+	Verifications    []Verification `json:"verifications,omitempty"`
+
+	// AwaitingInput holds the questions the last turn left unanswered.
+	AwaitingInput *AwaitingInput `json:"awaitingInput,omitempty"`
+}
+
+type Verification struct {
+	Iteration int              `json:"iteration"`
+	Report    api.VerifyReport `json:"report"`
 }
 
 // TranscriptWindow records the session's real transcript size when Messages
@@ -114,13 +127,6 @@ type Agent struct {
 	Cost        api.Cost  `json:"cost,omitempty"`
 }
 
-// Context is the context-window occupancy for a session or turn.
-type Context struct {
-	UsedTokens   int `json:"usedTokens,omitempty"`
-	WindowTokens int `json:"windowTokens,omitempty"`
-	FreePercent  int `json:"freePercent"`
-}
-
 // Budget is the latest budget state observed in the transcript.
 type Budget struct {
 	Used      float64    `json:"used,omitempty"`
@@ -150,23 +156,23 @@ type Event struct {
 // Turn groups user/assistant messages, tool calls, usage, cost, and contextual
 // state for one model turn.
 type Turn struct {
-	ID              string     `json:"id"`
-	Status          string     `json:"status,omitempty"`
-	AgentID         string     `json:"agentId,omitempty"`
-	Index           int        `json:"index"`
-	StartedAt       *time.Time `json:"startedAt,omitempty"`
-	EndedAt         *time.Time `json:"endedAt,omitempty"`
-	StopReason      string     `json:"stopReason,omitempty"`
-	Model           string     `json:"model,omitempty"`
-	ModelProvider   string     `json:"modelProvider,omitempty"`
-	Mode            string     `json:"mode,omitempty"`
-	ReasoningEffort string     `json:"reasoningEffort,omitempty"`
-	MessageIDs      []string   `json:"messageIds,omitempty"`
-	Usage           api.Usage  `json:"usage,omitempty"`
-	Cost            api.Cost   `json:"cost,omitempty"`
-	Context         *Context   `json:"context,omitempty"`
-	Budget          *Budget    `json:"budget,omitempty"`
-	Events          []Event    `json:"events,omitempty"`
+	ID              string            `json:"id"`
+	Status          string            `json:"status,omitempty"`
+	AgentID         string            `json:"agentId,omitempty"`
+	Index           int               `json:"index"`
+	StartedAt       *time.Time        `json:"startedAt,omitempty"`
+	EndedAt         *time.Time        `json:"endedAt,omitempty"`
+	StopReason      string            `json:"stopReason,omitempty"`
+	Model           string            `json:"model,omitempty"`
+	ModelProvider   string            `json:"modelProvider,omitempty"`
+	Mode            string            `json:"mode,omitempty"`
+	ReasoningEffort string            `json:"reasoningEffort,omitempty"`
+	MessageIDs      []string          `json:"messageIds,omitempty"`
+	Usage           api.Usage         `json:"usage,omitempty"`
+	Cost            api.Cost          `json:"cost,omitempty"`
+	Context         *api.ContextUsage `json:"context,omitempty"`
+	Budget          *Budget           `json:"budget,omitempty"`
+	Events          []Event           `json:"events,omitempty"`
 }
 
 // ChangedFiles is the read/write file set aggregated across a session,

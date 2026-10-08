@@ -60,14 +60,15 @@ func (r RuntimeDefaults) IsZero() bool {
 
 // ChatDefaults is the chat block of ~/.captain.yaml.
 type ChatDefaults struct {
+	// Presets are the ordered reusable task specs applied to chat requests.
+	Presets []string `yaml:"presets,omitempty"`
 	// RuntimeProfile is the catalog id or name of the runtime profile a chat
-	// resolves through when the request names none. Empty means the served
-	// base layer alone.
+	// used to resolve through. It is deprecated and ignored.
 	RuntimeProfile string `yaml:"runtimeProfile,omitempty"`
 }
 
 // IsZero lets yaml omit an empty chat block instead of writing `chat: {}`.
-func (c ChatDefaults) IsZero() bool { return c.RuntimeProfile == "" }
+func (c ChatDefaults) IsZero() bool { return len(c.Presets) == 0 && c.RuntimeProfile == "" }
 
 // SandboxDefaults is the sandbox block of ~/.captain.yaml: a default selector
 // plus a name→config map, shaped like AIDefaults' DefaultProvider + Providers.

@@ -109,6 +109,13 @@ func (s fileStore[R, I]) List(ctx context.Context) ([]R, error) {
 		}
 		records = append(records, record)
 	}
+	sortByName(records)
+	return records, nil
+}
+
+// sortByName orders a source's records by case-insensitive name, then key, so
+// a listing does not depend on directory order.
+func sortByName[R record](records []R) {
 	slices.SortFunc(records, func(left, right R) int {
 		leftMeta, rightMeta := left.meta(), right.meta()
 		return cmp.Or(
@@ -116,7 +123,6 @@ func (s fileStore[R, I]) List(ctx context.Context) ([]R, error) {
 			cmp.Compare(leftMeta.Key, rightMeta.Key),
 		)
 	})
-	return records, nil
 }
 
 func (s fileStore[R, I]) Get(_ context.Context, key string) (R, error) {
@@ -141,17 +147,9 @@ func (s fileStore[R, I]) Get(_ context.Context, key string) (R, error) {
 	if err != nil {
 		return zero, fmt.Errorf("read %s: %w", path, err)
 	}
-	in, err := decodeFile[I](path, data)
-	if err != nil {
-		return zero, err
-	}
-	in = in.trimmed()
-	if err := in.validate(); err != nil {
-		return zero, fmt.Errorf("%s: %w", path, err)
-	}
-	return in.build(recordMeta{
+	return decodeRecord[R, I](path, data, recordMeta{
 		ID: EncodeID(s.kind, s.info.ID, key), Key: key, Source: s.info, UpdatedAt: stat.ModTime(),
-	}), nil
+	})
 }
 
 // Create derives the key from the name. Two names that slug to the same key

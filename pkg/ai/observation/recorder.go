@@ -132,16 +132,16 @@ func (r *Recorder) recordReasoningDispatch(boundary string, state api.Observatio
 	})
 }
 
-// PermissionBroker wraps the runtime permission authority and records its
+// ApprovalBroker wraps the runtime permission authority and records its
 // returned decision. Observation mode defaults to deny when no authority was
 // supplied, preventing an unattended machine-oriented run from auto-approving
 // side effects.
-func (r *Recorder) PermissionBroker(next api.PermissionFunc) api.PermissionFunc {
-	return func(ctx context.Context, request api.PermissionRequest) (api.PermissionDecision, error) {
-		var decision api.PermissionDecision
+func (r *Recorder) ApprovalBroker(next api.ApprovalFunc) api.ApprovalFunc {
+	return func(ctx context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
+		var decision api.ApprovalDecision
 		var err error
 		if next == nil {
-			decision = api.PermissionDecision{Allow: false, Message: "denied by captain observation broker"}
+			decision = api.ApprovalDecision{Allow: false, Message: "denied by captain observation broker"}
 		} else {
 			decision, err = next(ctx, request)
 		}
@@ -150,7 +150,7 @@ func (r *Recorder) PermissionBroker(next api.PermissionFunc) api.PermissionFunc 
 	}
 }
 
-func (r *Recorder) recordPermission(request api.PermissionRequest, allowed bool) {
+func (r *Recorder) recordPermission(request api.ApprovalRequest, allowed bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	toolCallID := safeName(request.ToolUseID)

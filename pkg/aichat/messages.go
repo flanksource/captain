@@ -132,6 +132,7 @@ func requestSpec(request ChatRequest, profile RuntimeProfile, attachments map[pa
 		return api.ResolvedSpec{}, err
 	}
 	resolved.Spec = spec
+	resolved.Warnings = append(profile.Composed.Warnings, resolved.Warnings...)
 	return resolved, nil
 }
 

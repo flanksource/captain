@@ -45,6 +45,7 @@ type PromptRun struct {
 	SpecProfile          string                 `json:"specProfile,omitempty"`
 	AdmissionKey         string                 `json:"admissionKey,omitempty"`
 	RenderedSpec         map[string]any         `json:"renderedSpec,omitempty"`
+	Metadata             map[string]any         `json:"metadata,omitempty"`
 	Runtime              PromptRunRuntime       `json:"runtime,omitempty"`
 	PromptMarkdown       string                 `json:"promptMarkdown,omitempty"`
 	VerificationMarkdown string                 `json:"verificationMarkdown,omitempty"`
@@ -53,6 +54,7 @@ type PromptRun struct {
 	CurrentIteration     int                    `json:"currentIteration"`
 	ResultText           string                 `json:"resultText,omitempty"`
 	ResultJSON           map[string]any         `json:"resultJson,omitempty"`
+	Workspace            *api.WorkspaceRecord   `json:"workspace,omitempty"`
 	ApprovalState        *api.ToolApprovalState `json:"-"`
 	ProviderCheckpoint   *PromptRunCheckpoint   `json:"-"`
 	Error                string                 `json:"error,omitempty"`
@@ -72,8 +74,9 @@ type PromptRunCheckpoint struct {
 
 // PromptRunFilter limits ListPromptRuns. Nil fields are not filtered.
 type PromptRunFilter struct {
-	SessionID *uuid.UUID
-	State     *PromptRunState
+	SessionID          *uuid.UUID
+	ExecutionSessionID *uuid.UUID
+	State              *PromptRunState
 }
 
 type CreatePromptRunInput struct {
@@ -90,22 +93,28 @@ type CreatePromptRunInput struct {
 	SpecProfile          string
 	AdmissionKey         string
 	RenderedSpec         map[string]any
+	Metadata             map[string]any
 	Runtime              PromptRunRuntime
 	PromptMarkdown       string
 	VerificationMarkdown string
 }
 
 type UpdatePromptRunInput struct {
-	ID                      uuid.UUID
-	ExpectedVersion         int64
-	Phase                   *PromptRunPhase
-	State                   *PromptRunState
-	CurrentIteration        *int
-	ExecutionSessionID      *uuid.UUID
-	RenderedSpec            *map[string]any
-	Runtime                 *PromptRunRuntime
-	ResultText              *string
-	ResultJSON              *map[string]any
+	ID                 uuid.UUID
+	ExpectedVersion    int64
+	Phase              *PromptRunPhase
+	State              *PromptRunState
+	CurrentIteration   *int
+	ExecutionSessionID *uuid.UUID
+	RenderedSpec       *map[string]any
+	// Metadata merges its top-level keys into the stored object; keys it does
+	// not name keep their stored values.
+	Metadata   *map[string]any
+	Runtime    *PromptRunRuntime
+	ResultText *string
+	ResultJSON *map[string]any
+	// Workspace replaces the stored workspace record; nil leaves it unchanged.
+	Workspace               *api.WorkspaceRecord
 	ApprovalState           *api.ToolApprovalState
 	ClearApprovalState      bool
 	ProviderCheckpoint      *PromptRunCheckpoint
@@ -127,6 +136,7 @@ type promptRunRecord struct {
 	SpecProfile               *string                `gorm:"column:spec_profile"`
 	AdmissionKey              *string                `gorm:"column:admission_key"`
 	RenderedSpec              map[string]any         `gorm:"column:rendered_spec;serializer:json;type:jsonb"`
+	Metadata                  map[string]any         `gorm:"column:metadata;serializer:json;type:jsonb"`
 	Runtime                   PromptRunRuntime       `gorm:"column:runtime;serializer:json;type:jsonb"`
 	PromptMarkdown            *string                `gorm:"column:prompt_markdown"`
 	VerificationMarkdown      *string                `gorm:"column:verification_markdown"`
@@ -135,6 +145,7 @@ type promptRunRecord struct {
 	CurrentIteration          int                    `gorm:"column:current_iteration"`
 	ResultText                *string                `gorm:"column:result_text"`
 	ResultJSON                map[string]any         `gorm:"column:result_json;serializer:json;type:jsonb"`
+	Workspace                 *api.WorkspaceRecord   `gorm:"column:workspace;serializer:json;type:jsonb"`
 	ApprovalState             *api.ToolApprovalState `gorm:"column:approval_state;serializer:json;type:jsonb"`
 	ProviderCheckpointCodec   *string                `gorm:"column:provider_checkpoint_codec"`
 	ProviderCheckpointVersion *int                   `gorm:"column:provider_checkpoint_version"`

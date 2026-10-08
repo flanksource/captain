@@ -223,6 +223,26 @@ func (p *NativeSandboxPolicy) Validate() error {
 	return nil
 }
 
+// restrictsOnly reports whether a policy states at least one restriction and
+// grants nothing: no extra roots or domains, no write access, no unsandboxed
+// commands, and no demand that real isolation exist. Such a policy is already
+// satisfied by a runtime with no built-in tools to isolate.
+func (p *NativeSandboxPolicy) restrictsOnly() bool {
+	if p == nil || (p.Required != nil && *p.Required) || p.Commands != nil || p.Platform != nil {
+		return false
+	}
+	if fs := p.Filesystem; fs != nil &&
+		(fs.Access == SandboxFilesystemWorkspaceWrite || len(fs.WritableRoots) > 0 || len(fs.ReadableRoots) > 0 || fs.IncludeSystemTemp != nil) {
+		return false
+	}
+	if net := p.Network; net != nil && (net.Access == SandboxNetworkUnrestricted || len(net.AllowedDomains) > 0 ||
+		len(net.AllowedUnixSockets) > 0 || net.AllowAllUnixSockets != nil || net.AllowLocalBinding != nil ||
+		len(net.AllowedMachServices) > 0 || net.HTTPProxyPort != nil || net.SOCKSProxyPort != nil) {
+		return false
+	}
+	return p.Filesystem != nil || p.Network != nil || p.Credentials != nil
+}
+
 func (p *SandboxDispatchPolicy) Validate() error {
 	if p != nil && p.MaxAttempts < 0 {
 		return fmt.Errorf("sandbox dispatch maxAttempts must be >= 0, got %d", p.MaxAttempts)

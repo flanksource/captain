@@ -10,7 +10,7 @@ import (
 // req.Temperature/req.Effort (Model is inlined), req.Prompt.User,
 // req.Permissions.Mode, req.Cwd(), req.Memory.Skills. The structured-output Go
 // type rides on Prompt.Schema; the
-// runtime-only tool-permission broker callback lives on Config.CanUseTool.
+// runtime-only tool-permission broker callback lives on Config.OnApproval.
 type Request = api.Spec
 
 // The tool-permission broker, the buffered Response, the streaming Event/EventKind
@@ -18,9 +18,11 @@ type Request = api.Spec
 // contract). They are re-exported here as aliases so existing call sites and
 // clicky/aichat's captainai.* keep compiling unchanged.
 type (
-	PermissionFunc      = api.PermissionFunc
-	PermissionRequest   = api.PermissionRequest
-	PermissionDecision  = api.PermissionDecision
+	ApprovalFunc        = api.ApprovalFunc
+	ApprovalRequest     = api.ApprovalRequest
+	ApprovalDecision    = api.ApprovalDecision
+	ApprovalKind        = api.ApprovalKind
+	ApprovalScope       = api.ApprovalScope
 	Response            = api.Response
 	TerminalOutcome     = api.TerminalOutcome
 	TerminalOutcomeKind = api.TerminalOutcomeKind
@@ -49,7 +51,12 @@ const (
 	EventVerified       = api.EventVerified
 	EventVerifyFailed   = api.EventVerifyFailed
 	EventVerifyProgress = api.EventVerifyProgress
+	EventToolProgress   = api.EventToolProgress
+	EventTurnStart      = api.EventTurnStart
 )
+
+// TurnStart is the Raw payload of an EventTurnStart.
+type TurnStart = api.TurnStart
 
 // Usage is an alias for the canonical api.Usage (per-call token breakdown).
 type Usage = api.Usage

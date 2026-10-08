@@ -29,7 +29,7 @@ on:
       build_args:
         description: >-
           Newline-separated Docker build args overriding the Dockerfile's pinned
-          defaults, e.g. CLAUDE_CODE_VERSION=2.1.227. Leave empty to publish
+          defaults, e.g. CLAUDE_CODE_VERSION=2.1.280. Leave empty to publish
           exactly what the Dockerfile pins — every version it installs is an ARG,
           so a tag republished with no overrides reproduces its contents.
         required: false

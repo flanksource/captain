@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeepSeekAPIOptions",
+  "description": "Native DeepSeek Chat Completions request options used by Captain's OpenAI-compatible API runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "deepseek",
+    "mode": "api",
+    "sources": [
+      {"kind": "official-docs", "reference": "https://api-docs.deepseek.com/api/create-chat-completion/", "version": "retrieved 2026-09-11"},
+      {"kind": "sdk", "reference": "github.com/openai/openai-go.ChatCompletionNewParams", "version": "v1.12.0"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/genkit/options.go and firebase/genkit plugins/compat_oai", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "required": ["messages", "model"],
+  "properties": {
+    "model": {
+      "title": "Model", "description": "DeepSeek chat or reasoner model identifier.",
+      "type": "string", "enum": ["deepseek-chat", "deepseek-reasoner"], "x-clicky-section": "model", "x-clicky-order": 10, "x-enum-display": "combobox", "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "model", "support": "mapped", "specPath": "model.name"}
+    },
+    "messages": {
+      "title": "Messages", "description": "Conversation messages and tool results sent to DeepSeek.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "x-clicky-section": "prompt", "x-clicky-order": 20, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "messages", "support": "mapped", "specPath": ["messages", "prompt.system", "prompt.user", "prompt.attachments", "toolApproval"]}
+    },
+    "max_tokens": {
+      "title": "Maximum output tokens", "description": "Maximum number of tokens generated in the completion.",
+      "type": "integer", "minimum": 1, "x-clicky-section": "model", "x-clicky-order": 30,
+      "x-captain-option": {"nativeName": "max_tokens", "support": "mapped", "specPath": "budget.maxTokens"}
+    },
+    "temperature": {
+      "title": "Temperature", "description": "Sampling temperature between zero and two.",
+      "type": "number", "minimum": 0, "maximum": 2, "x-clicky-section": "model", "x-clicky-order": 40,
+      "x-captain-option": {"nativeName": "temperature", "support": "mapped", "specPath": "model.temperature"}
+    },
+    "response_format": {
+      "title": "Response format", "description": "Plain-text or JSON-object response format.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 50,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "response_format", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson"]}
+    },
+    "tools": {
+      "title": "Tools", "description": "Function tool definitions derived from Captain caller tools.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 60, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "tools", "support": "managed", "note": "Captain converts runtime Config.Tools into OpenAI-compatible function definitions."}
+    },
+    "tool_choice": {
+      "title": "Tool choice", "description": "Policy selecting whether and which function tool the model may call.",
+      "oneOf": [{"type": "string", "enum": ["none", "auto", "required"]}, {"type": "object", "additionalProperties": true}], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 70,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "tool_choice", "support": "managed", "note": "Captain derives tool-call availability from the active tool loop."}
+    },
+    "stream": {
+      "title": "Stream", "description": "Whether the completion is returned as server-sent streaming events.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 80,
+      "x-captain-option": {"nativeName": "stream", "support": "managed", "note": "Captain uses the provider streaming method for ExecuteStream."}
+    },
+    "stream_options": {
+      "title": "Stream options", "description": "Additional behavior such as including a final usage chunk in the stream.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 90,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "stream_options", "support": "managed", "note": "Captain's compatibility adapter controls streaming metadata."}
+    },
+    "thinking": {
+      "title": "Thinking", "description": "Whether DeepSeek thinking mode is enabled for the request.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 100,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "thinking", "support": "unsupported", "note": "Captain selects deepseek-reasoner by model ID instead of sending the native thinking object."}
+    },
+    "reasoning_effort": {
+      "title": "Reasoning effort", "description": "Relative reasoning effort requested from supported DeepSeek models.",
+      "type": "string", "enum": ["low", "medium", "high", "xhigh", "max"], "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 110, "x-enum-display": "combobox",
+      "x-captain-option": {"nativeName": "reasoning_effort", "support": "unsupported", "note": "Captain's Genkit compatibility provider does not send DeepSeek's native reasoning_effort field."}
+    },
+    "stop": {
+      "title": "Stop sequences", "description": "One or more text sequences that stop token generation.",
+      "oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}], "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 120, "x-array-display": "list",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "stop", "support": "unsupported", "note": "Captain has no stop-sequence Spec field."}
+    },
+    "top_p": {
+      "title": "Top P", "description": "Cumulative probability mass retained during nucleus sampling.",
+      "type": "number", "minimum": 0, "maximum": 1, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 130,
+      "x-captain-option": {"nativeName": "top_p", "support": "unsupported", "note": "Captain has no native top-p Spec field."}
+    },
+    "logprobs": {
+      "title": "Log probabilities", "description": "Whether token log probabilities are included in the response.",
+      "type": "boolean", "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 140,
+      "x-captain-option": {"nativeName": "logprobs", "support": "unsupported", "note": "Captain does not request token log probabilities."}
+    },
+    "top_logprobs": {
+      "title": "Top log probabilities", "description": "Number of likely tokens returned with log probabilities at each position.",
+      "type": "integer", "minimum": 0, "maximum": 20, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 150,
+      "x-captain-option": {"nativeName": "top_logprobs", "support": "unsupported", "note": "Captain does not expose token log-probability controls."}
+    },
+    "user_id": {
+      "title": "User ID", "description": "Stable end-user identifier used by DeepSeek for abuse detection.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 160,
+      "x-captain-option": {"nativeName": "user_id", "support": "unsupported", "note": "Captain does not send a per-request DeepSeek user identifier."}
+    },
+    "frequency_penalty": {
+      "title": "Frequency penalty", "description": "Deprecated penalty based on how frequently a token has appeared.",
+      "type": "number", "minimum": -2, "maximum": 2, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 170,
+      "x-captain-option": {"nativeName": "frequency_penalty", "support": "unsupported", "note": "DeepSeek documents this option as deprecated and without effect."}
+    },
+    "presence_penalty": {
+      "title": "Presence penalty", "description": "Deprecated penalty based on whether a token has appeared.",
+      "type": "number", "minimum": -2, "maximum": 2, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 180,
+      "x-captain-option": {"nativeName": "presence_penalty", "support": "unsupported", "note": "DeepSeek documents this option as deprecated and without effect."}
+    }
+  }
+}

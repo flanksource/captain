@@ -201,12 +201,12 @@ func TestProbeAdaptersUsesRegistryModelsForClaudeCmuxRegardlessOfAPIKey(t *testi
 		if len(adapters) != 1 || len(adapters[0].Models) == 0 {
 			t.Fatalf("adapters = %+v, want one adapter with registry models", adapters)
 		}
-		if !stringSliceContains(adapters[0].Models, "claude-fable-5") {
+		if !stringSliceContains(adapters[0].Models, "claude-fable-5-1") {
 			t.Fatalf("models = %v, want preferred Fable model", adapters[0].Models)
 		}
 		var fable *ModelDef
 		for i := range adapters[0].ModelDetails {
-			if adapters[0].ModelDetails[i].ID == "claude-fable-5" {
+			if adapters[0].ModelDetails[i].ID == "claude-fable-5-1" {
 				fable = &adapters[0].ModelDetails[i]
 				break
 			}
@@ -417,7 +417,7 @@ func TestProbeAdaptersFallsBackToRegistryWhenCodexDebugFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
-	if len(adapters) != 1 || !stringSliceContains(adapters[0].Models, "gpt-5.6-sol") {
+	if len(adapters) != 1 || !stringSliceContains(adapters[0].Models, "gpt-6-astra") {
 		t.Fatalf("registry fallback models = %+v", adapters)
 	}
 }

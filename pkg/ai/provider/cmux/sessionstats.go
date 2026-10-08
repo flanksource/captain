@@ -46,7 +46,15 @@ func isAskTool(tool string) bool {
 // return ("", "", false) so the caller keeps the prior state.
 func sessionStateFromLine(line []byte) (state, errMsg string, ok bool) {
 	events, err := history.ParseSessionEvents(line)
-	if err != nil || len(events) == 0 {
+	if err != nil {
+		return "", "", false
+	}
+	return sessionStateFromEvents(events)
+}
+
+// sessionStateFromEvents is sessionStateFromLine for a line already parsed.
+func sessionStateFromEvents(events []history.SessionEvent) (state, errMsg string, ok bool) {
+	if len(events) == 0 {
 		return "", "", false
 	}
 	last := events[len(events)-1]
@@ -385,13 +393,58 @@ func computeSessionStats(path string) (SessionStats, error) {
 type SessionAccumulator struct {
 	mu    sync.Mutex
 	stats SessionStats
+	// plan is the last ExitPlanMode call in the log: claude's plan dialog shows
+	// only its options on the surface, so the plan an approval shows comes from here.
+	plan *pendingPlan
+}
+
+// pendingPlan is an ExitPlanMode call read from the session log.
+type pendingPlan struct {
+	toolUseID string
+	plan      *api.TerminalPlan
+}
+
+// planCallFromEvents returns the last ExitPlanMode call among one line's events.
+func planCallFromEvents(events []history.SessionEvent) (*pendingPlan, error) {
+	for i := len(events) - 1; i >= 0; i-- {
+		call := events[i].ToolUse
+		if events[i].Kind != history.EventToolUse || call.Tool != "ExitPlanMode" {
+			continue
+		}
+		plan, err := api.TerminalPlanFromInput(call.Input)
+		if err != nil {
+			return nil, err
+		}
+		return &pendingPlan{toolUseID: call.ToolUseID, plan: plan}, nil
+	}
+	return nil, nil
+}
+
+// takePlan returns the last ExitPlanMode call the log recorded and forgets it,
+// so one call answers one plan dialog. It is nil when no unanswered call is logged.
+func (a *SessionAccumulator) takePlan() *pendingPlan {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	plan := a.plan
+	a.plan = nil
+	return plan
 }
 
 // AddLine folds one raw session-log line into the running stats: its state (from
 // the line's last event) and, for assistant turns, its token usage. Safe to use
 // as the tailer's onLine hook; it never retains the slice.
 func (a *SessionAccumulator) AddLine(line []byte) {
-	state, errMsg, hasState := sessionStateFromLine(line)
+	events, _ := history.ParseSessionEvents(line)
+	state, errMsg, hasState := sessionStateFromEvents(events)
+	plan, planErr := planCallFromEvents(events)
+	if planErr != nil {
+		log.Warnf("cmux: session log ExitPlanMode call is unreadable: %v", planErr)
+	}
+	if plan != nil {
+		a.mu.Lock()
+		a.plan = plan
+		a.mu.Unlock()
+	}
 
 	var entry sessionLogLine
 	parsed := json.Unmarshal(line, &entry) == nil
@@ -488,9 +541,13 @@ type SessionStatsCache struct {
 	cold map[string]coldStatsEntry
 }
 
+// coldStatsEntry is keyed on mtime and size together: filesystems with
+// one-second mtime resolution (HFS+) give every append within a second the same
+// mtime, but an append always changes the size.
 type coldStatsEntry struct {
 	stats      SessionStats
 	mtime      time.Time
+	size       int64
 	computedAt time.Time
 }
 
@@ -522,7 +579,7 @@ func (c *SessionStatsCache) Begin(sessionID, agent, model, effort string, start 
 }
 
 // Get returns the stats for a session: the live accumulator when one is present,
-// otherwise a cold read of the on-disk log cached by mtime + TTL. A missing log
+// otherwise a cold read of the on-disk log cached by mtime, size + TTL. A missing log
 // (session never produced output) is the normal "not found" state, returned as a
 // zero SessionStats with Found=false rather than an error.
 func (c *SessionStatsCache) Get(sessionID, path string) (SessionStats, error) {
@@ -545,7 +602,8 @@ func (c *SessionStatsCache) coldStats(sessionID, path string) (SessionStats, err
 	}
 
 	c.mu.Lock()
-	if entry, ok := c.cold[path]; ok && entry.mtime.Equal(info.ModTime()) && time.Since(entry.computedAt) < sessionStatsTTL {
+	if entry, ok := c.cold[path]; ok && entry.mtime.Equal(info.ModTime()) && entry.size == info.Size() &&
+		time.Since(entry.computedAt) < sessionStatsTTL {
 		c.mu.Unlock()
 		return entry.stats, nil
 	}
@@ -558,7 +616,7 @@ func (c *SessionStatsCache) coldStats(sessionID, path string) (SessionStats, err
 	stats.SessionID = sessionID
 
 	c.mu.Lock()
-	c.cold[path] = coldStatsEntry{stats: stats, mtime: info.ModTime(), computedAt: time.Now()}
+	c.cold[path] = coldStatsEntry{stats: stats, mtime: info.ModTime(), size: info.Size(), computedAt: time.Now()}
 	c.mu.Unlock()
 	return stats, nil
 }

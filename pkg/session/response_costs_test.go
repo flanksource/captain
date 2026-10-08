@@ -93,7 +93,7 @@ func TestBuildSessionMetadata_CountsOneResponseOncePerTurn(t *testing.T) {
 		stopEntry(blockLine("tooluse", "msg_a", usage)),
 	}
 
-	meta := buildSessionMetadata("claude", entries)
+	meta := buildSessionMetadata(entries)
 
 	if len(meta.turns) != 1 {
 		t.Fatalf("built %d turns, want 1", len(meta.turns))

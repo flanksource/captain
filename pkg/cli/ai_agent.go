@@ -219,8 +219,10 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	// the first model call, the setup plugin, the middleware provider and the
 	// deadline all arrive with it. `captain ai agent` used to assemble those by
 	// hand and had none of them.
+	resolution := resolved.Resolution
+	resolution.Spec = baseReq
 	result, runErr := promptrun.Run(ctx, promptrun.Input{
-		Request:       baseReq,
+		Resolved:      resolution,
 		Config:        cfg,
 		Hooks:         hooks,
 		MaxIterations: opts.MaxIterations,
@@ -241,7 +243,9 @@ func RunAIAgent(opts AIAgentOptions) (any, error) {
 	if ws := responseWorkspace(result.Response); ws != nil {
 		res.ChangedFiles = ws.Changed
 		res.SessionID = ws.SessionID
-		res.Branch = ws.Branch
+		if ws.Worktree != nil {
+			res.Branch = ws.Worktree.Branch
+		}
 	}
 	if result.Loop != nil {
 		res.Iterations = len(result.Loop.Iterations)

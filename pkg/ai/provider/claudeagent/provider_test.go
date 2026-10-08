@@ -1,6 +1,7 @@
 package claudeagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky/exec"
+	"github.com/flanksource/commons/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +50,28 @@ func TestProvider_StreamLifecycle(t *testing.T) {
 	require.NotNil(t, result.Usage)
 	assert.Equal(t, 10, result.Usage.InputTokens)
 	assert.Equal(t, 5, result.Usage.OutputTokens)
+}
+
+// TestProvider_InitializeParamsTranslatesPortableToolNames pins that the bridge
+// receives claude's own tool names, and that collisions only tighten: an exact
+// `Edit: auto` never lifts the `edit` alias deny. An ignored deny is logged.
+func TestProvider_InitializeParamsTranslatesPortableToolNames(t *testing.T) {
+	prev := logger.GetOutput()
+	t.Cleanup(func() { logger.SetOutput(prev) })
+	var logs bytes.Buffer
+	logger.SetOutput(&logs)
+
+	params, err := (&Provider{}).initializeParams(ai.Request{Permissions: api.Permissions{Tools: api.Tools{
+		"shell":    api.ToolPolicyDeny,
+		"edit":     api.ToolPolicyDeny,
+		"Edit":     api.ToolPolicyAuto,
+		"read":     api.ToolPolicyAllow,
+		"NotATool": api.ToolPolicyDeny,
+	}}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bash", "BashOutput", "Edit", "KillShell", "Monitor", "MultiEdit", "NotebookEdit"}, params.DisallowedTools)
+	assert.Equal(t, []string{"Read"}, params.AllowedTools)
+	assert.Contains(t, logs.String(), `permissions.tools "NotATool" deny is ignored: anthropic agent has no tool it names`)
 }
 
 func TestAgentProcessEnvHonoursAPIURL(t *testing.T) {
@@ -215,21 +240,23 @@ func TestProvider_MultiTurnSerialized(t *testing.T) {
 
 // TestProvider_CanUseTool drives the can_use_tool control round-trip end to end:
 // the fake agent emits a can_use_tool request, the provider routes it to the
-// request's CanUseTool callback, surfaces an EventPermission, and the decision
-// round-trips back to the agent (which echoes it into the result).
+// request's OnApproval callback as a command approval, and the decision
+// round-trips back to the agent (which echoes it into the result). The
+// EventPermission belongs to the seam that binds the callback, so the provider
+// emits none of its own.
 func TestProvider_CanUseTool(t *testing.T) {
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "approval"})
 
-	var gotReq ai.PermissionRequest
+	var gotReq ai.ApprovalRequest
 	called := make(chan struct{}, 1)
-	canUseTool := func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
+	onApproval := func(_ context.Context, r ai.ApprovalRequest) (ai.ApprovalDecision, error) {
 		gotReq = r
 		called <- struct{}{}
-		return ai.PermissionDecision{Allow: true, UpdatedInput: map[string]any{"command": "ls -la"}}, nil
+		return ai.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{"command": "ls -la"}}, nil
 	}
 
-	// CanUseTool is a runtime concern, set on the provider's Config (not the request).
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
+	// OnApproval is a runtime concern, set on the provider's Config (not the request).
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, OnApproval: onApproval})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -239,14 +266,11 @@ func TestProvider_CanUseTool(t *testing.T) {
 	events, err := p.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "use a tool"}})
 	require.NoError(t, err)
 
-	var sawPermission bool
-	var permEvent ai.Event
 	var result *ai.Event
 	for ev := range events {
 		switch ev.Kind {
 		case ai.EventPermission:
-			sawPermission = true
-			permEvent = ev
+			t.Errorf("the provider must not emit its own EventPermission, got one for %s", ev.Tool)
 		case ai.EventResult:
 			cp := ev
 			result = &cp
@@ -258,16 +282,14 @@ func TestProvider_CanUseTool(t *testing.T) {
 	select {
 	case <-called:
 	default:
-		t.Fatal("CanUseTool callback was not invoked")
+		t.Fatal("OnApproval callback was not invoked")
 	}
 	assert.Equal(t, "Bash", gotReq.Tool)
 	assert.Equal(t, "tu1", gotReq.ToolUseID)
 	assert.Equal(t, "fake-sess", gotReq.SessionID)
 	assert.Equal(t, "ls", gotReq.Input["command"])
-
-	// The same request surfaced as an observable EventPermission.
-	assert.True(t, sawPermission, "expected an EventPermission")
-	assert.Equal(t, "Bash", permEvent.Tool)
+	assert.Equal(t, api.ApprovalKindCommand, gotReq.Kind)
+	assert.Equal(t, &api.CommandApproval{Command: "ls"}, gotReq.Command)
 
 	// The allow decision (with the updated input) round-tripped back to the agent.
 	require.NotNil(t, result, "expected a terminal result event")
@@ -285,12 +307,12 @@ func TestProvider_CanUseTool(t *testing.T) {
 func TestProvider_PlanModeExitPlanModeAutoDenied(t *testing.T) {
 	withFakeAgentProcessEnv(t, map[string]string{fakeServerEnv: "1", fakeModeEnv: "plan-approval"})
 
-	canUseTool := func(_ context.Context, r ai.PermissionRequest) (ai.PermissionDecision, error) {
-		t.Errorf("CanUseTool must not be invoked for ExitPlanMode in plan mode, got %s", r.Tool)
-		return ai.PermissionDecision{Allow: true}, nil
+	onApproval := func(_ context.Context, r ai.ApprovalRequest) (ai.ApprovalDecision, error) {
+		t.Errorf("OnApproval must not be invoked for ExitPlanMode in plan mode, got %s", r.Tool)
+		return ai.ApprovalDecision{Allow: true}, nil
 	}
 
-	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, CanUseTool: canUseTool})
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}, OnApproval: onApproval})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 
@@ -390,11 +412,71 @@ func TestProvider_SteerKeepsTurnOpenForEveryAcceptedPrompt(t *testing.T) {
 	}
 	require.NoError(t, p.Steer(context.Background(), ai.Request{Prompt: api.Prompt{User: "btw"}}))
 
-	results := 0
+	var results []ai.Event
 	for event := range events {
 		if event.Kind == ai.EventResult {
-			results++
+			results = append(results, event)
 		}
 	}
-	assert.Equal(t, 2, results)
+	// Both prompts settle inside one turn, reported as one result covering both.
+	require.Len(t, results, 1)
+	assert.Equal(t, &ai.Usage{InputTokens: 20, OutputTokens: 10}, results[0].Usage)
+}
+
+func TestProvider_CloseLetsTheBridgeExitCleanly(t *testing.T) {
+	withFakeAgentProcess(t)
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
+	require.NoError(t, err)
+	events, err := p.ExecuteStream(context.Background(), ai.Request{Prompt: api.Prompt{User: "hi"}})
+	require.NoError(t, err)
+	for range events {
+	}
+
+	require.NoError(t, p.Close())
+	// The bridge honours shutdown by exiting 0; stopping it first would record
+	// the run's task as cancelled, which a run summary reports as failed.
+	assert.Equal(t, exec.StatusExited, p.sup.Status())
+}
+
+func TestProvider_TurnOutlastsItsBackgroundAgents(t *testing.T) {
+	withFakeAgentProcessEnv(t, map[string]string{
+		fakeServerEnv: "1",
+		fakeModeEnv:   "background",
+	})
+
+	p, err := New(ai.Config{Model: api.Model{Name: "claude-sonnet-5"}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+
+	events, err := p.ExecuteStream(context.Background(), ai.Request{Prompt: api.Prompt{User: "fan out"}})
+	require.NoError(t, err)
+	type seen struct {
+		Kind   ai.EventKind
+		ID     string
+		Parent string
+		Text   string
+	}
+	var got []seen
+	var result ai.Event
+	for event := range events {
+		if event.Kind == ai.EventResult {
+			result = event
+		}
+		got = append(got, seen{Kind: event.Kind, ID: event.ToolCallID, Parent: event.ParentToolCallID, Text: event.Text})
+	}
+
+	assert.Equal(t, []seen{
+		{Kind: ai.EventSystem},
+		{Kind: ai.EventText, Text: "hi from fake"},
+		{Kind: ai.EventToolUse, ID: "agent-1"},
+		{Kind: ai.EventToolResult, ID: "agent-1", Text: "Async agent launched successfully."},
+		{Kind: ai.EventToolUse, ID: "sub-1", Parent: "agent-1"},
+		{Kind: ai.EventToolResult, ID: "sub-1", Parent: "agent-1", Text: "ok"},
+		{Kind: ai.EventText, Text: "subagent reported"},
+		{Kind: ai.EventResult},
+	}, got, "the main turn's first result must not end the stream while its subagent runs")
+	// Usage is per settled turn and sums; cost_usd is the query's running total.
+	assert.Equal(t, &ai.Usage{InputTokens: 20, OutputTokens: 10}, result.Usage)
+	assert.InDelta(t, 0.03, result.CostUSD, 1e-9)
 }

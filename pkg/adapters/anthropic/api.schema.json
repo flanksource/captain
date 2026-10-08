@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnthropicAPIOptions",
+  "description": "Native Anthropic Messages API request options used by Captain's API runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "anthropic",
+    "mode": "api",
+    "sources": [
+      {"kind": "sdk", "reference": "github.com/anthropics/anthropic-sdk-go.MessageNewParams", "version": "v1.26.0"},
+      {"kind": "official-docs", "reference": "https://platform.claude.com/docs/en/api/http/messages/create", "version": "retrieved 2026-09-11"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/genkit/options.go and firebase/genkit plugins/internal/anthropic", "version": "6a2b56cbd26702b18905865f21fc66d44cc864cc"}
+    ]
+  },
+  "required": ["max_tokens", "messages", "model"],
+  "properties": {
+    "model": {
+      "title": "Model", "description": "Anthropic model identifier used to complete the request.",
+      "type": "string", "minLength": 1, "x-clicky-section": "model", "x-clicky-order": 10, "x-icon": "sparkles",
+      "x-captain-option": {"nativeName": "model", "support": "mapped", "specPath": "model.name"}
+    },
+    "max_tokens": {
+      "title": "Maximum output tokens", "description": "Maximum tokens generated before stopping, including extended-thinking tokens.",
+      "type": "integer", "minimum": 1, "x-clicky-section": "model", "x-clicky-order": 20, "x-icon": "hash",
+      "x-captain-option": {"nativeName": "max_tokens", "support": "mapped", "specPath": "budget.maxTokens"}
+    },
+    "messages": {
+      "title": "Messages", "description": "Alternating user and assistant messages sent to the Messages API.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "x-clicky-section": "prompt", "x-clicky-order": 30, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "messages", "support": "mapped", "specPath": ["messages", "prompt.user", "prompt.attachments"]}
+    },
+    "system": {
+      "title": "System prompt", "description": "System instruction blocks supplied outside the message list.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "x-clicky-section": "prompt", "x-clicky-order": 40, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "system", "support": "mapped", "specPath": "prompt.system"}
+    },
+    "temperature": {
+      "title": "Temperature", "description": "Sampling temperature between zero and one.",
+      "type": "number", "minimum": 0, "maximum": 1, "x-clicky-section": "model", "x-clicky-order": 50,
+      "x-captain-option": {"nativeName": "temperature", "support": "mapped", "specPath": "model.temperature"}
+    },
+    "thinking": {
+      "title": "Thinking", "description": "Extended-thinking configuration for reasoning-capable models.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "model", "x-clicky-order": 60,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "thinking", "support": "mapped", "specPath": "model.effort"}
+    },
+    "output_config": {
+      "title": "Output configuration", "description": "Structured-output format and adaptive-thinking effort configuration.",
+      "type": "object", "additionalProperties": true, "x-clicky-section": "prompt", "x-clicky-order": 70,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "output_config", "support": "mapped", "specPath": ["prompt.schema", "prompt.schemaJson", "model.effort"]}
+    },
+    "tools": {
+      "title": "Tools", "description": "Native Anthropic tool definitions derived from Captain caller tools.",
+      "type": "array", "items": {"type": "object", "additionalProperties": true}, "x-clicky-section": "permissions", "x-clicky-order": 80, "x-array-display": "stacked",
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]}, "readOnly": true,
+      "x-captain-option": {"nativeName": "tools", "support": "managed", "note": "Captain derives native tool definitions from runtime Config.Tools and the Spec tool policy."}
+    },
+    "stream": {
+      "title": "Stream", "description": "Whether the Messages API returns server-sent streaming events.",
+      "type": "boolean", "const": true, "readOnly": true, "x-clicky-section": "cli", "x-clicky-order": 90,
+      "x-captain-option": {"nativeName": "stream", "support": "managed", "note": "Captain selects the SDK streaming method for ExecuteStream."}
+    },
+    "container": {
+      "title": "Container", "description": "Container identifier reused across Messages API requests.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 100,
+      "x-captain-option": {"nativeName": "container", "support": "unsupported", "note": "Captain does not expose Anthropic container reuse."}
+    },
+    "inference_geo": {
+      "title": "Inference geography", "description": "Geographic region requested for inference processing.",
+      "type": "string", "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 110,
+      "x-captain-option": {"nativeName": "inference_geo", "support": "unsupported", "note": "Captain does not set a per-request inference geography."}
+    },
+    "top_k": {
+      "title": "Top K", "description": "Number of highest-probability tokens retained during sampling.",
+      "type": "integer", "minimum": 0, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 120,
+      "x-captain-option": {"nativeName": "top_k", "support": "unsupported", "note": "Captain has no native top-k Spec field."}
+    },
+    "top_p": {
+      "title": "Top P", "description": "Cumulative probability mass retained during nucleus sampling.",
+      "type": "number", "minimum": 0, "maximum": 1, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 130,
+      "x-captain-option": {"nativeName": "top_p", "support": "unsupported", "note": "Captain has no native top-p Spec field."}
+    },
+    "cache_control": {
+      "title": "Cache control", "description": "Top-level prompt-cache marker applied to the final cacheable block.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 140,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "cache_control", "support": "unsupported", "note": "Captain does not set Anthropic top-level cache control."}
+    },
+    "metadata": {
+      "title": "Metadata", "description": "Request metadata, including the optional user identifier.",
+      "type": "object", "additionalProperties": true, "readOnly": true, "x-clicky-section": "environment", "x-clicky-order": 150,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "metadata", "support": "unsupported", "note": "Captain does not forward per-request Anthropic metadata."}
+    },
+    "service_tier": {
+      "title": "Service tier", "description": "Capacity tier used to serve the request.",
+      "type": "string", "enum": ["auto", "standard_only"], "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 160, "x-enum-display": "segmented",
+      "x-captain-option": {"nativeName": "service_tier", "support": "unsupported", "note": "Captain does not select an Anthropic service tier."}
+    },
+    "stop_sequences": {
+      "title": "Stop sequences", "description": "Text sequences that stop generation when encountered.",
+      "type": "array", "items": {"type": "string"}, "readOnly": true, "x-clicky-section": "model", "x-clicky-order": 170, "x-array-display": "list",
+      "x-captain-option": {"nativeName": "stop_sequences", "support": "unsupported", "note": "Captain has no stop-sequence Spec field."}
+    },
+    "tool_choice": {
+      "title": "Tool choice", "description": "Policy controlling whether and which native tool Claude should call.",
+      "oneOf": [{"type": "string"}, {"type": "object", "additionalProperties": true}], "readOnly": true, "x-clicky-section": "permissions", "x-clicky-order": 180,
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-captain-option": {"nativeName": "tool_choice", "support": "unsupported", "note": "Captain supplies tool definitions but does not set Anthropic tool_choice."}
+    }
+  }
+}

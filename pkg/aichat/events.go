@@ -12,6 +12,7 @@ import (
 type toolState struct {
 	name              string
 	input             map[string]any
+	parent            string
 	approvalRequested bool
 }
 
@@ -144,8 +145,20 @@ func (s *eventStream) event(event api.Event) error {
 		return s.providerError(event)
 	case api.EventInterrupted:
 		return s.interrupted(event)
+	case api.EventToolProgress:
+		// Tool progress is a superseded snapshot of a still-running call's newest
+		// output line, never transcript. The AI SDK UI stream has no tool-output
+		// delta part and the chat UI does not render progress, so it is dropped;
+		// the complete output still arrives on the call's EventToolResult. It must
+		// not close the open text/reasoning block either.
+		return nil
 	default:
-		return fmt.Errorf("unsupported Captain event kind %q", event.Kind)
+		// Every kind that carries transcript or ends the turn is handled above.
+		// Anything else is additive runtime metadata (verify verdicts, turn starts,
+		// kinds added to pkg/api later), so an unknown kind is skipped rather than
+		// aborting the user's turn.
+		serviceLog.Warnf("dropping unsupported Captain event kind %q (tool=%q call=%q)", event.Kind, event.Tool, event.ToolCallID)
+		return nil
 	}
 }
 
@@ -204,11 +217,11 @@ func (s *eventStream) toolUse(event api.Event) error {
 	}
 	if err := s.writer.WritePart(Part{
 		Type: "tool-input-available", ToolCallID: event.ToolCallID,
-		ToolName: event.Tool, Input: input, Dynamic: true,
+		ToolName: event.Tool, Input: input, Dynamic: true, ToolMetadata: toolMetadataOf(event),
 	}); err != nil {
 		return err
 	}
-	s.tools[event.ToolCallID] = toolState{name: event.Tool, input: event.Input}
+	s.tools[event.ToolCallID] = toolState{name: event.Tool, input: event.Input, parent: event.ParentToolCallID}
 	return nil
 }
 
@@ -280,6 +293,9 @@ func (s *eventStream) result(event api.Event) error {
 	if err := s.unresolvedToolError(event.ToolApproval != nil); err != nil {
 		return err
 	}
+	if err := s.closeSubagentTools(); err != nil {
+		return err
+	}
 	if event.ToolApproval != nil {
 		if err := event.ToolApproval.Validate(); err != nil {
 			return fmt.Errorf("validate tool approval state: %w", err)
@@ -305,9 +321,9 @@ func (s *eventStream) result(event api.Event) error {
 	}
 	s.metadata = s.terminalMetadata.message(s.sessionID, s.model, event.Success)
 	s.metadata.Cost = event.CostUSD
+	s.metadata.Context = event.Context
 	if event.Usage != nil {
 		s.metadata.Usage = usageMetadata(*event.Usage)
-		s.metadata.ContextTokens = contextTokens(*event.Usage)
 	}
 	if s.costs != nil {
 		s.metadata.CostBreakdown = s.costs.Breakdown
@@ -315,14 +331,6 @@ func (s *eventStream) result(event api.Event) error {
 	}
 	s.terminal = true
 	return nil
-}
-
-// contextTokens is the prompt's occupancy of the context window. The usage
-// buckets are disjoint (pkg/api/cost.go), so the cached prefix counts too:
-// agent backends report near-zero InputTokens against a six-figure cache read,
-// and reporting input alone renders that as a context of single digits.
-func contextTokens(usage api.Usage) int {
-	return usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 }
 
 func (s *eventStream) validateApprovalCorrelation(approval *api.ToolApprovalState) error {
@@ -427,10 +435,31 @@ func (s *eventStream) closeBlock() error {
 	return err
 }
 
+// closeSubagentTools errors out the subagent calls still in flight when the
+// stream ends; a pending approval stays open for the resumed turn.
+func (s *eventStream) closeSubagentTools() error {
+	ids := make([]string, 0, len(s.tools))
+	for id, state := range s.tools {
+		if state.parent != "" && !state.approvalRequested {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := s.writer.WritePart(Part{
+			Type: "tool-output-error", ToolCallID: id, ErrorText: subagentUnfinished,
+		}); err != nil {
+			return err
+		}
+		delete(s.tools, id)
+	}
+	return nil
+}
+
 func (s *eventStream) unresolvedToolError(allowApproval bool) error {
 	ids := make([]string, 0, len(s.tools))
 	for id, state := range s.tools {
-		if allowApproval && state.approvalRequested {
+		if state.parent != "" || (allowApproval && state.approvalRequested) {
 			continue
 		}
 		ids = append(ids, id)
@@ -454,6 +483,9 @@ func (s *eventStream) finish() error {
 	}
 	if !s.terminal {
 		if err := s.unresolvedToolError(true); err != nil {
+			return err
+		}
+		if err := s.closeSubagentTools(); err != nil {
 			return err
 		}
 	}

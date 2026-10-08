@@ -37,6 +37,8 @@ type ModeCapabilities struct {
 	Interrupt bool
 	// Steer: the adapter implements SteerableProvider.
 	Steer bool
+	// SetPermissionMode: the adapter implements PermissionSwitchableProvider.
+	SetPermissionMode bool
 	// CallerTools reports that the adapter can expose caller-supplied
 	// api.Config.Tools rather than only its built-in tool ecosystem.
 	CallerTools bool
@@ -185,7 +187,7 @@ func (p *Provider) PricingIDs(model string) []string {
 // DefaultModelID is captain's declared default: the model a run that names none
 // receives, and the id a picker seeds itself with wherever the chosen backend
 // can run it. Exactly one catalog row projects to it.
-const DefaultModelID = "anthropic/claude-sonnet-5"
+const DefaultModelID = "anthropic/claude-sonnet-5-5"
 
 // DefaultModel is this provider's current top pick for a mode — the id a picker
 // should seed itself with. It honours the opt-out set, so a disabled model is
@@ -241,11 +243,11 @@ func (p *Provider) claim(token string) bool {
 	return false
 }
 
-// bareID strips this provider's catalog namespace (and the Gemini "models/"
-// namespace) from an id.
+// bareID strips this provider's catalog and agent namespaces (and the Gemini
+// "models/" namespace) from an id.
 func (p *Provider) bareID(model string) string {
 	model = strings.TrimSpace(model)
-	for _, prefix := range []string{p.CatalogPrefix + "/", p.PricingPrefix + "/", p.Name + "/", "models/"} {
+	for _, prefix := range []string{p.CatalogPrefix + "/", p.PricingPrefix + "/", p.Name + "/", p.AgentName + "/", "models/"} {
 		model = strings.TrimPrefix(model, prefix)
 	}
 	return model

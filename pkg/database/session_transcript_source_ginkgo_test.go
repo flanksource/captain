@@ -148,6 +148,37 @@ var _ = Describe("transcript session resolution", func() {
 		_, err := db.GetTranscriptSessionByIdentity(ctx, "  ")
 		Expect(err).To(MatchError(ErrInvalidSession))
 	})
+
+	It("lists the transcript child of each requested parent in one lookup", func(ctx SpecContext) {
+		db := openTranscriptSourceDB(ctx)
+		first, firstTranscript := gavelRun(ctx, db, "0199d0bb-0000-7000-8000-000000000005")
+		second, secondTranscript := gavelRun(ctx, db, "0199d0bb-0000-7000-8000-000000000006")
+		agent, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: "0199d0bb-0000-7000-8000-000000000007", Source: "claude", Provider: "anthropic",
+			HostID: "transcript-test", ParentSessionID: &first.ID, ParentRelation: SessionParentRelationAgent,
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		children, err := db.ListTranscriptChildOverviews(ctx, []uuid.UUID{first.ID, second.ID, agent.ID})
+
+		Expect(err).NotTo(HaveOccurred())
+		ids := make([]uuid.UUID, len(children))
+		for i := range children {
+			ids[i] = children[i].ID
+			Expect(children[i].ParentRelation).To(Equal(SessionParentRelationTranscript))
+		}
+		Expect(ids).To(ConsistOf(firstTranscript.ID, secondTranscript.ID),
+			"an agent child is a sub-agent, not the parent's transcript")
+	})
+
+	It("returns no transcript children for no parents", func(ctx SpecContext) {
+		db := openTranscriptSourceDB(ctx)
+
+		children, err := db.ListTranscriptChildOverviews(ctx, nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(children).To(BeEmpty())
+	})
 })
 
 var _ = Describe("session working directory", func() {
