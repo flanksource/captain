@@ -89,12 +89,16 @@ func runFakeServer() {
 			_ = json.Unmarshal(frame.Params, &initialization)
 			initHadSchema = len(initialization.OutputSchema) > 0
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": fakeInitializeReply(mode)})
-			enc(map[string]any{"jsonrpc": "2.0", "method": "session/init", "params": map[string]any{
-				"session_id": "fake-sess", "model": "claude-sonnet-4-5", "tools": []string{"Read", "Bash"},
-			}})
 		case "prompt":
 			promptCount++
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"accepted": true}})
+			// Like the SDK's system/init, the session announces itself inside the
+			// first query, never between initialize and the first prompt.
+			if promptCount == 1 {
+				enc(map[string]any{"jsonrpc": "2.0", "method": "session/init", "params": map[string]any{
+					"session_id": "fake-sess", "model": "claude-sonnet-4-5", "tools": []string{"Read", "Bash"},
+				}})
+			}
 			enc(map[string]any{"jsonrpc": "2.0", "method": "message/text", "params": map[string]any{"text": "hi from fake"}})
 			runFakeTurn(mode, promptCount, initHadSchema, initialization, enc, completed)
 		case "interrupt":

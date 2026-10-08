@@ -467,6 +467,7 @@ func TestProvider_TurnOutlastsItsBackgroundAgents(t *testing.T) {
 	}
 
 	assert.Equal(t, []seen{
+		{Kind: ai.EventSystem},
 		{Kind: ai.EventText, Text: "hi from fake"},
 		{Kind: ai.EventToolUse, ID: "agent-1"},
 		{Kind: ai.EventToolResult, ID: "agent-1", Text: "Async agent launched successfully."},
