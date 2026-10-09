@@ -92,7 +92,7 @@ var _ = Describe("Claude Sonnet 5.5", func() {
 		Expect(entry.DefaultEffort).To(Equal(EffortHigh))
 		price, ok := CostFor(model)
 		Expect(ok).To(BeTrue())
-		Expect(price).To(Equal(ModelCost{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 2.5}))
+		Expect(price).To(Equal(ModelCost{Input: 2, Output: 10, CacheRead: 0.1, CacheWrite: 2.5}))
 	})
 
 	It("uses adaptive thinking and omits unsupported temperature", func() {
@@ -102,5 +102,55 @@ var _ = Describe("Claude Sonnet 5.5", func() {
 			"thinking":      map[string]any{"type": "adaptive"},
 			"output_config": map[string]any{"effort": "high"},
 		}))
+	})
+})
+
+var _ = Describe("Claude Haiku 5.5", func() {
+	const model = "claude-haiku-5-5"
+
+	DescribeTable("resolves the latest Haiku on every Claude runtime", func(mode RuntimeMode) {
+		for _, token := range []string{"haiku", model} {
+			resolved, ok := Anthropic.ResolveExact(mode, token)
+			Expect(ok).To(BeTrue())
+			Expect(resolved).To(Equal(model))
+		}
+		known, available := Anthropic.Availability(mode, model)
+		Expect(known).To(BeTrue())
+		Expect(available).To(BeTrue())
+	},
+		Entry("API", ModeAPI),
+		Entry("CLI", ModeCLI),
+		Entry("agent", ModeAgent),
+		Entry("cmux", ModeCmux),
+	)
+
+	It("publishes Anthropic's current capabilities and base price", func() {
+		entry, ok := Anthropic.Lookup(model)
+		Expect(ok).To(BeTrue())
+		Expect(entry.Preferred).To(BeTrue())
+		Expect(entry.ReleaseDate).To(Equal("2026-10-07"))
+		Expect(entry.ContextWindow).To(Equal(1_000_000))
+		Expect(entry.Reasoning).To(BeTrue())
+		Expect(entry.Temperature).To(BeFalse())
+		Expect(entry.AdaptiveThinking).To(BeTrue())
+		Expect(entry.InputMediaTypes).To(Equal([]string{"image/*", "application/pdf"}))
+		Expect(entry.SupportedEfforts).To(Equal([]Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}))
+		Expect(entry.DefaultEffort).To(Equal(EffortMedium))
+		price, ok := CostFor(model)
+		Expect(ok).To(BeTrue())
+		Expect(price).To(Equal(ModelCost{Input: 0.1, Output: 0.5, CacheRead: 0.01, CacheWrite: 0.125}))
+		previous, ok := Anthropic.Lookup("claude-haiku-4-5")
+		Expect(ok).To(BeTrue())
+		Expect(previous.Preferred).To(BeFalse())
+	})
+
+	It("uses adaptive thinking and omits unsupported temperature", func() {
+		temperature := 0.7
+		Expect(Anthropic.GenerationConfig(ModeAPI, model, EffortMedium, 4096, &temperature)).To(Equal(map[string]any{
+			"max_tokens":    12288,
+			"thinking":      map[string]any{"type": "adaptive"},
+			"output_config": map[string]any{"effort": "medium"},
+		}))
+		Expect(Anthropic.GenerationConfig(ModeAPI, model, EffortNone, 4096, nil)).To(Equal(map[string]any{"max_tokens": 4096}))
 	})
 })
