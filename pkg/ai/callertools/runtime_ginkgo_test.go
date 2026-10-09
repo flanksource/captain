@@ -55,7 +55,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 
 		result, err := client.CallTool(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.StructuredContent).To(Equal("first"))
+		Expect(toolOutput(result)).To(Equal(toolOutputOf{Text: "first"}))
 		Expect(<-seen).To(Equal(struct {
 			value    any
 			deadline bool
@@ -65,7 +65,7 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		active = context.WithValue(ctx, tenantKey{}, "second")
 		result, err = client.CallTool(ctx, request)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.StructuredContent).To(Equal("second"))
+		Expect(toolOutput(result)).To(Equal(toolOutputOf{Text: "second"}))
 		Expect(<-seen).To(Equal(struct {
 			value    any
 			deadline bool
@@ -474,6 +474,50 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		Expect(values).To(ConsistOf("first", "second"))
 	})
 })
+
+// MCP requires structuredContent to be a JSON object; anything else must be
+// returned as text only, or clients reject the whole tools/call result.
+var _ = DescribeTable("caller-tool result shaping",
+	func(ctx SpecContext, output any, expected toolOutputOf) {
+		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
+			Definitions: []api.ToolDefinition{{
+				Name: "todo", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(context.Context, map[string]any) (any, error) { return output, nil },
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "todo"
+
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.IsError).To(BeFalse())
+		Expect(toolOutput(result)).To(Equal(expected))
+	},
+	Entry("object is structured with JSON text", map[string]any{"status": "approved"},
+		toolOutputOf{Structured: map[string]any{"status": "approved"}, Text: `{"status":"approved"}`}),
+	Entry("llm-formatted list string is plain text", "## todos\n- a",
+		toolOutputOf{Text: "## todos\n- a"}),
+	Entry("array is JSON text only", []any{map[string]any{"id": "a"}},
+		toolOutputOf{Text: `[{"id":"a"}]`}),
+	Entry("nil is JSON null text only", nil, toolOutputOf{Text: "null"}),
+)
+
+type toolOutputOf struct {
+	Structured any
+	Text       string
+}
+
+func toolOutput(result *mcp.CallToolResult) toolOutputOf {
+	Expect(result.Content).To(HaveLen(1))
+	text, ok := result.Content[0].(mcp.TextContent)
+	Expect(ok).To(BeTrue(), "expected text content, got %T", result.Content[0])
+	return toolOutputOf{Structured: result.StructuredContent, Text: text.Text}
+}
 
 func authenticatedClient(ctx context.Context, endpoint api.CallerToolEndpoint) *mcpclient.Client {
 	channel, err := transport.NewStreamableHTTP(endpoint.URL, transport.WithHTTPHeaders(endpoint.Headers))

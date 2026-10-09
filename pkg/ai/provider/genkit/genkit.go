@@ -92,11 +92,15 @@ func (p *Provider) GetModel() string { return p.cfg.Model.Name }
 // the API mode for every family it supports.
 func (p *Provider) GetRuntime() ai.Runtime { return ai.RuntimeOf(p.provider, ai.ModeAPI) }
 
-// Execute runs one buffered (non-streaming) generation.
+// Execute returns one complete generation, streaming internally for Anthropic.
 func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 
-	opts, err := p.correlatedGenerateOptions(req, nil, nil, nil)
+	var stream gkai.ModelStreamCallback
+	if p.provider == ai.Anthropic {
+		stream = func(ctx context.Context, _ *gkai.ModelResponseChunk) error { return ctx.Err() }
+	}
+	opts, err := p.correlatedGenerateOptions(req, stream, nil, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -34,7 +34,7 @@ var _ = Describe("current preferred models", func() {
 		Entry("Sol", OpenAI, "gpt-6.1-sol", 1, ModelCost{Input: 2, Output: 10, CacheRead: 0.1, CacheWrite: 2.5}),
 		Entry("Luna", OpenAI, "gpt-6-luna", 3, ModelCost{Input: 0.1, Output: 0.5, CacheRead: 0.01, CacheWrite: 0.125}),
 		Entry("Opus", Anthropic, "claude-opus-5-5", 1, ModelCost{Input: 4, Output: 20, CacheRead: 0.2, CacheWrite: 5}),
-		Entry("Sonnet", Anthropic, "claude-sonnet-5-5", 0, ModelCost{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 2.5}),
+		Entry("Sonnet", Anthropic, "claude-sonnet-5-5", 0, ModelCost{Input: 2, Output: 10, CacheRead: 0.1, CacheWrite: 2.5}),
 		Entry("Flash", DeepSeek, "deepseek-flash", 1, ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.003}),
 	)
 
