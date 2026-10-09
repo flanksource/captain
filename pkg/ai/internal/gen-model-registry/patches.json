@@ -12,6 +12,10 @@
     "preferred": true,
     "defaultEffort": "high"
   },
+  "claude-haiku-5-5": {
+    "preferred": true,
+    "defaultEffort": "medium"
+  },
   "claude-opus-5": {
     "preferred": false
   },
@@ -28,7 +32,7 @@
     "preferred": false
   },
   "claude-haiku-4-5": {
-    "preferred": true
+    "preferred": false
   },
   "gpt-6-astra": {
     "preferred": true,

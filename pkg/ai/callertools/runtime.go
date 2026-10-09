@@ -290,12 +290,28 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		result, err := mcp.NewToolResultJSON(output)
+		result, err := toolResult(output)
 		if err != nil {
 			return mcp.NewToolResultErrorf("marshal caller tool %q result: %v", definition.Name, err), nil
 		}
 		return result, nil
 	}
+}
+
+// toolResult only sets structuredContent for JSON objects: MCP requires it to
+// be an object, and clients reject the whole result otherwise.
+func toolResult(output any) (*mcp.CallToolResult, error) {
+	if text, ok := output.(string); ok {
+		return mcp.NewToolResultText(text), nil
+	}
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		return nil, err
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(encoded), []byte("{")) {
+		return mcp.NewToolResultStructured(output, string(encoded)), nil
+	}
+	return mcp.NewToolResultText(string(encoded)), nil
 }
 
 func (r *Runtime) authorize(next http.Handler) http.Handler {
