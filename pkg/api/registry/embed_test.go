@@ -39,7 +39,8 @@ func TestRegistryDerivedCapabilities(t *testing.T) {
 		{"claude-opus-4-8", true, false, false, true},
 		{"claude-opus-4-7", true, false, false, true},
 		{"claude-sonnet-4-6", true, true, false, false},
-		{"claude-haiku-4-5", true, true, true, false},
+		{"claude-haiku-5-5", true, false, true, true},
+		{"claude-haiku-4-5", true, true, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {
