@@ -39,17 +39,27 @@ func SetupAgentWorkspace(ctx context.Context, sidecarRepo, task, dispatchCommit,
 	if _, err := os.Stat(workdir); err == nil {
 		return workdir, nil // re-dispatch onto an existing workspace is a no-op
 	}
+	// Clone into a staging dir and rename it into place: `git clone` creates
+	// the target before checking out the branch, so an observer (or a
+	// re-dispatch) must never see a half-made workdir.
+	staging := workdir + ".partial"
+	if err := os.RemoveAll(staging); err != nil {
+		return "", err
+	}
 	branchName := "captain/" + task
 	if _, err := runGit(ctx, filepath.Dir(workdir), env,
-		"clone", "--quiet", "--shared", "--branch", branchName, sidecarRepo, workdir); err != nil {
+		"clone", "--quiet", "--shared", "--branch", branchName, sidecarRepo, staging); err != nil {
 		return "", err
 	}
 	// Pin the selected runtime so a bare `git commit` needs no global config
 	// and still records which model and effort produced it.
 	for _, kv := range [][2]string{{"user.name", runtimeIdentity}, {"user.email", "agent@captain.local"}} {
-		if _, err := runGit(ctx, workdir, env, "config", kv[0], kv[1]); err != nil {
+		if _, err := runGit(ctx, staging, env, "config", kv[0], kv[1]); err != nil {
 			return "", err
 		}
+	}
+	if err := os.Rename(staging, workdir); err != nil {
+		return "", fmt.Errorf("publishing task %s workspace: %w", task, err)
 	}
 	return workdir, nil
 }

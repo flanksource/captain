@@ -54,5 +54,10 @@ var _ = Describe("Session detail availability", func() {
 		Expect(schema.Properties["detailAvailable"].Type).To(Equal("boolean"))
 		Expect(schema.Required).To(ContainElements("detailAvailable", "detailSource"))
 		Expect(operation.Responses).To(HaveKey("404"))
+		var names []string
+		for _, parameter := range operation.Parameters {
+			names = append(names, parameter.Name)
+		}
+		Expect(names).To(ConsistOf("id", "tail", "offset", "limit", "before", "after", "follow"))
 	})
 })

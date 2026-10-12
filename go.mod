@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.13.1
-	github.com/flanksource/clicky v1.21.70
+	github.com/flanksource/clicky v1.21.77-0.20261012060459-14e4772f3f3e
 	github.com/flanksource/clicky/aichat v1.21.68
 	github.com/flanksource/commons v1.60.1
 	github.com/flanksource/sandbox-runtime v1.0.2
@@ -48,6 +48,7 @@ require (
 require (
 	github.com/alpkeskin/gotoon v0.1.1 // indirect
 	github.com/atombender/go-jsonschema v0.24.1 // indirect
+	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.4 // indirect
 	github.com/go-openapi/swag/conv v0.25.4 // indirect
@@ -63,6 +64,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sanity-io/litter v1.5.8 // indirect
+	github.com/shirou/gopsutil/v4 v4.26.7 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
 	modernc.org/libc v1.74.1 // indirect
@@ -214,7 +216,6 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/go-xmlfmt/xmlfmt v1.1.3 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
@@ -286,10 +287,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ohler55/ojg v1.28.1 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
-	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
-	github.com/olekukonko/errors v1.2.0 // indirect
-	github.com/olekukonko/ll v0.1.7 // indirect
-	github.com/olekukonko/tablewriter v1.1.4 // indirect
 	github.com/openai/openai-go v1.12.0
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/orcaman/concurrent-map/v2 v2.0.1 // indirect

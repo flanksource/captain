@@ -33,38 +33,54 @@ func inputSchema(name string, schema map[string]any) (map[string]any, error) {
 	return root, nil
 }
 
-// inlineSchemaRefs copies node with every `#/$defs/<name>` $ref replaced by its
-// definition. Keywords beside a $ref (a description) override the definition's.
-// A recursive definition cannot be inlined and fails.
+// Keywords whose value is a schema, a list of schemas, or a map of name → schema.
+// Every other keyword (const, default, enum, examples, …) holds literal instance
+// data, and a properties key is an instance property name, so neither is ever
+// read as a $ref.
+var (
+	subschemaKeywords = []string{"items", "additionalItems", "additionalProperties", "contains",
+		"propertyNames", "not", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties"}
+	subschemaListKeywords = []string{"allOf", "anyOf", "oneOf", "prefixItems", "items"}
+	subschemaMapKeywords  = []string{"properties", "patternProperties", "dependentSchemas"}
+)
+
+// inlineSchemaRefs copies the schema node with every `#/$defs/<name>` $ref
+// replaced by its definition. Keywords beside a $ref (a description) override
+// the definition's. A recursive definition cannot be inlined and fails.
 func inlineSchemaRefs(node any, defs map[string]any, visiting []string) (any, error) {
-	switch value := node.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(value))
-		if ref, ok := value["$ref"].(string); ok {
-			def, err := schemaDefinition(ref, defs, visiting)
-			if err != nil {
-				return nil, err
-			}
-			resolved, err := inlineSchemaRefs(def, defs, append(slices.Clip(visiting), ref))
-			if err != nil {
-				return nil, err
-			}
-			out = resolved.(map[string]any)
+	schema, ok := node.(map[string]any)
+	if !ok {
+		return node, nil // a boolean schema
+	}
+	out := make(map[string]any, len(schema))
+	if ref, ok := schema["$ref"].(string); ok {
+		def, err := schemaDefinition(ref, defs, visiting)
+		if err != nil {
+			return nil, err
 		}
-		for key, child := range value {
-			if key == "$ref" || key == "$defs" {
-				continue
-			}
-			copied, err := inlineSchemaRefs(child, defs, visiting)
-			if err != nil {
-				return nil, err
-			}
-			out[key] = copied
+		resolved, err := inlineSchemaRefs(def, defs, append(slices.Clip(visiting), ref))
+		if err != nil {
+			return nil, err
 		}
-		return out, nil
-	case []any:
-		out := make([]any, len(value))
-		for i, child := range value {
+		out = resolved.(map[string]any)
+	}
+	for key, child := range schema {
+		if key == "$ref" || key == "$defs" {
+			continue
+		}
+		copied, err := inlineSchemaKeyword(key, child, defs, visiting)
+		if err != nil {
+			return nil, err
+		}
+		out[key] = copied
+	}
+	return out, nil
+}
+
+func inlineSchemaKeyword(key string, value any, defs map[string]any, visiting []string) (any, error) {
+	if list, ok := value.([]any); ok && slices.Contains(subschemaListKeywords, key) {
+		out := make([]any, len(list))
+		for i, child := range list {
 			copied, err := inlineSchemaRefs(child, defs, visiting)
 			if err != nil {
 				return nil, err
@@ -72,9 +88,22 @@ func inlineSchemaRefs(node any, defs map[string]any, visiting []string) (any, er
 			out[i] = copied
 		}
 		return out, nil
-	default:
-		return node, nil
 	}
+	if named, ok := value.(map[string]any); ok && slices.Contains(subschemaMapKeywords, key) {
+		out := make(map[string]any, len(named))
+		for name, child := range named {
+			copied, err := inlineSchemaRefs(child, defs, visiting)
+			if err != nil {
+				return nil, err
+			}
+			out[name] = copied
+		}
+		return out, nil
+	}
+	if slices.Contains(subschemaKeywords, key) {
+		return inlineSchemaRefs(value, defs, visiting)
+	}
+	return value, nil
 }
 
 func schemaDefinition(ref string, defs map[string]any, visiting []string) (map[string]any, error) {
