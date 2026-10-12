@@ -109,6 +109,39 @@ var _ = Describe("Caller tool input schemas", func() {
 		Expect(err).To(MatchError(ContainSubstring(`caller tool "triage_prepare" input schema must be a JSON object schema, got type "string"`)))
 	})
 
+	It("keeps a property named $ref and $ref-shaped literal values", func() {
+		refLiteral := "#/$defs/Missing"
+		resolved, err := resolveSchema(map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"$ref":  map[string]any{"type": "string", "default": refLiteral},
+				"thing": map[string]any{"const": map[string]any{"$ref": refLiteral}},
+			},
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolved).To(Equal(map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"$ref":  map[string]any{"type": "string", "default": refLiteral},
+				"thing": map[string]any{"const": map[string]any{"$ref": refLiteral}},
+			},
+		}))
+	})
+
+	It("skips schema resolution for a denied tool so allowed tools still resolve", func() {
+		definitions, err := tools.ResolveDefinitions([]api.ToolDefinition{
+			{Name: "tree_walk", InputSchema: reflectedSchema(&schemaNode{}), DefaultPermission: api.ToolPolicyDeny, Handler: noop},
+			{Name: "triage_prepare", InputSchema: map[string]any{"type": "object"}, Handler: noop},
+		}, tools.ResolveOptions{})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(definitions).To(HaveLen(1))
+		Expect(definitions[0].Name).To(Equal("triage_prepare"))
+	})
+
 	It("rejects a $ref outside #/$defs", func() {
 		_, err := resolveSchema(map[string]any{"$ref": "https://example.com/schema.json"})
 

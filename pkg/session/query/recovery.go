@@ -45,7 +45,7 @@ func (q *Loader) recoverMessages(
 	}
 	if transcript == nil {
 		transcript, err = q.db.CreateOrGetSession(ctx, database.CreateSessionInput{
-			ProviderSessionID: providerID, Source: source, Provider: providerForHistorySource(source), HostID: overview.HostID,
+			ProviderSessionID: providerID, Source: source, Provider: providerForHistorySource(source, overview), HostID: overview.HostID,
 			ParentSessionID: &overview.ID, ParentRelation: database.SessionParentRelationTranscript,
 			Path: path, CWD: stringValue(overview.CWD),
 		})
@@ -201,11 +201,18 @@ func (q *Loader) registerRecoveredSource(
 	})
 }
 
-func providerForHistorySource(source string) string {
-	if source == "claude" {
+// providerForHistorySource names the provider a recovered transcript row
+// belongs to. An API transcript is written by Captain for any provider, so its
+// provider comes from the run's model rather than the source.
+func providerForHistorySource(source string, overview database.SessionOverview) string {
+	switch {
+	case source == api.TranscriptSourceAPI && overview.ModelProvider != nil:
+		return *overview.ModelProvider
+	case source == "claude":
 		return "anthropic"
+	default:
+		return "openai"
 	}
-	return "openai"
 }
 
 func mergeRecoveredMessages(

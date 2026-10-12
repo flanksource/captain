@@ -14,6 +14,8 @@ func addCaptainSessionReadPaths(spec *rpc.OpenAPISpec) {
 			{Name: "tail", In: "query", Schema: &rpc.OpenAPISchema{Type: "integer"}},
 			{Name: "offset", In: "query", Schema: &rpc.OpenAPISchema{Type: "integer"}},
 			{Name: "limit", In: "query", Schema: &rpc.OpenAPISchema{Type: "integer"}},
+			{Name: "before", In: "query", Description: "Return the messages before this message id; with limit, only the last N of them", Schema: &rpc.OpenAPISchema{Type: "string"}},
+			{Name: "after", In: "query", Description: "Resume an SSE follow after this event id", Schema: &rpc.OpenAPISchema{Type: "string"}},
 			{Name: "follow", In: "query", Description: "Follow session changes over SSE", Schema: &rpc.OpenAPISchema{Type: "boolean"}},
 		},
 		Responses: map[string]rpc.OpenAPIResponse{

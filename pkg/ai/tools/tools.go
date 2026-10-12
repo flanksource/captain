@@ -300,12 +300,12 @@ func ResolveDefinitions(definitions []api.ToolDefinition, opts ResolveOptions) (
 	}
 	selected := make([]api.ToolDefinition, 0, len(definitions))
 	for _, definition := range definitions {
-		if definition.InputSchema, err = inputSchema(definition.Name, definition.InputSchema); err != nil {
-			return nil, err
-		}
 		policy := policies[definition.Name]
 		if policy == ToolPolicyDeny {
 			continue
+		}
+		if definition.InputSchema, err = inputSchema(definition.Name, definition.InputSchema); err != nil {
+			return nil, err
 		}
 		definition.DefaultPermission = policy
 		selected = append(selected, definition)
