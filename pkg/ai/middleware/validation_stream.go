@@ -19,7 +19,12 @@ type streamedTurn struct {
 	structured json.RawMessage
 	sessionID  string
 	result     *ai.Event
-	failed     bool
+	// rejection is a provider's own schema rejection of the turn's answer — a
+	// provider that validates constrained output itself fails the turn instead of
+	// returning it. It is held, like result, until validation decides whether a
+	// repair turn follows; the rejected answer is the turn's text.
+	rejection *ai.Event
+	failed    bool
 }
 
 func (t *streamedTurn) response() *ai.Response {
@@ -43,6 +48,12 @@ func forwardTurn(events <-chan ai.Event, out chan<- ai.Event) *streamedTurn {
 				turn.sessionID = ev.SessionID
 			}
 		case ai.EventError:
+			if strings.HasPrefix(ev.Error, ai.ErrSchemaValidation.Error()) {
+				held := ev
+				turn.rejection = &held
+				turn.text.WriteString(ev.Text)
+				continue
+			}
 			turn.failed = true
 		case ai.EventResult:
 			if len(ev.StructuredData) > 0 {
@@ -95,11 +106,33 @@ func (v *validatingProvider) validateStream(ctx context.Context, req ai.Request,
 	var usage ai.Usage
 	sawUsage := false
 	for attempt := 1; ; attempt++ {
-		if turn.result != nil {
-			cost += turn.result.CostUSD
-			if turn.result.Usage != nil {
-				usage, sawUsage = usage.Add(*turn.result.Usage), true
+		spent := turn.result
+		if turn.rejection != nil {
+			spent = turn.rejection
+		}
+		if spent != nil {
+			cost += spent.CostUSD
+			if spent.Usage != nil {
+				usage, sawUsage = usage.Add(*spent.Usage), true
 			}
+		}
+		if turn.rejection != nil {
+			if strictness == api.SchemaStrictnessRetry && attempt <= maxSchemaRetries {
+				next, err := v.streamRepair(ctx, req, schema, turn.rejection.Error, turn, attempt, out)
+				if err != nil {
+					out <- ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("%s: repair attempt %d: %v", ai.ErrSchemaValidation, attempt, err)}
+					return
+				}
+				turn = next
+				continue
+			}
+			failure := *turn.rejection
+			failure.CostUSD = cost
+			if sawUsage {
+				failure.Usage = new(usage)
+			}
+			out <- failure
+			return
 		}
 		verrs, err := validateResponse(schema, turn.response())
 		if err != nil {

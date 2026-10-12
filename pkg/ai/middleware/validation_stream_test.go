@@ -96,6 +96,58 @@ func TestValidationStream_RetryResumesTheSessionWithTheErrors(t *testing.T) {
 	}
 }
 
+// rejectingProvider is a provider that validates its own constrained output: its
+// first turn ends in the schema rejection genkit reports, carrying the rejected
+// answer and what the turn cost; later turns answer validly.
+type rejectingProvider struct{ streamingProvider }
+
+const rejectedJSON = `{"status":7}`
+
+func (s *rejectingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	if len(s.requests) > 0 {
+		return s.streamingProvider.ExecuteStream(ctx, req)
+	}
+	s.requests = append(s.requests, req)
+	ch := make(chan ai.Event, 1)
+	ch <- ai.Event{Kind: ai.EventError, Error: ai.ErrSchemaValidation.Error() + ": status: Invalid type",
+		Text: rejectedJSON, CostUSD: streamCostUSD, Usage: &ai.Usage{OutputTokens: 10}}
+	close(ch)
+	return ch, nil
+}
+
+func TestValidationStream_RetryRepairsAnAnswerTheProviderRejected(t *testing.T) {
+	inner := &rejectingProvider{streamingProvider{results: []string{validJSON}}}
+	p, err := WithSchemaValidation()(inner)
+	if err != nil {
+		t.Fatalf("WithSchemaValidation: %v", err)
+	}
+	stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRetry))
+	if err != nil {
+		t.Fatalf("ExecuteStream: %v", err)
+	}
+	var events []ai.Event
+	for ev := range stream {
+		events = append(events, ev)
+	}
+
+	if errs := eventsOfKind(events, ai.EventError); len(errs) != 0 {
+		t.Fatalf("a repaired rejection must not fail the stream, got %v", errs)
+	}
+	results := eventsOfKind(events, ai.EventResult)
+	if len(results) != 1 || string(results[0].StructuredData) != validJSON {
+		t.Fatalf("want the repaired result %s, got %v", validJSON, results)
+	}
+	if results[0].CostUSD != 2*streamCostUSD || results[0].Usage.OutputTokens != 20 {
+		t.Errorf("the result must carry the rejected turn's spend too, got $%v / %+v", results[0].CostUSD, results[0].Usage)
+	}
+	if len(inner.requests) != 2 {
+		t.Fatalf("want 1 rejected turn + 1 repair, got %d", len(inner.requests))
+	}
+	if repair := inner.requests[1].Prompt.User; !strings.Contains(repair, rejectedJSON) || !strings.Contains(repair, "Invalid type") {
+		t.Errorf("the repair prompt must carry the rejected answer and its errors, got %q", repair)
+	}
+}
+
 func TestValidationStream_RetryFailsAfterTheBudget(t *testing.T) {
 	inner := &streamingProvider{results: []string{overCapJSON}}
 	events := streamWith(t, inner)
