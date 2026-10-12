@@ -47,12 +47,13 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 	strictness := v.effectiveStrictness(req)
 	if err != nil {
 		// A provider that validates the model's structured output during generation
-		// (e.g. genkit's constrained output) rejects it before we ever see a
-		// response. Under "retry" that rejection is recoverable: re-ask the model
-		// with the schema errors instead of failing outright.
+		// (e.g. genkit's constrained output) rejects it itself, returning the
+		// rejected answer when it has one. Under "retry" that rejection is
+		// recoverable: re-ask the model with the schema errors and the answer
+		// instead of failing outright.
 		if strictness == api.SchemaStrictnessRetry && errors.Is(err, ai.ErrSchemaValidation) {
 			if schema, serr := ai.SchemaJSONFor(req.Prompt); serr == nil && len(schema) > 0 {
-				return v.retryWithFeedback(ctx, req, schema, err.Error(), nil)
+				return v.retryWithFeedback(ctx, req, schema, err.Error(), resp)
 			}
 		}
 		return resp, err
@@ -107,7 +108,8 @@ func (v *validatingProvider) effectiveStrictness(req ai.Request) api.SchemaStric
 // the schema validation errors (and the previous response when we have one) so it
 // can correct itself. It serves both failure modes: a post-response validation
 // failure (prev is the offending response) and a provider-side rejection during
-// generation (prev is nil because the response never surfaced). A response that is
+// generation (prev is the rejected answer, or nil when the provider returned
+// none). A response that is
 // still invalid after the last attempt is a hard error.
 func (v *validatingProvider) retryWithFeedback(ctx context.Context, req ai.Request, schema json.RawMessage, verrs string, prev *ai.Response) (*ai.Response, error) {
 	for attempt := 1; attempt <= maxSchemaRetries; attempt++ {
@@ -116,7 +118,7 @@ func (v *validatingProvider) retryWithFeedback(ctx context.Context, req ai.Reque
 			// The provider rejected the corrected output too; feed the new errors
 			// back and keep trying until the retry budget is exhausted.
 			if errors.Is(err, ai.ErrSchemaValidation) && attempt < maxSchemaRetries {
-				verrs, prev = err.Error(), nil
+				verrs, prev = err.Error(), resp
 				continue
 			}
 			return resp, err
