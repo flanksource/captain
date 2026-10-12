@@ -26,14 +26,8 @@ func addCaptainPromptRunPaths(spec *rpc.OpenAPISpec) {
 			},
 		}),
 	}
-	messageBody := &rpc.OpenAPIRequestBody{
-		Required: true,
-		Content: map[string]rpc.OpenAPIMediaType{
-			"application/json": {Schema: chatMessageRequestSchema()},
-		},
-	}
 	spec.Paths["/api/captain/prompt/runs/{runId}/message"] = rpc.OpenAPIPath{
-		"post": promptRunOperation("messagePromptRun", "Send or queue a prompt run message", pathParameter, messageBody, jsonResponse(chatMessageResponseSchema())),
+		"post": promptRunOperation("messagePromptRun", "Send or queue a prompt run message", pathParameter, chatMessageRequestBody(), jsonResponse(chatMessageResponseSchema())),
 	}
 	spec.Paths["/api/captain/prompt/runs/{runId}/interrupt"] = rpc.OpenAPIPath{
 		"post": promptRunOperation("interruptPromptRun", "Pause the active prompt turn", pathParameter, nil, jsonResponse(statusSchema())),
@@ -41,28 +35,33 @@ func addCaptainPromptRunPaths(spec *rpc.OpenAPISpec) {
 	spec.Paths["/api/captain/prompt/runs/{runId}/stop"] = rpc.OpenAPIPath{
 		"post": promptRunOperation("stopPromptRun", "Stop the entire prompt run", pathParameter, nil, jsonResponse(statusSchema())),
 	}
-	permissionModeBody := &rpc.OpenAPIRequestBody{
-		Required: true,
-		Content: map[string]rpc.OpenAPIMediaType{
-			"application/json": {Schema: &rpc.OpenAPISchema{
-				Type: "object", Required: []string{"mode"},
-				Properties: map[string]*rpc.OpenAPISchema{"mode": permissionModeSchema()},
-			}},
-		},
-	}
 	spec.Paths["/api/captain/prompt/runs/{runId}/permission-mode"] = rpc.OpenAPIPath{
-		"post": promptRunOperation("setPromptRunPermissionMode", "Switch the live prompt run's permission mode", pathParameter, permissionModeBody,
-			jsonResponse(&rpc.OpenAPISchema{
-				Type: "object", Required: []string{"runId", "permissionMode"},
-				Properties: map[string]*rpc.OpenAPISchema{
-					"runId": {Type: "string"}, "permissionMode": permissionModeSchema(),
-				},
-			})),
+		"post": promptRunOperation("setPromptRunPermissionMode", "Switch the live prompt run's permission mode", pathParameter,
+			permissionModeRequestBody(), jsonResponse(permissionModeResponseSchema())),
 	}
-	sessionParameter := pathParameter
-	sessionParameter.Name = "id"
+	addCaptainSessionChatPaths(spec)
+	addCaptainSessionReadPaths(spec)
+}
+
+// addCaptainSessionChatPaths documents SessionHandler's chat routes as a host
+// mounts them at /api/captain/sessions.
+func addCaptainSessionChatPaths(spec *rpc.OpenAPISpec) {
+	session := rpc.OpenAPIParameter{
+		Name: "id", In: "path", Required: true, Description: "Captain session id or provider session id",
+		Schema: &rpc.OpenAPISchema{Type: "string"},
+	}
 	spec.Paths["/api/captain/sessions/{id}/message"] = rpc.OpenAPIPath{
-		"post": promptRunOperation("messageSession", "Continue a saved or active session", sessionParameter, messageBody, jsonResponse(chatMessageResponseSchema())),
+		"post": promptRunOperation("messageSession", "Continue a saved or active session", session, chatMessageRequestBody(), jsonResponse(chatMessageResponseSchema())),
+	}
+	spec.Paths["/api/captain/sessions/{id}/chat"] = rpc.OpenAPIPath{
+		"get": promptRunOperation("getSessionChat", "Get the session's live chat run in this process", session, nil, jsonResponse(sessionChatSchema())),
+	}
+	spec.Paths["/api/captain/sessions/{id}/interrupt"] = rpc.OpenAPIPath{
+		"post": promptRunOperation("interruptSessionChat", "Pause the session's live chat turn", session, nil, jsonResponse(statusSchema())),
+	}
+	spec.Paths["/api/captain/sessions/{id}/permission-mode"] = rpc.OpenAPIPath{
+		"post": promptRunOperation("setSessionChatPermissionMode", "Switch the session's live chat permission mode", session,
+			permissionModeRequestBody(), jsonResponse(permissionModeResponseSchema())),
 	}
 }
 
@@ -239,6 +238,45 @@ func jsonResponse(schema *rpc.OpenAPISchema) rpc.OpenAPIResponse {
 		Description: "Successful response",
 		Content: map[string]rpc.OpenAPIMediaType{
 			"application/json": {Schema: schema},
+		},
+	}
+}
+
+func chatMessageRequestBody() *rpc.OpenAPIRequestBody {
+	return &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
+		"application/json": {Schema: chatMessageRequestSchema()},
+	}}
+}
+
+// permissionModeRequestBody is a ChatPermissionModeRequest.
+func permissionModeRequestBody() *rpc.OpenAPIRequestBody {
+	return &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
+		"application/json": {Schema: &rpc.OpenAPISchema{
+			Type: "object", Required: []string{"mode"},
+			Properties: map[string]*rpc.OpenAPISchema{"mode": permissionModeSchema()},
+		}},
+	}}
+}
+
+// permissionModeResponseSchema is a ChatPermissionModeResponse.
+func permissionModeResponseSchema() *rpc.OpenAPISchema {
+	return &rpc.OpenAPISchema{
+		Type: "object", Required: []string{"runId", "permissionMode"},
+		Properties: map[string]*rpc.OpenAPISchema{
+			"runId": {Type: "string"}, "permissionMode": permissionModeSchema(),
+		},
+	}
+}
+
+// sessionChatSchema is a SessionChat.
+func sessionChatSchema() *rpc.OpenAPISchema {
+	return &rpc.OpenAPISchema{
+		Type: "object", Required: []string{"runId", "capabilities", "state"},
+		Properties: map[string]*rpc.OpenAPISchema{
+			"runId": {Type: "string"}, "capabilities": chatCapabilitiesSchema(),
+			"state":           {Type: "object", Description: "ChatStateFrame: the live chat's state frame"},
+			"permissionMode":  permissionModeSchema(),
+			"permissionModes": {Type: "array", Items: permissionModeSchema()},
 		},
 	}
 }

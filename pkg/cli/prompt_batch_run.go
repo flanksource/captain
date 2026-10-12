@@ -29,6 +29,8 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 		task.WithKind("prompt"),
 		task.WithLabels(promptTaskLabelsWithID(rendered, id, "multi")),
 		task.WithConcurrency(len(batch.Runs)),
+		// Followed over HTTP like launchAsyncRun, never on the host's terminal.
+		task.WithNoRender(),
 	)
 	handles := make([]task.TypedTask[PromptRunSummary], len(batch.Runs))
 	result := PromptRunResult{

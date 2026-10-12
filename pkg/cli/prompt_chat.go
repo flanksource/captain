@@ -83,6 +83,9 @@ func (c *chatSession) setPermissionModesLocked(runtime api.Runtime) {
 }
 
 func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
+	// A chat idles between turns for up to chatIdleTimeout, so a host draining
+	// its own tasks (task.Wait) must not wait on it.
+	t.SetBackground(true)
 	baseCtx, cancel := context.WithCancel(t.Context())
 	c.mu.Lock()
 	c.baseCancel = cancel

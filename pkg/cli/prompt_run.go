@@ -98,7 +98,10 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 var executePromptRequestFunc = executePromptRequest
 
 // launchAsyncRun starts the background clicky task + SSE stream and returns the
-// run handle (the serve/web-UI contract).
+// run handle (the serve/web-UI contract). The run is followed over HTTP, never
+// on the hosting process's terminal (captain serve, gavel serve), so its task
+// group is WithNoRender: a chat idling between turns would otherwise read as a
+// stuck task line beside the host's own output.
 func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) (PromptRunResult, error) {
 	timeout, err := renderedTimeout(rendered)
 	if err != nil {
@@ -117,6 +120,7 @@ func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) (PromptRu
 		task.WithGroupID(runID),
 		task.WithKind("prompt"),
 		task.WithLabels(promptTaskLabelsWithID(rendered, id, "")),
+		task.WithNoRender(),
 	)
 	if chat {
 		chatSession := newChatSession(runID, rendered, timeout, stream, nil)

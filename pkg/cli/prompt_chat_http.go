@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,34 +36,33 @@ func handlePromptRunMessage(chats *chatBroker) http.HandlerFunc {
 	}
 }
 
-func handlePromptRunInterrupt(chats *chatBroker) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		chat, ok := chats.getRun(r.PathValue("runId"))
-		if !ok {
-			http.Error(w, "unknown run", http.StatusNotFound)
-			return
-		}
-		response, err := chat.interrupt(r.Context())
-		if err != nil {
-			writeChatError(w, err)
-			return
-		}
-		writeChatJSON(w, http.StatusAccepted, response)
-	}
+// chatControl is an operation on a live chat run, served both run-scoped
+// (/api/captain/prompt/runs/{runId}/...) and session-scoped (SessionHandler).
+type chatControl func(r *http.Request, chat *chatSession) (any, error)
+
+// interruptChat pauses the chat's active turn: a ChatInterruptResponse.
+func interruptChat(r *http.Request, chat *chatSession) (any, error) {
+	return chat.interrupt(r.Context())
 }
 
-func handlePromptRunPermissionMode(chats *chatBroker) http.HandlerFunc {
+// switchChatPermissionMode reads a ChatPermissionModeRequest and switches the
+// chat's posture: a ChatPermissionModeResponse.
+func switchChatPermissionMode(r *http.Request, chat *chatSession) (any, error) {
+	var request ChatPermissionModeRequest
+	if err := readChatRequest(r, &request); err != nil {
+		return nil, err
+	}
+	return chat.setPermissionMode(r.Context(), request.Mode)
+}
+
+func handlePromptRunControl(chats *chatBroker, control chatControl) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		chat, ok := chats.getRun(r.PathValue("runId"))
 		if !ok {
 			http.Error(w, "unknown run", http.StatusNotFound)
 			return
 		}
-		var request ChatPermissionModeRequest
-		if !decodeChatRequest(w, r, &request) {
-			return
-		}
-		response, err := chat.setPermissionMode(r.Context(), request.Mode)
+		response, err := control(r, chat)
 		if err != nil {
 			writeChatError(w, err)
 			return
@@ -98,18 +98,9 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 		if !decodeChatRequest(w, r, &request) {
 			return
 		}
-		result, err := RunSessionGet(r.Context(), SessionGetOptions{ID: r.PathValue("id")})
+		item, err := resolveSessionItem(r.Context(), r.PathValue("id"))
 		if err != nil {
 			writeChatError(w, err)
-			return
-		}
-		if result.Total == 0 {
-			http.Error(w, "unknown session", http.StatusNotFound)
-			return
-		}
-		item, selectErr := selectResumeSession(result.Sessions)
-		if selectErr != nil {
-			writeChatError(w, selectErr)
 			return
 		}
 		if chat, ok := chats.getSession(item.ProviderSessionID); ok {
@@ -128,6 +119,25 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 		}
 		writeChatJSON(w, http.StatusAccepted, response)
 	}
+}
+
+// resolveSessionItem resolves a captain session id or provider session id to
+// the one session it names: a root's captain id names the root rather than its
+// subagents, and duplicate records of one provider session collapse to the
+// richest.
+func resolveSessionItem(ctx context.Context, id string) (SessionGetItem, error) {
+	result, err := RunSessionGet(ctx, SessionGetOptions{ID: id})
+	if err != nil {
+		return SessionGetItem{}, err
+	}
+	rows := make([]sessionRowIdentity, len(result.Sessions))
+	for i, item := range result.Sessions {
+		rows[i] = sessionRowIdentity{ID: item.CaptainID, RootID: item.RootSessionID}
+	}
+	if isThreadExpansion(id, rows) {
+		return result.Sessions[0], nil
+	}
+	return selectResumeSession(result.Sessions)
 }
 
 func selectResumeSession(items []SessionGetItem) (SessionGetItem, error) {
@@ -158,7 +168,7 @@ func resumeSessionScore(item SessionGetItem) int {
 	if strings.TrimSpace(item.Summary.CWD) != "" {
 		score += 2
 	}
-	if item.Detail != nil {
+	if item.DetailAvailable {
 		score++
 	}
 	return score
@@ -294,13 +304,22 @@ func userChatMessage(messageID, text string) session.Message {
 func newMessageID() string { return uuid.NewString() }
 
 func decodeChatRequest(w http.ResponseWriter, r *http.Request, target any) bool {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		http.Error(w, "invalid request: "+err.Error(), http.StatusBadRequest)
+	if err := readChatRequest(r, target); err != nil {
+		writeChatError(w, err)
 		return false
 	}
 	return true
+}
+
+// readChatRequest strictly decodes a JSON request body; a malformed body or an
+// unknown field is a 400.
+func readChatRequest(r *http.Request, target any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return newChatError(http.StatusBadRequest, "invalid request: "+err.Error())
+	}
+	return nil
 }
 
 func writeChatError(w http.ResponseWriter, err error) {
@@ -309,7 +328,7 @@ func writeChatError(w http.ResponseWriter, err error) {
 		http.Error(w, target.Error(), target.status)
 		return
 	}
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	http.Error(w, err.Error(), sessionErrorStatus(err))
 }
 
 func writeChatJSON(w http.ResponseWriter, status int, value any) {

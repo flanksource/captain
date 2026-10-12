@@ -9,6 +9,12 @@ section: Next Sections
 
 This section is scaffolded for Claude and Codex history, live prompt run entries, session browser behavior, cost analysis, and change tracking.
 
+## Transcript availability
+
+`GET /api/captain/sessions/{id}` returns the unified session with `detailAvailable` and a `detailSource` map naming the sources for messages, prompt, turns, usage and approvals. An existing session without transcript or prompt content returns HTTP 200 with its metadata and `detailAvailable: false`; an unknown session returns HTTP 404. The inspector displays **Transcript unavailable** while keeping metadata and other facets accessible.
+
+Gavel hides inactive empty records from the Sessions list before pagination. Active processes and sessions awaiting input or approval remain visible, as do sessions with a transcript path, stored messages, an initial prompt or an associated prompt run. Existing direct links still load independently of the recent list.
+
 ## Estimated tool cost
 
 In a session's transcript, open the three-dot menu and enable **Show estimated tool cost**. It is off by default. Each tool's summary line shows a compact estimated USD amount and its cache-read token delta when nonzero, such as `+8k` tokens. Hover the cache-read indicator for the exact count. Expand the tool row to see its token usage, reasoning tokens when available, and cache reads and writes in a footer beneath the details.
