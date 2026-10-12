@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,8 +69,9 @@ var _ = Describe("SessionHandler", Ordered, func() {
 			Parts: json.RawMessage(`[{"type":"text","text":"streamed over SSE"}]`),
 		})).To(Succeed())
 
+		// Mounted exactly as a host (captain serve, gavel) mounts it.
 		mux := http.NewServeMux()
-		registerSessionRoutes(mux, newChatBroker())
+		mux.Handle("/api/captain/sessions/", http.StripPrefix("/api/captain/sessions", SessionHandler()))
 		server = httptest.NewServer(mux)
 		DeferCleanup(server.Close)
 	})
@@ -80,9 +82,11 @@ var _ = Describe("SessionHandler", Ordered, func() {
 
 		Expect(response.StatusCode).To(Equal(http.StatusOK))
 		Expect(response.Header.Get("Content-Type")).To(HavePrefix("application/json"))
-		var body session.Session
+		var body sessionReadResponse
 		Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
 		Expect(body.ID).To(Equal(planned.ID.String()))
+		Expect(body.DetailAvailable).To(BeTrue())
+		Expect(body.DetailSource["messages"]).To(Equal("transcript"))
 		Expect(body.Plan).NotTo(BeNil())
 		Expect(body.Plan.Content).To(Equal(planMarkdown))
 	})
@@ -123,7 +127,7 @@ var _ = Describe("SessionHandler", Ordered, func() {
 		Expect(body.Messages[0].Parts[0].EstimatedCost).To(Equal(estimate))
 	})
 
-	It("reports a session nothing can describe as a 404 naming its detail sources", func(ctx SpecContext) {
+	It("returns metadata and unavailable detail sources for an existing empty session", func(ctx SpecContext) {
 		empty, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
 			ProviderSessionID: uuid.NewString(), Source: "claude", Provider: "anthropic", HostID: captainHostID(),
 		})
@@ -132,11 +136,17 @@ var _ = Describe("SessionHandler", Ordered, func() {
 		response := getSession(ctx, server.URL+"/api/captain/sessions/"+empty.ID.String(), "application/json")
 		defer response.Body.Close()
 
-		Expect(response.StatusCode).To(Equal(http.StatusNotFound))
+		Expect(response.StatusCode).To(Equal(http.StatusOK))
 		var body map[string]any
 		Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
-		Expect(body).To(HaveKey("detailSource"))
-		Expect(body["error"]).To(ContainSubstring(empty.ID.String()))
+		Expect(body).To(HaveKeyWithValue("id", empty.ID.String()))
+		Expect(body).To(HaveKeyWithValue("source", "claude"))
+		Expect(body).To(HaveKeyWithValue("lifecycleStatus", "created"))
+		Expect(body).To(HaveKeyWithValue("detailAvailable", false))
+		Expect(body["detailSource"]).To(Equal(map[string]any{
+			"messages": "none", "prompt": "none", "turns": "none", "usage": "none", "approvals": "none",
+		}))
+		Expect(body).NotTo(HaveKey("error"))
 	})
 
 	It("streams entry and state frames with ?follow=1", func(ctx SpecContext) {
@@ -171,19 +181,32 @@ var _ = Describe("SessionHandler", Ordered, func() {
 		Expect(readSSEFrames(response, 1)[0].event).To(Equal("entry"))
 	})
 
-	It("keeps the POST message route beside the mounted handler", func(ctx SpecContext) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-			server.URL+"/api/captain/sessions/"+followed.ID.String()+"/message", strings.NewReader(`{"unknownField":true}`))
-		Expect(err).NotTo(HaveOccurred())
-		response, err := http.DefaultClient.Do(request)
-		Expect(err).NotTo(HaveOccurred())
-		defer response.Body.Close()
+	DescribeTable("serves POST /{id}/message through the mounted handler",
+		func(ctx SpecContext, body, wantMessage string) {
+			response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+followed.ID.String()+"/message", body)
+			defer response.Body.Close()
 
-		// decodeChatRequest refuses the unknown field; SessionHandler would have
-		// answered 405 for a POST.
-		Expect(response.StatusCode).To(Equal(http.StatusBadRequest))
-	})
+			// A 400 naming the request defect proves handleSessionMessage ran: an
+			// unrouted POST would be a 404 or 405 from the mux.
+			Expect(response.StatusCode).To(Equal(http.StatusBadRequest))
+			text, err := io.ReadAll(response.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(text)).To(ContainSubstring(wantMessage))
+		},
+		Entry("refusing an unknown request field", `{"unknownField":true}`, "invalid request"),
+		Entry("refusing empty text for a session with no live chat", `{"text":"  "}`, "message text is required"),
+	)
 })
+
+func postSessionMessage(ctx context.Context, url, body string) *http.Response {
+	GinkgoHelper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	Expect(err).NotTo(HaveOccurred())
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	Expect(err).NotTo(HaveOccurred())
+	return response
+}
 
 func getSession(ctx context.Context, url, accept string) *http.Response {
 	GinkgoHelper()

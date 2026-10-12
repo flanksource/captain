@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/session"
 	sessionquery "github.com/flanksource/captain/pkg/session/query"
 )
 
@@ -17,29 +18,49 @@ import (
 // comment so proxies and browsers keep the connection open.
 var sessionStreamKeepAlive = 15 * time.Second
 
+type sessionReadResponse struct {
+	*session.Session
+	DetailAvailable bool              `json:"detailAvailable"`
+	DetailSource    map[string]string `json:"detailSource"`
+}
+
 // SessionHandler serves one Captain session by identity, with paths relative to
 // wherever a host mounts it (captain serve and gavel mount it at
 // /api/captain/sessions via http.StripPrefix):
 //
 //   - GET /{id} returns the unified session.Session that `captain sessions get`
 //     composes, with the whole transcript unless tail, offset or limit narrow it.
+//     before=<message id> pages history: the messages ahead of that one (the
+//     last `limit` of them), without events.
 //   - GET /{id}?follow=1, or with Accept: text/event-stream, follows the session
 //     over SSE: `entry` frames carry a session.Message upsert, `state` frames a
 //     FollowState, `error` frames a terminal error, and `: ping` comments keep
-//     an idle stream open.
+//     an idle stream open. Every message is replayed first unless
+//     after=<message id> names the newest one the reader already holds.
+//     An unknown before or after cursor is a JSON 400.
+//   - POST /{id}/tokens sizes the session's transcript rows in tokens.
+//   - POST /{id}/message sends a ChatMessageRequest to the session: to its live
+//     chat run when one is attached in this process, otherwise by resuming the
+//     saved session as a new agent-mode chat run. It answers 202 with a
+//     ChatMessageResponse.
+//   - GET /{id}/chat answers the SessionChat projection of the session's live
+//     chat run in this process.
+//   - POST /{id}/interrupt pauses the live chat's active turn (a
+//     ChatInterruptResponse); POST /{id}/permission-mode switches its posture
+//     from a ChatPermissionModeRequest (a ChatPermissionModeResponse). Both
+//     answer 202, and 409 when the session has no live chat in this process.
+//
+// The chat, interrupt and permission-mode routes resolve {id} as a captain or
+// provider session id, like the message route, and answer errors as JSON {error}.
 func SessionHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{id}", handleSessionRead)
 	mux.HandleFunc("POST /{id}/tokens", handleSessionTokens)
+	mux.Handle("POST /{id}/message", handleSessionMessage(promptChats))
+	mux.Handle("GET /{id}/chat", handleSessionChat(promptChats))
+	mux.Handle("POST /{id}/interrupt", handleSessionChatControl(promptChats, interruptChat))
+	mux.Handle("POST /{id}/permission-mode", handleSessionChatControl(promptChats, switchChatPermissionMode))
 	return mux
-}
-
-// registerSessionRoutes mounts SessionHandler beside the session message route.
-// The method-qualified message pattern is more specific than the mount's
-// prefix, so both coexist on one mux.
-func registerSessionRoutes(mux *http.ServeMux, chats *chatBroker) {
-	mux.Handle("POST /api/captain/sessions/{id}/message", handleSessionMessage(chats))
-	mux.Handle("/api/captain/sessions/", http.StripPrefix("/api/captain/sessions", SessionHandler()))
 }
 
 func handleSessionRead(w http.ResponseWriter, r *http.Request) {
@@ -64,12 +85,11 @@ func handleSessionRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if item.Detail == nil {
-		writeSessionError(w, http.StatusNotFound,
-			fmt.Sprintf("session %s has no transcript, prompt or stored messages to show", item.CaptainID),
-			map[string]any{"detailSource": item.DetailSource})
+		writeSessionError(w, http.StatusInternalServerError,
+			fmt.Sprintf("session %s has no composed aggregate", item.CaptainID), nil)
 		return
 	}
-	writeChatJSON(w, http.StatusOK, item.Detail)
+	writeChatJSON(w, http.StatusOK, sessionReadResponse{Session: item.Detail, DetailAvailable: item.DetailAvailable, DetailSource: item.DetailSource})
 }
 
 func wantsSessionStream(r *http.Request) bool {
@@ -93,6 +113,7 @@ func sessionWindowFromQuery(id string, r *http.Request) (SessionGetOptions, erro
 		}
 		*target = value
 	}
+	opts.Before = strings.TrimSpace(r.URL.Query().Get("before"))
 	return opts, nil
 }
 
@@ -149,7 +170,7 @@ func streamSession(w http.ResponseWriter, r *http.Request, id string) {
 		writeSessionError(w, http.StatusInternalServerError, err.Error(), nil)
 		return
 	}
-	events, err := sessionquery.Follow(r.Context(), db, id, sessionquery.FollowOptions{Replay: true})
+	events, err := sessionquery.Follow(r.Context(), db, id, sessionquery.FollowOptions{Replay: true, After: r.URL.Query().Get("after")})
 	if err != nil {
 		writeSessionError(w, sessionErrorStatus(err), err.Error(), nil)
 		return
