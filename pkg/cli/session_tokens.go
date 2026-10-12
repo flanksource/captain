@@ -32,7 +32,7 @@ func sizeSessionTokens(ctx context.Context, id string, opts sessiontokens.Option
 	if err != nil {
 		return sessiontokens.Result{}, err
 	}
-	if item.Detail == nil {
+	if !item.DetailAvailable {
 		return sessiontokens.Result{}, fmt.Errorf("%w: session has no transcript", database.ErrSessionNotFound)
 	}
 	return sessiontokens.Size(ctx, item.Detail, opts)

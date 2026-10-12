@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -154,14 +155,7 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded session
 	if err != nil {
 		return SessionGetItem{}, err
 	}
-	// Provenance travels with the detail so an unread session is distinguishable
-	// from an empty one: messages sourced from "prompt-run" mean the transcript
-	// has not been ingested, not that nothing happened. It is kept without a
-	// detail too, so a caller can say which sources had nothing.
 	item.DetailSource = provenance.Facets()
-	if detail == nil {
-		return item, nil
-	}
 	enrichSessionDetail(detail, item.Summary)
 	// A question is not waiting on a person while the agent still has the turn: a
 	// chat running on the session, or the agent's own process still alive (an
@@ -169,8 +163,8 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded session
 	if chatRunning || (item.Summary.Live != nil && item.Summary.Live.Active) {
 		detail.AwaitingInput = nil
 	}
-	item.DetailAvailable = true
-	item.Summary.DetailAvailable = true
+	item.DetailAvailable = provenance.Of(load.FacetMessages) != load.SourceNone || provenance.Of(load.FacetPrompt) != load.SourceNone
+	item.Summary.DetailAvailable = item.DetailAvailable
 	item.Summary.Messages = max(item.Summary.Messages, len(detail.Messages))
 	item.Summary.Provider = firstNonEmpty(item.Summary.Provider, detail.Provider)
 	item.Summary.ModelMode = firstNonEmpty(item.Summary.ModelMode, string(detail.ModelMode))
@@ -227,12 +221,6 @@ func loadSessionDetail(
 	stopCompose()
 	if err != nil {
 		return nil, load.Provenance{}, err
-	}
-	// A session nothing could say anything about stays metadata-only, rather
-	// than being reported as an empty one.
-	if result.Provenance.Of(load.FacetMessages) == load.SourceNone &&
-		result.Provenance.Of(load.FacetPrompt) == load.SourceNone {
-		return nil, result.Provenance, nil
 	}
 	return result.Session, result.Provenance, nil
 }
@@ -490,7 +478,7 @@ func (i SessionGetItem) Pretty() clickyapi.Text {
 	// The detail body opens with its own header and Summary rows carrying
 	// source, project, cwd and the provider session id, so repeating them here
 	// would duplicate four of the first eight lines of output.
-	if i.Detail != nil {
+	if i.DetailAvailable {
 		return text.NewLine().NewLine().Add(i.Detail.Pretty()).Add(i.hiddenRowsNotice())
 	}
 	if i.Summary.Source != "" {
@@ -517,7 +505,7 @@ func (i SessionGetItem) Pretty() clickyapi.Text {
 // and the rendered transcript so a bounded view never reads as the whole
 // session. See transcriptNotice for how the causes are attributed.
 func (i SessionGetItem) hiddenRowsNotice() clickyapi.Text {
-	if i.Detail == nil {
+	if !i.DetailAvailable {
 		return clickyapi.Text{}
 	}
 	return i.notice.text(len(i.Detail.Messages))
@@ -537,13 +525,29 @@ func (i sessionGetListItem) Markdown() string { return i.text.Markdown() }
 // messages because provider state rows (titles, skill listings, prompt
 // checkpoints) grow with the session and would otherwise ignore the window
 // entirely — a --tail 10 could still emit hundreds of event lines.
-func pageSessionTranscript(s *session.Session, opts SessionGetOptions) {
+//
+// Before pages history instead: the messages ahead of that message id, the
+// last Limit of them when Limit is set. Events carry no position relative to a
+// message, so such a page has none; the newest page already held them.
+func pageSessionTranscript(s *session.Session, opts SessionGetOptions) error {
 	full := session.TranscriptWindow{
 		Messages: len(s.Messages), Events: len(s.Events),
 		ToolCalls: session.CountToolParts(s.Messages),
 	}
-	s.Messages = pageTranscriptRows(s.Messages, opts)
-	s.Events = pageTranscriptRows(s.Events, opts)
+	if opts.Before != "" {
+		if opts.Tail > 0 || opts.Offset > 0 {
+			return fmt.Errorf("%w: before cannot be combined with tail or offset", database.ErrInvalidSession)
+		}
+		cursor := slices.IndexFunc(s.Messages, func(message session.Message) bool { return message.ID == opts.Before })
+		if cursor == -1 {
+			return fmt.Errorf("%w: no message %q in session %s", database.ErrInvalidSession, opts.Before, s.ID)
+		}
+		s.Messages = pageTranscriptRows(s.Messages[:cursor], SessionGetOptions{Tail: opts.Limit})
+		s.Events = nil
+	} else {
+		s.Messages = pageTranscriptRows(s.Messages, opts)
+		s.Events = pageTranscriptRows(s.Events, opts)
+	}
 	// Recorded only when rows were actually dropped, so summaries of a complete
 	// transcript stay free of window annotations.
 	if len(s.Messages) != full.Messages || len(s.Events) != full.Events {
@@ -551,6 +555,7 @@ func pageSessionTranscript(s *session.Session, opts SessionGetOptions) {
 			s.Window = &full
 		}
 	}
+	return nil
 }
 
 func pageTranscriptRows[T any](rows []T, opts SessionGetOptions) []T {

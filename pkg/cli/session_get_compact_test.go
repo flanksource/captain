@@ -58,7 +58,7 @@ var _ = Describe("session get transcript paging", func() {
 	It("bounds events alongside messages under --tail", func() {
 		detail := transcriptFixture(50, 40)
 
-		pageSessionTranscript(detail, SessionGetOptions{Tail: 5})
+		Expect(pageSessionTranscript(detail, SessionGetOptions{Tail: 5})).To(Succeed())
 
 		Expect(detail.Messages).To(HaveLen(5))
 		Expect(detail.Events).To(HaveLen(5),
@@ -70,7 +70,7 @@ var _ = Describe("session get transcript paging", func() {
 	It("bounds events alongside messages under --offset/--limit", func() {
 		detail := transcriptFixture(50, 40)
 
-		pageSessionTranscript(detail, SessionGetOptions{Offset: 10, Limit: 5})
+		Expect(pageSessionTranscript(detail, SessionGetOptions{Offset: 10, Limit: 5})).To(Succeed())
 
 		Expect(detail.Messages).To(HaveLen(5))
 		Expect(detail.Events).To(HaveLen(5))
@@ -81,7 +81,7 @@ var _ = Describe("session get transcript paging", func() {
 	It("returns everything when the limit is explicitly cleared", func() {
 		detail := transcriptFixture(50, 40)
 
-		pageSessionTranscript(detail, SessionGetOptions{Limit: 0})
+		Expect(pageSessionTranscript(detail, SessionGetOptions{Limit: 0})).To(Succeed())
 
 		Expect(detail.Messages).To(HaveLen(50))
 		Expect(detail.Events).To(HaveLen(40))
@@ -90,7 +90,7 @@ var _ = Describe("session get transcript paging", func() {
 	It("leaves a collection untouched when it is shorter than the window", func() {
 		detail := transcriptFixture(3, 2)
 
-		pageSessionTranscript(detail, SessionGetOptions{Tail: 10})
+		Expect(pageSessionTranscript(detail, SessionGetOptions{Tail: 10})).To(Succeed())
 
 		Expect(detail.Messages).To(HaveLen(3))
 		Expect(detail.Events).To(HaveLen(2))
@@ -159,7 +159,7 @@ var _ = Describe("session get transcript filtering", func() {
 		opts := SessionGetOptions{Categories: []string{"test"}, Tail: 1}
 
 		Expect(filterSessionTranscript(detail, opts)).To(Succeed())
-		pageSessionTranscript(detail, opts)
+		Expect(pageSessionTranscript(detail, opts)).To(Succeed())
 
 		Expect(detail.Messages).To(HaveLen(1))
 		Expect(detail.Messages[0].ID).To(Equal("test"))
@@ -216,10 +216,11 @@ var _ = Describe("session get header", func() {
 		notice, err := applyTranscriptWindow(detail, opts, 200)
 		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
-			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
-			Summary:   SessionRecord{Messages: 200},
-			Detail:    detail,
-			notice:    notice,
+			DetailAvailable: true,
+			CaptainID:       "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:         SessionRecord{Messages: 200},
+			Detail:          detail,
+			notice:          notice,
 		}
 
 		rendered := item.Pretty().String()
@@ -234,10 +235,11 @@ var _ = Describe("session get header", func() {
 		notice, err := applyTranscriptWindow(detail, opts, 4)
 		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
-			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
-			Summary:   SessionRecord{Messages: 4},
-			Detail:    detail,
-			notice:    notice,
+			DetailAvailable: true,
+			CaptainID:       "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:         SessionRecord{Messages: 4},
+			Detail:          detail,
+			notice:          notice,
 		}
 
 		Expect(item.Pretty().String()).NotTo(ContainSubstring("hidden"))
@@ -253,10 +255,11 @@ var _ = Describe("session get header", func() {
 		notice, err := applyTranscriptWindow(detail, opts, 265)
 		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
-			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
-			Summary:   SessionRecord{Messages: 265},
-			Detail:    detail,
-			notice:    notice,
+			DetailAvailable: true,
+			CaptainID:       "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:         SessionRecord{Messages: 265},
+			Detail:          detail,
+			notice:          notice,
 		}
 
 		rendered := item.Pretty().String()
@@ -274,10 +277,11 @@ var _ = Describe("session get header", func() {
 		notice, err := applyTranscriptWindow(detail, opts, 265)
 		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
-			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
-			Summary:   SessionRecord{Messages: 265},
-			Detail:    detail,
-			notice:    notice,
+			DetailAvailable: true,
+			CaptainID:       "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:         SessionRecord{Messages: 265},
+			Detail:          detail,
+			notice:          notice,
 		}
 
 		rendered := item.Pretty().String()
@@ -294,10 +298,11 @@ var _ = Describe("session get header", func() {
 		notice, err := applyTranscriptWindow(detail, opts, 6)
 		Expect(err).NotTo(HaveOccurred())
 		item := SessionGetItem{
-			CaptainID: "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
-			Summary:   SessionRecord{Messages: 6},
-			Detail:    detail,
-			notice:    notice,
+			DetailAvailable: true,
+			CaptainID:       "d81f885d-3d60-47c0-8122-a8124f2fbdd1",
+			Summary:         SessionRecord{Messages: 6},
+			Detail:          detail,
+			notice:          notice,
 		}
 
 		Expect(item.Pretty().String()).To(ContainSubstring("2 not present in the recorded transcript"))
