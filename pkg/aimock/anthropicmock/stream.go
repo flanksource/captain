@@ -63,6 +63,9 @@ func streamMessage(ctx context.Context, w http.ResponseWriter, model string, res
 	if err := aimock.WaitForCancellation(ctx, respond.HoldOpenAfterContent); err != nil {
 		return err
 	}
+	if respond.EndBeforeMessageStop {
+		return nil
+	}
 
 	if err := sse.Event("message_delta", messageDeltaFrame{
 		Type:  "message_delta",
