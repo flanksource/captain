@@ -136,16 +136,31 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	out := make(chan ai.Event, 16)
 	go func() {
 		defer close(out)
-		if err := p.run(ctx, req, prepared, out); err != nil {
-			emit(ctx, out, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model, Raw: err})
+		var spent spend
+		if err := p.run(ctx, req, prepared, out, &spent); err != nil {
+			failure := ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model, Raw: err}
+			// A failure after a response was paid for keeps what it cost.
+			if spent.responses > 0 {
+				failure.Usage = &spent.usage
+				failure.CostUSD = ai.PriceUsage(ai.OpenAI, p.model, spent.usage, 0).Total()
+			}
+			emit(ctx, out, failure)
 		}
 	}()
 	return out, nil
 }
 
-func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState, out chan<- ai.Event) error {
-	var usage ai.Usage
+// spend is the usage of every response a run received.
+type spend struct {
+	usage     ai.Usage
+	responses int
+}
+
+func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState, out chan<- ai.Event, spent *spend) error {
 	usageComplete := true
+	for _, message := range requestTurns(req) {
+		p.emitTurn(ctx, out, message, nil)
+	}
 	if state.resume != nil {
 		outputs, err := p.resumeCalls(ctx, state.resume, state, out)
 		if err != nil {
@@ -160,11 +175,21 @@ func (p *Provider) run(ctx context.Context, req ai.Request, state *requestState,
 		if err != nil {
 			return err
 		}
+		spent.responses++
+		var replyUsage *ai.Usage
 		if response.JSON.Usage.Valid() {
-			usage = addUsage(usage, responseUsage(response.Usage))
+			used := responseUsage(response.Usage)
+			replyUsage = &used
+			spent.usage = addUsage(spent.usage, used)
 		} else {
 			usageComplete = false
 		}
+		reply, err := responseTurn(response.Output)
+		if err != nil {
+			return err
+		}
+		p.emitTurn(ctx, out, reply, replyUsage)
+		usage := spent.usage
 
 		output, err := responseOutputParams(response.Output)
 		if err != nil {

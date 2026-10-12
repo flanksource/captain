@@ -13,9 +13,12 @@ var (
 	ErrCLIExecutionFailed = errors.New("CLI execution failed")
 	ErrTimeout            = errors.New("operation timed out")
 	ErrSchemaValidation   = errors.New("schema validation failed")
-	ErrModelNotFound      = errors.New("model not found in pricing registry")
-	ErrModelUnavailable   = errors.New("model unavailable")
-	ErrNoAPIKey           = errors.New("API key not found")
+	// ErrOutputTruncated is a reply the model stopped at its output token limit:
+	// not a wrong answer but an unfinished one, so it is not repaired as one.
+	ErrOutputTruncated  = errors.New("output truncated at the token limit")
+	ErrModelNotFound    = errors.New("model not found in pricing registry")
+	ErrModelUnavailable = errors.New("model unavailable")
+	ErrNoAPIKey         = errors.New("API key not found")
 )
 
 // ClassifyError normalizes a provider failure into an ErrorClass. Structured

@@ -71,17 +71,17 @@ func TestMapUsage(t *testing.T) {
 func TestResponseToResponseRecordsNativeUsagePresence(t *testing.T) {
 	tests := []struct {
 		name      string
-		usage     *gkai.GenerationUsage
+		usage     *ai.Usage
 		wantUsage bool
 	}{
 		{name: "omitted", usage: nil, wantUsage: false},
-		{name: "present zero", usage: &gkai.GenerationUsage{}, wantUsage: true},
+		{name: "present zero", usage: &ai.Usage{}, wantUsage: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := observation.NewRecorder()
 			ctx := observation.ContextWithRecorder(context.Background(), recorder)
-			responseToResponse(ctx, &gkai.ModelResponse{Usage: test.usage}, ai.OpenAI, "gpt-5", time.Now())
+			responseToResponse(ctx, &gkai.ModelResponse{}, test.usage, ai.OpenAI, "gpt-5", time.Now())
 
 			usage := recorder.Snapshot().Usage
 			if (usage != nil) != test.wantUsage {

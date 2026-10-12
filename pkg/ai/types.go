@@ -53,6 +53,7 @@ const (
 	EventVerifyProgress = api.EventVerifyProgress
 	EventToolProgress   = api.EventToolProgress
 	EventTurnStart      = api.EventTurnStart
+	EventTurn           = api.EventTurn
 )
 
 // TurnStart is the Raw payload of an EventTurnStart.

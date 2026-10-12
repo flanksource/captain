@@ -169,6 +169,7 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 			}
 		}
 		emit := func(err error) { sendEvent(ctx, out, Event{Kind: EventError, Error: err.Error()}) }
+		var abandoned candidateSpend
 
 		for i := range f.candidates {
 			last := i == len(f.candidates)-1
@@ -204,24 +205,38 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 				return
 			}
 
-			committed, streamErr := f.pump(ctx, ch, out)
+			committed, held, failure := f.pump(ctx, ch, out, abandoned)
 			if committed {
 				return // the committed candidate's events (incl. any terminal error) are already forwarded
 			}
-			if streamErr == nil {
-				streamErr = fmt.Errorf("model %s produced no output", f.candidates[i].Name)
+			streamErr := fmt.Errorf("model %s produced no output", f.candidates[i].Name)
+			if failure != nil {
+				streamErr = errors.New(failure.Error)
 			}
 			record(streamErr)
 			eligible := IsFallbackEligible(streamErr)
 			if eligible && !last {
 				log.Warnf("fallback: model %s failed pre-output (%v); trying %s",
 					f.candidates[i].Name, streamErr, f.candidates[i+1].Name)
+				abandoned.add(failure)
 				continue
 			}
-			if eligible && firstErr != nil {
-				streamErr = firstErr
+			// This candidate ends the run, so what it exchanged and spent before
+			// failing is the run's own record, and its error event keeps the usage
+			// it carries.
+			for _, ev := range held {
+				if !sendEvent(ctx, out, ev) {
+					return
+				}
 			}
-			emit(streamErr)
+			final := Event{Kind: EventError, Error: streamErr.Error()}
+			if failure != nil {
+				final = *failure
+			}
+			if eligible && firstErr != nil {
+				final.Error = firstErr.Error()
+			}
+			sendEvent(ctx, out, abandoned.onto(final))
 			return
 		}
 		if firstErr != nil {
@@ -229,6 +244,39 @@ func (f *fallbackProvider) ExecuteStream(ctx context.Context, req Request) (<-ch
 		}
 	}()
 	return out, nil
+}
+
+// candidateSpend is what the candidates a stream abandoned cost. Each was paid
+// for before it failed, so the run's terminal event carries it on top of the
+// spend of the candidate that ended the run.
+type candidateSpend struct {
+	usage    Usage
+	hasUsage bool
+	cost     float64
+}
+
+func (s *candidateSpend) add(failure *Event) {
+	if failure == nil {
+		return
+	}
+	if failure.Usage != nil {
+		s.usage, s.hasUsage = s.usage.Add(*failure.Usage), true
+	}
+	s.cost += failure.CostUSD
+}
+
+// onto adds the abandoned spend to a terminal event and leaves any other as is.
+func (s candidateSpend) onto(ev Event) Event {
+	if (ev.Kind != EventResult && ev.Kind != EventError) || (!s.hasUsage && s.cost == 0) {
+		return ev
+	}
+	usage := s.usage
+	if ev.Usage != nil {
+		usage = usage.Add(*ev.Usage)
+	}
+	ev.Usage = &usage
+	ev.CostUSD += s.cost
+	return ev
 }
 
 func logFallbackTransition(log logger.Logger, candidates []api.Model, i int, err error) {
@@ -246,36 +294,38 @@ func logFallbackTransition(log logger.Logger, candidates []api.Model, i int, err
 // silent close) before any content leaves the stream uncommitted so the caller can
 // try the next candidate; the buffered leading events of a discarded candidate are
 // dropped, never forwarded. It returns whether the stream committed and, when it
-// did not, the failure that ended it (nil on a silent close).
-func (f *fallbackProvider) pump(ctx context.Context, ch <-chan Event, out chan<- Event) (bool, error) {
+// did not, the events it held back and the error event that ended it (nil on a
+// silent close), for the caller to forward if this candidate is the last. The
+// spend of candidates abandoned before this one is added to its terminal event.
+func (f *fallbackProvider) pump(ctx context.Context, ch <-chan Event, out chan<- Event, abandoned candidateSpend) (bool, []Event, *Event) {
 	var buffered []Event
 	committed := false
 	for ev := range ch {
 		if committed {
-			if !sendEvent(ctx, out, ev) {
-				return true, nil
+			if !sendEvent(ctx, out, abandoned.onto(ev)) {
+				return true, nil, nil
 			}
 			continue
 		}
 		switch {
 		case ev.Kind == EventError:
-			return false, errors.New(ev.Error)
+			return false, buffered, &ev
 		case isCommittingEvent(ev.Kind):
 			committed = true
 			for _, b := range buffered {
 				if !sendEvent(ctx, out, b) {
-					return true, nil
+					return true, nil, nil
 				}
 			}
 			buffered = nil
-			if !sendEvent(ctx, out, ev) {
-				return true, nil
+			if !sendEvent(ctx, out, abandoned.onto(ev)) {
+				return true, nil, nil
 			}
 		default:
 			buffered = append(buffered, ev)
 		}
 	}
-	return committed, nil
+	return committed, buffered, nil
 }
 
 // isCommittingEvent reports whether an event carries content the user has already

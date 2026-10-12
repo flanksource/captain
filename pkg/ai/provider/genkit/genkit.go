@@ -7,6 +7,7 @@ package genkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -100,16 +101,23 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	if p.provider == ai.Anthropic {
 		stream = func(ctx context.Context, _ *gkai.ModelResponseChunk) error { return ctx.Err() }
 	}
-	opts, err := p.correlatedGenerateOptions(req, stream, nil, nil)
+	turns := newTurnLog(p.provider, p.cfg.Model.Name, nil)
+	opts, err := p.correlatedGenerateOptions(req, stream, nil, nil, turns)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := gk.Generate(ctx, p.g, opts...)
 	if err != nil {
-		return nil, p.generationError(ctx, err)
+		err = p.generationError(ctx, resp, err)
+		// A rejected answer rides back with the error, so schema repair can show
+		// the model what it got wrong.
+		if rejected := rejectedAnswer(resp, err); rejected != "" {
+			return &ai.Response{Text: rejected, Model: p.cfg.Model.Name, Runtime: ai.RuntimeOf(p.provider, ai.ModeAPI)}, err
+		}
+		return nil, err
 	}
 
-	out := responseToResponse(ctx, resp, p.provider, p.cfg.Model.Name, start)
+	out := responseToResponse(ctx, resp, turns.total(), p.provider, p.cfg.Model.Name, start)
 	if resp.FinishReason == gkai.FinishReasonInterrupted {
 		out.ToolApproval, err = toolApprovalState(req, resp)
 		if err != nil {
@@ -119,6 +127,9 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 
 	if out.ToolApproval != nil {
 		return out, nil
+	}
+	if err := unfinishedReply(req, resp); err != nil {
+		return nil, err
 	}
 	structured, _, err := structuredResponseData(req, resp)
 	if err != nil {
@@ -139,9 +150,16 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	return out, nil
 }
 
-func (p *Provider) generationError(ctx context.Context, err error) error {
+// generationError classifies a failed generation. genkit hands the model's reply
+// back with the error when the model finished but its output did not parse, and
+// how the reply finished says more than the parse error does: an answer cut off
+// at max_tokens is unfinished, not wrong.
+func (p *Provider) generationError(ctx context.Context, resp *gkai.ModelResponse, err error) error {
 	if ctx.Err() != nil {
 		return fmt.Errorf("%w: %v", ai.ErrTimeout, ctx.Err())
+	}
+	if resp != nil && resp.FinishReason == gkai.FinishReasonLength {
+		return truncatedError(err)
 	}
 	// Genkit validates the model's constrained output against the request
 	// schema during generation. Preserve the details but classify the rejection
@@ -151,6 +169,38 @@ func (p *Provider) generationError(ctx context.Context, err error) error {
 		return fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
 	}
 	return fmt.Errorf("genkit %s generate: %w", p.provider.Name, err)
+}
+
+func truncatedError(cause error) error {
+	if cause == nil {
+		return fmt.Errorf("%w: the model reached max_tokens before finishing its answer", ai.ErrOutputTruncated)
+	}
+	return fmt.Errorf("%w: the model reached max_tokens before finishing its answer (%v)", ai.ErrOutputTruncated, cause)
+}
+
+// unfinishedReply refuses a reply that cannot hold a structured answer because
+// the model did not finish it: genkit passes such a reply through unparsed so
+// its finish reason is not masked by a schema error.
+func unfinishedReply(req ai.Request, resp *gkai.ModelResponse) error {
+	if !req.Prompt.HasSchema() {
+		return nil
+	}
+	switch resp.FinishReason {
+	case gkai.FinishReasonLength:
+		return truncatedError(nil)
+	case gkai.FinishReasonBlocked, gkai.FinishReasonFailed, gkai.FinishReasonAborted, gkai.FinishReasonOther:
+		return fmt.Errorf("model finished with %q before giving a structured answer: %s", resp.FinishReason, resp.FinishMessage)
+	default:
+		return nil
+	}
+}
+
+// rejectedAnswer is the reply genkit rejected as not matching the schema.
+func rejectedAnswer(resp *gkai.ModelResponse, err error) string {
+	if resp == nil || resp.Message == nil || !errors.Is(err, ai.ErrSchemaValidation) {
+		return ""
+	}
+	return resp.Message.Text()
 }
 
 func structuredResponseData(req ai.Request, resp *gkai.ModelResponse) (any, json.RawMessage, error) {
@@ -230,39 +280,45 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 		}
 	}
 
-	opts, err := p.correlatedGenerateOptions(req, cb, emit, correlation)
+	turns := newTurnLog(p.provider, p.cfg.Model.Name, emit)
+	opts, err := p.correlatedGenerateOptions(req, cb, emit, correlation, turns)
 	if err != nil {
 		return nil, err
 	}
 	go func() {
 		defer close(ch)
 		resp, err := gk.Generate(ctx, p.g, opts...)
-		if err != nil {
-			ch <- ai.Event{Kind: ai.EventError, Error: p.generationError(ctx, err).Error(), Model: p.cfg.Model.Name}
-			return
-		}
-		var usage *ai.Usage
-		if resp.Usage != nil {
-			mapped := mapUsage(resp.Usage, p.provider)
-			usage = &mapped
-		}
+		usage := turns.total()
 		costUSD := 0.0
 		if usage != nil {
 			costUSD = p.costUSD(*usage)
+		}
+		// Every failure keeps what the generation cost; a rejected answer rides
+		// along as Text for schema repair.
+		fail := func(err error) {
+			ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Text: rejectedAnswer(resp, err), Model: p.cfg.Model.Name, Usage: usage, CostUSD: costUSD}
+		}
+		if err != nil {
+			fail(p.generationError(ctx, resp, err))
+			return
 		}
 		var approval *api.ToolApprovalState
 		if resp.FinishReason == gkai.FinishReasonInterrupted {
 			approval, err = toolApprovalState(req, resp)
 			if err != nil {
-				ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.cfg.Model.Name}
+				fail(err)
 				return
 			}
 		}
 		var structured json.RawMessage
 		if approval == nil {
+			if err := unfinishedReply(req, resp); err != nil {
+				fail(err)
+				return
+			}
 			_, structured, err = structuredResponseData(req, resp)
 			if err != nil {
-				ch <- ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.cfg.Model.Name}
+				fail(err)
 				return
 			}
 		}
@@ -285,6 +341,7 @@ func (p *Provider) correlatedGenerateOptions(
 	stream gkai.ModelStreamCallback,
 	emit func(ai.Event),
 	correlation *toolEventCorrelation,
+	turns *turnLog,
 ) ([]gkai.GenerateOption, error) {
 	// Caller tools are gated by ToolPreferences and OnApproval; Permissions.Tools
 	// is a separate policy the API mode has no seam for, so it must not be
@@ -299,7 +356,7 @@ func (p *Provider) correlatedGenerateOptions(
 	if err := seedToolApprovalCorrelation(req.ToolApproval, correlation); err != nil {
 		return nil, err
 	}
-	return generateOptions(p, req, stream, emit)
+	return generateOptions(p, req, stream, emit, turns)
 }
 
 // pricingModelID is the OpenRouter pricing key for a provider+model. It uses the

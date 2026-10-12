@@ -65,8 +65,9 @@ var _ = Describe("Genkit buffered Anthropic", func() {
 		response, err := provider.Execute(ctx, bufferedAnthropicRequest(api.Prompt{
 			User: "Return the status.", SchemaJSON: json.RawMessage(`{"type":"object","properties":{"status":{"type":"string"}},"required":["status"]}`),
 		}))
-		Expect(response).To(BeNil())
 		Expect(err).To(MatchError(ContainSubstring(ai.ErrSchemaValidation.Error())))
+		Expect(response).NotTo(BeNil(), "the rejected answer comes back for schema repair")
+		Expect(response.Text).To(Equal(`{"status":7}`))
 	})
 
 	It("preserves provider errors", func(ctx SpecContext) {
@@ -114,6 +115,37 @@ var _ = Describe("Genkit buffered Anthropic", func() {
 		Expect(response.Text).To(Equal("Updated the record."))
 		Expect(runs).To(Equal(1))
 		Expect(server.Remaining()).To(BeEmpty())
+	})
+
+	It("sends a reflected $ref tool schema as a self-contained input_schema", func(ctx SpecContext) {
+		provider, server := newBufferedAnthropicProvider(`anthropic:
+  - respond: {text: Prepared.}
+`)
+		raw, err := api.SchemaJSON(&structuredStreamResult{})
+		Expect(err).NotTo(HaveOccurred())
+		var schema map[string]any
+		Expect(json.Unmarshal(raw, &schema)).To(Succeed())
+		Expect(schema).To(HaveKey("$ref"))
+		provider.cfg.Tools = []api.ToolDefinition{{
+			Name: "triage_prepare", DefaultPermission: api.ToolPolicyAllow, InputSchema: schema,
+			Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
+		}}
+
+		_, err = provider.Execute(ctx, bufferedAnthropicRequest(api.Prompt{User: "Prepare the proposal."}))
+
+		Expect(err).NotTo(HaveOccurred())
+		sentSchema := func(raw json.RawMessage) map[string]any {
+			var sent map[string]any
+			Expect(json.Unmarshal(raw, &sent)).To(Succeed())
+			return sent
+		}
+		Expect(server.Requests()).To(ContainElement(And(
+			HaveField("Path", "/v1/messages"),
+			HaveField("Request.ToolSchemas", HaveKeyWithValue("triage_prepare", WithTransform(sentSchema, And(
+				HaveKeyWithValue("type", "object"),
+				HaveKeyWithValue("properties", map[string]any{"status": map[string]any{"type": "string"}}),
+			)))),
+		)))
 	})
 
 	It("cancels an unfinished stream without returning partial text", func(ctx SpecContext) {
