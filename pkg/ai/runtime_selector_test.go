@@ -77,7 +77,7 @@ func TestResolveRendersTheDriverModelID(t *testing.T) {
 		{"agent:sonnet", "claude-sonnet-5-5"},
 		{"agent:sonnet-4", "claude-sonnet-4-6"},
 		{"agent:claude-sonnet-4-5", "claude-sonnet-4-6"},
-		{"agent:haiku", "claude-haiku-4-5"},
+		{"agent:haiku", "claude-haiku-5-5"},
 		{"agent:haiku-4", "claude-haiku-4-5"},
 		{"agent:haiku-4.5", "claude-haiku-4-5"},
 		{"cmux:openai/gpt-5.5", "gpt-5.5"},

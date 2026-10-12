@@ -1,7 +1,6 @@
 package genkit
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -46,13 +45,13 @@ func modelRef(provider *ai.ModelProvider, model string) (string, error) {
 // system prompt, user prompt, effort config, and (when streaming) the callback.
 // Structured-output options apply to buffered and streaming calls alike; the
 // streaming provider publishes only the validated final JSON.
-func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
+func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallback, emit func(ai.Event), turns *turnLog) ([]gkai.GenerateOption, error) {
 	if err := req.ValidateRequestMode(); err != nil {
 		return nil, err
 	}
 	opts := []gkai.GenerateOption{
 		gkai.WithModelName(p.modelRef),
-		gkai.WithUse(gkai.MiddlewareFunc(captureGenkitRequests)),
+		gkai.WithUse(gkai.MiddlewareFunc(turns.middleware)),
 	}
 	toolOptions, err := p.toolOptions(captools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy}, emit)
 	if err != nil {
@@ -139,24 +138,6 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 }
 
 type genkitToolRequestContextKey struct{}
-
-func captureGenkitRequests(context.Context) (*gkai.Hooks, error) {
-	return &gkai.Hooks{
-		WrapModel: func(ctx context.Context, params *gkai.ModelParams, next gkai.ModelNext) (*gkai.ModelResponse, error) {
-			response, err := next(ctx, params)
-			if response != nil {
-				response.Request = &gkai.ModelRequest{Messages: cloneCheckpointMessages(params.Request.Messages)}
-			}
-			return response, err
-		},
-		WrapTool: func(ctx context.Context, params *gkai.ToolParams, next gkai.ToolNext) (*gkai.MultipartToolResponse, error) {
-			if params == nil || params.Request == nil {
-				return nil, fmt.Errorf("genkit tool middleware received no provider request")
-			}
-			return next(context.WithValue(ctx, genkitToolRequestContextKey{}, params.Request), params)
-		},
-	}, nil
-}
 
 func promptParts(req ai.Request) ([]*gkai.Part, error) {
 	parts := make([]*gkai.Part, 0, len(req.Prompt.Attachments))

@@ -73,7 +73,9 @@ var _ = Describe("Genkit structured streaming", func() {
 
 		var got []ai.Event
 		for event := range events {
-			got = append(got, event)
+			if event.Kind != ai.EventTurn {
+				got = append(got, event)
+			}
 		}
 		Expect(got).To(HaveLen(1))
 		Expect(got[0].Kind).To(Equal(ai.EventError))

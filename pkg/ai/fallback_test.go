@@ -241,6 +241,47 @@ func TestFallback_Stream_AllEligibleFailuresReturnPrimaryError(t *testing.T) {
 	assert.NotContains(t, events[0].Error, "503 overloaded")
 }
 
+func TestFallback_Stream_FinalPreContentFailureKeepsItsTurnsAndUsage(t *testing.T) {
+	usage := &Usage{InputTokens: 30, OutputTokens: 7}
+	user := Event{Kind: EventTurn, Message: &api.Message{Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: "Find alpha."}}}}
+	reply := Event{Kind: EventTurn, Usage: usage, Message: &api.Message{Role: api.RoleAssistant, Parts: []api.Part{{Type: api.PartText, Text: `{"status":`}}}}
+	failure := Event{Kind: EventError, Error: "schema validation failed: data is not valid JSON", Usage: usage, CostUSD: 0.25, Model: "primary"}
+	primary := &fakeProv{model: "primary", streamEvents: []Event{user, reply, failure}}
+	fallback := &fakeProv{model: "fallback", streamEvents: []Event{{Kind: EventText, Text: "should-not-run"}}}
+	fp := newTestFallback([]string{"primary", "fallback"}, map[string]*fakeProv{"primary": primary, "fallback": fallback})
+
+	ch, err := fp.ExecuteStream(context.Background(), Request{})
+	require.NoError(t, err)
+
+	assert.Equal(t, []Event{user, reply, failure}, drain(ch), "a failure that ends the run must not drop the exchange or the spend that led to it")
+	assert.Equal(t, 0, fallback.streamCalls)
+}
+
+func TestFallback_Stream_CountsTheSpendOfAnAbandonedCandidate(t *testing.T) {
+	primary := &fakeProv{model: "primary", streamEvents: []Event{
+		{Kind: EventTurn, Message: &api.Message{Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: "hello"}}}},
+		{Kind: EventError, Error: "529 overloaded", Usage: &Usage{InputTokens: 100}, CostUSD: 0.5},
+	}}
+	fallback := &fakeProv{model: "fallback", streamEvents: []Event{
+		{Kind: EventText, Text: "hello"},
+		{Kind: EventResult, Success: true, Usage: &Usage{InputTokens: 20, OutputTokens: 5}, CostUSD: 0.1},
+	}}
+	fp := newTestFallback([]string{"primary", "fallback"}, map[string]*fakeProv{"primary": primary, "fallback": fallback})
+
+	ch, err := fp.ExecuteStream(context.Background(), Request{})
+	require.NoError(t, err)
+	results := []Event{}
+	for _, ev := range drain(ch) {
+		if ev.Kind == EventResult {
+			results = append(results, ev)
+		}
+	}
+
+	require.Len(t, results, 1)
+	assert.Equal(t, &Usage{InputTokens: 120, OutputTokens: 5}, results[0].Usage, "the abandoned primary's tokens were paid for")
+	assert.InDelta(t, 0.6, results[0].CostUSD, 1e-9)
+}
+
 func TestFallback_Stream_CommittedErrorSurfaces(t *testing.T) {
 	primary := &fakeProv{model: "primary", streamEvents: []Event{
 		{Kind: EventText, Text: "partial"},

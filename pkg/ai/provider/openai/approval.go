@@ -201,14 +201,17 @@ func (p *Provider) resumeCalls(ctx context.Context, resume *api.ToolApprovalResu
 		decisions[decision.ToolCallID] = decision
 	}
 	checkpointCalls := checkpointFunctionCalls(state.history)
-	outputs := make([]responses.ResponseInputItemUnionParam, 0, len(resume.State.Calls))
+	resolved := make([]resolvedCall, 0, len(resume.State.Calls))
 	for _, call := range resume.State.Calls {
 		native, ok := checkpointCalls[call.Request.ToolCallID]
 		if !ok || native.Name != call.Request.Tool || !equalJSON([]byte(native.Arguments), call.Request.Input) {
 			return nil, fmt.Errorf("OpenAI approval checkpoint does not match tool call %q", call.Request.ToolCallID)
 		}
 		if call.Result != nil {
-			outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.Request.ToolCallID, resultOutput(call.Result)))
+			resolved = append(resolved, resolvedCall{
+				wire:   responses.ResponseInputItemParamOfFunctionCallOutput(call.Request.ToolCallID, resultOutput(call.Result)),
+				result: call.Result,
+			})
 			continue
 		}
 		decision := decisions[call.Request.ToolCallID]
@@ -218,9 +221,12 @@ func (p *Provider) resumeCalls(ctx context.Context, resume *api.ToolApprovalResu
 			if reason == "" {
 				reason = "tool call denied"
 			}
-			outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.Request.ToolCallID, jsonText(map[string]any{"denied": true, "reason": reason})))
+			resolved = append(resolved, callResult(call.Request.ToolCallID, map[string]any{"denied": true, "reason": reason}))
 		case api.ToolApprovalRespond:
-			outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.Request.ToolCallID, resultOutput(decision.Result)))
+			resolved = append(resolved, resolvedCall{
+				wire:   responses.ResponseInputItemParamOfFunctionCallOutput(call.Request.ToolCallID, resultOutput(decision.Result)),
+				result: decision.Result,
+			})
 		case api.ToolApprovalApprove:
 			definition, ok := state.byName[call.Request.Tool]
 			if !ok {
@@ -246,8 +252,15 @@ func (p *Provider) resumeCalls(ctx context.Context, resume *api.ToolApprovalResu
 			} else if out != nil {
 				emit(ctx, out, ai.Event{Kind: ai.EventToolResult, Tool: call.Request.Tool, ToolCallID: call.Request.ToolCallID, Success: true, Text: toolOutputText(value), Model: p.model})
 			}
-			outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.Request.ToolCallID, modelOutput(value)))
+			resolved = append(resolved, callResult(call.Request.ToolCallID, value))
 		}
+	}
+	outputs := make([]responses.ResponseInputItemUnionParam, 0, len(resolved))
+	for _, call := range resolved {
+		outputs = append(outputs, call.wire)
+	}
+	if out != nil {
+		p.emitTurn(ctx, out, toolTurn(resolved), nil)
 	}
 	return outputs, nil
 }

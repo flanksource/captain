@@ -100,6 +100,7 @@ func (p *Provider) resolveCalls(
 	for _, call := range resolved {
 		outputs = append(outputs, call.wire)
 	}
+	p.emitTurn(ctx, out, toolTurn(resolved), nil)
 	return outputs, nil, nil
 }
 

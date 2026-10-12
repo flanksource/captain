@@ -171,6 +171,12 @@ func runOneIteration(ctx context.Context, opts LoopOptions, req Request, iter *L
 				if iter.Err == nil {
 					iter.Err = fmt.Errorf("%s", ev.Error)
 				}
+				// A generation can fail after the model has been paid for — an API
+				// tool loop whose final output is rejected — and its spend still
+				// counts against the run's budget.
+				if ev.Usage != nil {
+					iter.Usage, iter.CostUSD = *ev.Usage, ev.CostUSD
+				}
 			}
 		case <-ctx.Done():
 			if iter.Err == nil {
