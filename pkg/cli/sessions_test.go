@@ -236,7 +236,7 @@ func TestRunSessionGetReturnsAllProviderPrefixMatches(t *testing.T) {
 				t.Fatalf("admission root messages should come from the transcript, got %q: %+v", got, item)
 			}
 		default:
-			if item.DetailAvailable || item.Detail != nil {
+			if item.DetailAvailable || item.Detail == nil || len(item.Detail.Messages) != 0 || item.Detail.ID != item.CaptainID {
 				t.Fatalf("provider row without its own transcript should stay metadata-only: %+v", item)
 			}
 		}

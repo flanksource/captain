@@ -37,7 +37,9 @@ func applyTranscriptWindow(detail *session.Session, opts SessionGetOptions, tota
 	notice.filterExcluded = before - len(detail.Messages)
 
 	before = len(detail.Messages)
-	pageSessionTranscript(detail, opts)
+	if err := pageSessionTranscript(detail, opts); err != nil {
+		return notice, err
+	}
 	notice.windowHidden = before - len(detail.Messages)
 	return notice, nil
 }
@@ -92,6 +94,9 @@ func transcriptFilterFlags(opts SessionGetOptions) string {
 }
 
 func transcriptWindowFlags(opts SessionGetOptions) string {
+	if opts.Before != "" {
+		return fmt.Sprintf("--before %s --limit %d", quoteFlagValue(opts.Before), opts.Limit)
+	}
 	if opts.Tail > 0 {
 		return fmt.Sprintf("--tail %d", opts.Tail)
 	}
