@@ -167,6 +167,32 @@ var _ = Describe("Genkit buffered Anthropic", func() {
 		Eventually(server.Requests).Should(ContainElement(And(HaveField("Path", "/v1/messages"), HaveField("Cancelled", true))))
 	}, SpecTimeout(10*time.Second))
 
+	It("fails a stream that ends before message_stop instead of returning a nil response", func(ctx SpecContext) {
+		provider, _ := newBufferedAnthropicProvider(`anthropic:
+  - respond: {text: Truncated response., end_before_message_stop: true}
+`)
+		response, err := provider.Execute(ctx, bufferedAnthropicRequest(api.Prompt{User: "Return a response."}))
+		Expect(response).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("anthropic stream ended without a message_stop event")))
+	})
+
+	It("ends the generation's request context once Execute returns", func(ctx SpecContext) {
+		genkit := gk.Init(ctx)
+		modelRef := "test/request-lifetime"
+		var requestCtx context.Context
+		gk.DefineModel(genkit, modelRef, &gkai.ModelOptions{},
+			func(modelCtx context.Context, _ *gkai.ModelRequest, _ gkai.ModelStreamCallback) (*gkai.ModelResponse, error) {
+				requestCtx = modelCtx
+				return &gkai.ModelResponse{Message: gkai.NewModelTextMessage("complete"), FinishReason: gkai.FinishReasonStop}, nil
+			})
+		provider := &Provider{cfg: ai.Config{Model: api.Model{Name: bufferedAnthropicModel}}, provider: ai.Anthropic, g: genkit, modelRef: modelRef}
+		_, err := provider.Execute(ctx, bufferedAnthropicRequest(api.Prompt{User: "Return a response."}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(requestCtx).NotTo(BeNil())
+		Expect(requestCtx.Err()).To(MatchError(context.Canceled), "an unclosed provider stream is released by ending its request context")
+		Expect(ctx.Err()).NotTo(HaveOccurred())
+	})
+
 	DescribeTable("selects transport without changing the token budget", func(ctx SpecContext, providerType *ai.ModelProvider, streaming bool) {
 		genkit := gk.Init(ctx)
 		modelRef := "test/buffered-transport"

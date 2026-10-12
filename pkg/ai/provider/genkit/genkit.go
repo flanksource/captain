@@ -106,7 +106,7 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 	if err != nil {
 		return nil, err
 	}
-	resp, err := gk.Generate(ctx, p.g, opts...)
+	resp, err := p.generate(ctx, opts)
 	if err != nil {
 		err = p.generationError(ctx, resp, err)
 		// A rejected answer rides back with the error, so schema repair can show
@@ -287,7 +287,7 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	}
 	go func() {
 		defer close(ch)
-		resp, err := gk.Generate(ctx, p.g, opts...)
+		resp, err := p.generate(ctx, opts)
 		usage := turns.total()
 		costUSD := 0.0
 		if usage != nil {
@@ -334,6 +334,17 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	}()
 
 	return ch, nil
+}
+
+// generate runs one generation on a context that ends with the call. Genkit's
+// Anthropic plugin never closes the stream NewStreaming opens and returns at
+// message_stop before the body reaches EOF, so ending the request context is
+// what releases the response body and its connection. Callers keep the
+// outer ctx to classify errors, which this cancellation must not affect.
+func (p *Provider) generate(ctx context.Context, opts []gkai.GenerateOption) (*gkai.ModelResponse, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	return gk.Generate(ctx, p.g, opts...)
 }
 
 func (p *Provider) correlatedGenerateOptions(

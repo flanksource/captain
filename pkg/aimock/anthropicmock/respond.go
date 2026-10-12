@@ -26,6 +26,9 @@ type Respond struct {
 	StopReason           string `json:"stop_reason,omitempty" yaml:"stop_reason,omitempty"`
 	Usage                Usage  `json:"usage,omitempty" yaml:"usage,omitempty"`
 	HoldOpenAfterContent bool   `json:"hold_open_after_content,omitempty" yaml:"hold_open_after_content,omitempty"`
+	// EndBeforeMessageStop closes the body cleanly after the content blocks,
+	// without message_delta or message_stop — a truncated stream.
+	EndBeforeMessageStop bool `json:"end_before_message_stop,omitempty" yaml:"end_before_message_stop,omitempty"`
 
 	// Error, when set, makes this rule return an API error instead of a reply —
 	// for exercising the retry and error-mapping paths.
