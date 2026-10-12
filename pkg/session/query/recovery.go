@@ -93,17 +93,17 @@ func needsProviderHistory(overview database.SessionOverview, turns []database.Se
 }
 
 func providerHistorySource(overview database.SessionOverview, transcript *database.Session) string {
-	if transcript != nil && (transcript.Source == "claude" || transcript.Source == "codex") {
+	if transcript != nil && api.IsTranscriptSource(transcript.Source) {
 		return transcript.Source
 	}
 	// Which transcript a run leaves is a property of the provider family and of
 	// running locally at all — every local Claude mode writes a `claude`
-	// transcript, and the API mode writes none.
+	// transcript, and an API-mode run the one Captain writes for it.
 	if overview.ModelProvider == nil || overview.ModelMode == nil {
 		return ""
 	}
 	if api.RuntimeMode(*overview.ModelMode) == api.ModeAPI {
-		return ""
+		return api.TranscriptSourceAPI
 	}
 	provider, known := api.ProviderByName(*overview.ModelProvider)
 	if !known || (provider != api.Anthropic && provider != api.OpenAI) {
@@ -121,6 +121,8 @@ func locateProviderHistory(source, providerID string, transcript *database.Sessi
 	switch source {
 	case "claude":
 		return history.FindSessionFile(providerID)
+	case api.TranscriptSourceAPI:
+		return history.APITranscriptPath(providerID)
 	case "codex":
 		return findCodexHistory(providerID)
 	case "":
@@ -159,14 +161,14 @@ func findCodexHistory(providerID string) (string, error) {
 }
 
 func parseProviderHistory(source, path, providerID string) (*session.Session, error) {
-	switch source {
+	switch api.TranscriptFormat(source) {
 	case "claude":
 		recovered, info, err := session.BuildTranscriptFile(path)
 		if err != nil {
 			return nil, err
 		}
 		if info.RootSessionID != providerID {
-			return nil, fmt.Errorf("claude transcript identifies %s", info.RootSessionID)
+			return nil, fmt.Errorf("%s transcript identifies %s", source, info.RootSessionID)
 		}
 		return recovered, nil
 	case "codex":

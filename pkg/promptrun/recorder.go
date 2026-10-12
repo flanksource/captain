@@ -9,7 +9,10 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/ai/history"
+	captools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/monitor"
 	"github.com/flanksource/commons/logger"
@@ -33,11 +36,19 @@ type recorder struct {
 	model       api.Model
 	verifyOnly  bool
 	knownSessID string
+	tools       []string
+	offered     []offeredTool
+	cwd         string
 
 	mu            sync.Mutex
 	boundSession  string
 	generateTurn  int
 	firstWriteErr error
+	// apiLog is the transcript Captain writes for an API-mode run, whose
+	// provider keeps none; apiFailed records that it already holds the error
+	// that ended the run.
+	apiLog    *claude.SyntheticTranscript
+	apiFailed bool
 }
 
 func newRecorder(ctx context.Context, rec *Recording, run *database.PromptRun) *recorder {
@@ -54,6 +65,45 @@ func (r *recorder) prepare(runtime api.Runtime, model api.Model, spec api.Spec, 
 	r.knownSessID = strings.TrimSpace(firstNonEmpty(providerSessionID, spec.SessionID))
 }
 
+// offerTools records the caller tools the run offers its model, resolved the way
+// every provider resolves them: denied tools omitted, the rest in order with
+// their effective permission and the input schema the provider is sent. A
+// provider that rejects a tool names it by position, and this is the list that
+// position indexes.
+func (r *recorder) offerTools(tools []api.ToolDefinition, spec api.Spec) error {
+	if len(tools) == 0 {
+		return nil
+	}
+	resolved, err := captools.ResolveDefinitions(tools, captools.ResolveOptions{Preferences: spec.ToolPreferences, Policy: spec.ToolPolicy})
+	if err != nil {
+		return fmt.Errorf("promptrun: resolve caller tools: %w", err)
+	}
+	for _, tool := range resolved {
+		r.tools = append(r.tools, tool.Name)
+		r.offered = append(r.offered, offeredTool{Name: tool.Name, Permission: string(tool.DefaultPermission), InputSchema: tool.InputSchema})
+	}
+	return nil
+}
+
+// offeredTool is one caller tool as the run's metadata records it.
+type offeredTool struct {
+	Name        string         `json:"name"`
+	Permission  string         `json:"permission"`
+	InputSchema map[string]any `json:"inputSchema"`
+}
+
+// transcribeAPIRun has the recorder write the transcript of an API-mode run it
+// observes. Its provider names no session, so the transcript is keyed by an id
+// derived from the run: it exists before the first request, which is the one a
+// run rejected outright never gets past. Only a run whose events the recorder
+// sees can be transcribed.
+func (r *recorder) transcribeAPIRun() {
+	if r.knownSessID != "" || r.verifyOnly || TranscriptSource(r.runtime) != api.TranscriptSourceAPI {
+		return
+	}
+	r.knownSessID = uuid.NewSHA1(r.runID, []byte(api.TranscriptSourceAPI)).String()
+}
+
 // start marks the run running with the spec that actually runs — the one setup
 // already transformed — and the runtime it resolved to, then binds a provider
 // session known up front.
@@ -67,7 +117,11 @@ func (r *recorder) start(spec *api.Spec) error {
 	run, err := r.updateRun(func(run *database.PromptRun) (database.UpdatePromptRunInput, bool) {
 		state, phase := database.PromptRunStateRunning, r.activePhase()
 		runtime := r.resolvedRuntime(run.Runtime, spec)
-		return database.UpdatePromptRunInput{State: &state, Phase: &phase, Runtime: &runtime, RenderedSpec: &rendered}, !finishedRun(run.State)
+		update := database.UpdatePromptRunInput{State: &state, Phase: &phase, Runtime: &runtime, RenderedSpec: &rendered}
+		if len(r.offered) > 0 {
+			update.Metadata = &map[string]any{"callerTools": r.offered}
+		}
+		return update, !finishedRun(run.State)
 	})
 	if err != nil {
 		return fmt.Errorf("promptrun: record start: %w", err)
@@ -75,6 +129,7 @@ func (r *recorder) start(spec *api.Spec) error {
 	if err := r.recordCWD(run.SessionID, spec.Cwd()); err != nil {
 		return err
 	}
+	r.cwd = spec.Cwd()
 	return r.bindTranscript(r.knownSessID)
 }
 
@@ -144,7 +199,66 @@ func (r *recorder) bindTranscript(providerSessionID string) error {
 	if transcript == nil {
 		return nil
 	}
+	if err := r.openAPITranscript(transcript); err != nil {
+		return err
+	}
 	return registerTranscript(r.ctx, r.db, transcript)
+}
+
+// openAPITranscript starts the transcript of an API-mode run before it is
+// registered, since registration resolves the file by its id.
+func (r *recorder) openAPITranscript(transcript *database.Session) error {
+	if transcript.Source != api.TranscriptSourceAPI || r.apiLog != nil {
+		return nil
+	}
+	path, err := history.APITranscriptPath(transcript.ProviderSessionID)
+	if err != nil {
+		return fmt.Errorf("promptrun: API transcript of session %s: %w", transcript.ID, err)
+	}
+	log, err := claude.CreateSyntheticTranscript(path, transcript.ProviderSessionID, r.cwd)
+	if err != nil {
+		return fmt.Errorf("promptrun: %w", err)
+	}
+	if err := log.Start(r.model.Name, r.tools); err != nil {
+		return errors.Join(fmt.Errorf("promptrun: %w", err), log.Close())
+	}
+	r.apiLog = log
+	return nil
+}
+
+// writeAPITranscript appends what an API-mode run exchanged with its model.
+func (r *recorder) writeAPITranscript(ev ai.Event) {
+	if r.apiLog == nil {
+		return
+	}
+	model := firstNonEmpty(ev.Model, r.model.Name)
+	switch ev.Kind {
+	case ai.EventTurn:
+		if ev.Message == nil {
+			r.keep(fmt.Errorf("promptrun: turn event of run %s carries no message", r.runID))
+			return
+		}
+		r.keep(r.apiLog.Append(model, *ev.Message, ev.Usage))
+	case ai.EventError:
+		r.apiFailed = true
+		r.keep(r.apiLog.Fail(model, ev.Error))
+	}
+}
+
+// closeAPITranscript ends an API-mode run's transcript. A run that failed
+// without its stream saying why — a request refused before it was sent — has
+// its error written here, so the transcript never ends without its cause.
+func (r *recorder) closeAPITranscript(outcome Outcome) error {
+	if r.apiLog == nil {
+		return nil
+	}
+	var err error
+	if !r.apiFailed && outcome.Error != "" {
+		err = r.apiLog.Fail(r.model.Name, outcome.Error)
+	}
+	err = errors.Join(err, r.apiLog.Close())
+	r.apiLog = nil
+	return err
 }
 
 func (r *recorder) bindProviderSession(sessionID uuid.UUID, providerSessionID string) (*database.Session, error) {
@@ -211,9 +325,12 @@ func (r *recorder) createTranscriptSession(admission *database.Session, source s
 }
 
 // TranscriptSource is the transcript a runtime leaves behind: every local mode
-// of a provider family whose agent writes a log writes that agent's, and the
-// API mode writes none.
+// of a provider family whose agent writes a log writes that agent's, and an
+// API-mode run the one Captain writes for it.
 func TranscriptSource(runtime api.Runtime) string {
+	if runtime.Mode == api.ModeAPI {
+		return api.TranscriptSourceAPI
+	}
 	if runtime.Mode.Kind() != "cli" {
 		return ""
 	}
@@ -248,6 +365,7 @@ func (r *recorder) observe(iter int, ev ai.Event) {
 	if ev.Kind == ai.EventSystem && ev.SessionID != "" {
 		r.keep(r.bindTranscript(ev.SessionID))
 	}
+	r.writeAPITranscript(ev)
 	if iter <= r.generateTurn || !generating(ev.Kind) {
 		return
 	}

@@ -269,6 +269,8 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	switch source {
 	case "claude":
 		input, err = ing.claudeIngestInput(ctx, path)
+	case api.TranscriptSourceAPI:
+		input, err = apiIngestInput(path)
 	case "codex":
 		var ignored bool
 		input, codex, ignored, err = ing.incrementalCodexIngestInput(codexFile, path, info)
@@ -377,6 +379,29 @@ func (ing *ingestor) claudeIngestInput(ctx context.Context, path string) (databa
 		input.Session.Path = path
 	} else {
 		input.Session.ProviderSessionID = info.RootSessionID
+	}
+	return input, nil
+}
+
+// apiIngestInput reads the transcript Captain wrote for an API-mode run. It is
+// in Claude Code's format, so the Claude parser reads it; unlike an agent's log
+// it does say which mode ran, and each call's provider follows from its model.
+func apiIngestInput(path string) (database.IngestTranscriptInput, error) {
+	s, info, err := session.BuildTranscriptFile(path)
+	if err != nil {
+		return database.IngestTranscriptInput{}, err
+	}
+	input := unifiedIngestInput(s, api.TranscriptSourceAPI, transcriptSequence)
+	input.Session.ProviderSessionID = info.RootSessionID
+	input.Source.SourceIdentity = info.RootSessionID
+	for i := range input.Turns {
+		call := input.Turns[i].Call
+		call.Mode = string(api.ModeAPI)
+		provider, err := api.ProviderFor(call.Model)
+		if err != nil {
+			return database.IngestTranscriptInput{}, fmt.Errorf("api transcript %s turn %d: %w", path, input.Turns[i].Index, err)
+		}
+		call.Provider = provider.Name
 	}
 	return input, nil
 }

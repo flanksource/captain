@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/session"
 )
@@ -26,6 +27,12 @@ func Parse(candidate Candidate) (*session.Session, error) {
 	switch candidate.Source {
 	case "claude":
 		return parseClaude(candidate)
+	case api.TranscriptSourceAPI:
+		parsed, _, err := session.BuildTranscriptFile(candidate.Path)
+		if err != nil {
+			return nil, fmt.Errorf("api session %q: %w", candidate.Path, err)
+		}
+		return parsed, nil
 	case "codex":
 		parsed, err := session.BuildCodexFile(candidate.Path)
 		if err != nil {

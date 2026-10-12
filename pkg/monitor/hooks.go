@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 )
@@ -194,6 +195,8 @@ func hookTranscriptRoot(provider string) (string, error) {
 			return "", err
 		}
 		return filepath.Join(home, ".codex", "sessions"), nil
+	case api.TranscriptSourceAPI:
+		return history.APITranscriptRoot()
 	default:
 		return "", fmt.Errorf("unknown hook provider %q", provider)
 	}

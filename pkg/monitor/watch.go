@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
@@ -227,6 +228,15 @@ func findTranscriptPath(source, providerSessionID string) (string, error) {
 		return path, nil
 	case "codex":
 		return findCodexRollout(providerSessionID)
+	case api.TranscriptSourceAPI:
+		path, err := history.APITranscriptPath(providerSessionID)
+		if err != nil {
+			return "", err
+		}
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("%w: api session %s: %w", ErrTranscriptNotFound, providerSessionID, err)
+		}
+		return path, nil
 	default:
 		return "", fmt.Errorf("resolve transcript: unknown transcript source %q", source)
 	}

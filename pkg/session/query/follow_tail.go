@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/commons/logger"
@@ -30,7 +31,7 @@ type transcriptTail struct {
 }
 
 func startTranscriptTail(path, source string) (*transcriptTail, error) {
-	if source != "claude" && source != "codex" {
+	if !api.IsTranscriptSource(source) {
 		return nil, fmt.Errorf("cannot tail a %q transcript", source)
 	}
 	watcher, err := fsnotify.NewWatcher()
@@ -159,7 +160,7 @@ func (t *transcriptTail) messages() ([]session.Message, error) {
 	}
 	var parsed *session.Session
 	var err error
-	switch t.source {
+	switch api.TranscriptFormat(t.source) {
 	case "claude":
 		parsed, err = buildClaudeTail(t.path)
 	case "codex":

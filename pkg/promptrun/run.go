@@ -196,6 +196,10 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 		return Hooks(ctx, *in, provider)
 	}
 	rec.prepare(executingRuntime(provider, model), model, in.Resolved.Spec, in.Config.SessionID)
+	if err := rec.offerTools(in.Config.Tools, in.Resolved.Spec); err != nil {
+		return nil, err
+	}
+	rec.transcribeAPIRun()
 	callerProgress := in.Verify.Progress
 	in.Verify.Progress = func(report api.VerifyReport) {
 		rec.progress(report)

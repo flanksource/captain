@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -403,7 +404,7 @@ func (db *DB) validateExecutionSession(ctx context.Context, admission *Session, 
 		return fmt.Errorf("%w: execution session %s belongs to root %s, not %s",
 			ErrPromptRunConflict, execution.ID, sessionAggregateRoot(execution), sessionAggregateRoot(admission))
 	}
-	if execution.Source != "claude" && execution.Source != "codex" {
+	if !api.IsTranscriptSource(execution.Source) {
 		return fmt.Errorf("%w: execution session %s has unsupported source %q", ErrPromptRunConflict, execution.ID, execution.Source)
 	}
 	if strings.TrimSpace(admission.ProviderSessionID) == "" || admission.ProviderSessionID != execution.ProviderSessionID {
