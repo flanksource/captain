@@ -144,6 +144,21 @@ var _ = Describe("Claude Haiku 5.5", func() {
 		Expect(previous.Preferred).To(BeFalse())
 	})
 
+	DescribeTable("resolves the superseded Haiku 4 line to its alias, not its pinned snapshot", func(token string) {
+		resolved, ok := Anthropic.ResolveExact(ModeAgent, token)
+		Expect(ok).To(BeTrue())
+		Expect(resolved).To(Equal("claude-haiku-4-5"))
+	},
+		Entry("major version", "haiku-4"),
+		Entry("dotted version", "haiku-4.5"),
+	)
+
+	It("still resolves the pinned snapshot by its own id", func() {
+		resolved, ok := Anthropic.ResolveExact(ModeAgent, "claude-haiku-4-5-20251001")
+		Expect(ok).To(BeTrue())
+		Expect(resolved).To(Equal("claude-haiku-4-5-20251001"))
+	})
+
 	It("uses adaptive thinking and omits unsupported temperature", func() {
 		temperature := 0.7
 		Expect(Anthropic.GenerationConfig(ModeAPI, model, EffortMedium, 4096, &temperature)).To(Equal(map[string]any{
