@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/database"
@@ -15,6 +16,11 @@ type FollowOptions struct {
 	// Replay emits every message the session already holds before following.
 	// Without it only messages that appear or change afterwards are emitted.
 	Replay bool
+	// After resumes a reader that already holds the transcript up to and
+	// including this message id: the first emission skips it and every message
+	// before it, so only what came later is replayed. A cursor no message in
+	// the thread carries fails Follow with database.ErrInvalidSession.
+	After string
 }
 
 // FollowState is the session's lifecycle position plus a fingerprint of the
@@ -67,7 +73,7 @@ func Follow(ctx context.Context, db *database.DB, id string, opts FollowOptions)
 		return nil, err
 	}
 	f := &follower{
-		db: db, identity: identity, replay: opts.Replay,
+		db: db, identity: identity, replay: opts.Replay, after: strings.TrimSpace(opts.After),
 		seen: map[string]string{}, owners: map[string]database.SessionOverview{},
 	}
 	thread, err := f.resolve(ctx)
@@ -78,8 +84,16 @@ func Follow(ctx context.Context, db *database.DB, id string, opts FollowOptions)
 	if err != nil {
 		return nil, err
 	}
+	// The first read runs here so an invalid request (an unknown after cursor)
+	// fails the call instead of arriving as the stream's first error event.
+	first, terminal, err := f.cycle(ctx, sub)
+	if err != nil {
+		sub.close()
+		f.stopTail()
+		return nil, err
+	}
 	events := make(chan FollowEvent)
-	go f.run(ctx, sub, events)
+	go f.run(ctx, sub, events, first, terminal)
 	return events, nil
 }
 
@@ -87,6 +101,7 @@ type follower struct {
 	db       *database.DB
 	identity string
 	replay   bool
+	after    string
 	primed   bool
 	seen     map[string]string
 	owners   map[string]database.SessionOverview
@@ -94,12 +109,12 @@ type follower struct {
 	tail     *transcriptTail
 }
 
-func (f *follower) run(ctx context.Context, sub *sessionSubscription, events chan<- FollowEvent) {
+func (f *follower) run(ctx context.Context, sub *sessionSubscription, events chan<- FollowEvent, pending []FollowEvent, terminal bool) {
 	defer close(events)
 	defer f.stopTail()
 	defer sub.close()
+	var err error
 	for {
-		pending, terminal, err := f.cycle(ctx, sub)
 		if err != nil {
 			pending = append(pending, FollowEvent{Err: err})
 		}
@@ -126,6 +141,7 @@ func (f *follower) run(ctx context.Context, sub *sessionSubscription, events cha
 			f.emitFinal(ctx, events, err)
 			return
 		}
+		pending, terminal, err = f.cycle(ctx, sub)
 	}
 }
 
@@ -177,6 +193,16 @@ func (f *follower) cycle(ctx context.Context, sub *sessionSubscription) ([]Follo
 // emitted under the same id. The first read only primes the fingerprints when
 // Replay is off.
 func (f *follower) changedMessages(messages []session.Message) ([]FollowEvent, error) {
+	// Before the first emission, the messages up to the After cursor are
+	// already held by the reader: they are fingerprinted, never replayed.
+	held := -1
+	if !f.primed && f.after != "" {
+		held = slices.IndexFunc(messages, func(message session.Message) bool { return message.ID == f.after })
+		if held == -1 {
+			return nil, fmt.Errorf("%w: follow Captain session %s after %q: no message %q in the session",
+				database.ErrInvalidSession, f.identity, f.after, f.after)
+		}
+	}
 	var pending []FollowEvent
 	for i := range messages {
 		if messages[i].ID == "" {
@@ -191,7 +217,7 @@ func (f *follower) changedMessages(messages []session.Message) ([]FollowEvent, e
 			continue
 		}
 		f.seen[messages[i].ID] = string(fingerprint)
-		if f.primed || f.replay {
+		if f.primed || (f.replay && i > held) {
 			pending = append(pending, FollowEvent{Message: &messages[i]})
 		}
 	}

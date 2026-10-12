@@ -90,12 +90,13 @@ type SessionListFilter struct {
 	// ExcludeSubagents drops "agent" children (subagents) and keeps roots and
 	// "transcript" children — the agent session a run binds under its
 	// admission row.
-	ExcludeSubagents bool
-	LiveOnly         bool
-	ActivityFrom     *time.Time
-	ActivityBefore   *time.Time
-	Limit            int
-	Cursor           string
+	ExcludeSubagents     bool
+	ExcludeInactiveEmpty bool
+	LiveOnly             bool
+	ActivityFrom         *time.Time
+	ActivityBefore       *time.Time
+	Limit                int
+	Cursor               string
 }
 
 type SessionListPage struct {
@@ -132,6 +133,7 @@ func (db *DB) ListSessionSummaries(ctx context.Context, filter SessionListFilter
 		sql.Named("query", strings.TrimSpace(filter.Query)),
 		sql.Named("roots_only", filter.RootsOnly),
 		sql.Named("exclude_subagents", filter.ExcludeSubagents),
+		sql.Named("exclude_inactive_empty", filter.ExcludeInactiveEmpty),
 		sql.Named("live_only", filter.LiveOnly),
 		sql.Named("activity_from", filter.ActivityFrom),
 		sql.Named("activity_before", filter.ActivityBefore),
@@ -246,6 +248,13 @@ WITH latest_call AS MATERIALIZED (
     AND (NOT @roots_only OR s.parent_session_id IS NULL)
     AND (NOT @exclude_subagents OR s.parent_relation IS DISTINCT FROM 'agent')
     AND (NOT @live_only OR ap.session_id IS NOT NULL)
+    AND (NOT @exclude_inactive_empty OR
+      ap.session_id IS NOT NULL OR s.activity_state IN ('ask', 'approval') OR
+      NULLIF(btrim(s.path), '') IS NOT NULL OR NULLIF(btrim(s.initial_prompt), '') IS NOT NULL OR
+      EXISTS (SELECT 1 FROM captain_session_sources src WHERE src.session_id = s.id AND NULLIF(btrim(src.path), '') IS NOT NULL) OR
+      EXISTS (SELECT 1 FROM captain_messages m WHERE m.session_id = s.id) OR
+      EXISTS (SELECT 1 FROM captain_prompt_runs pr WHERE pr.session_id = s.id) OR
+      EXISTS (SELECT 1 FROM captain_prompt_runs pr WHERE pr.execution_session_id = s.id))
     AND (CAST(@activity_from AS timestamptz) IS NULL OR
       COALESCE(s.last_activity_at, s.started_at, s.created_at) >= CAST(@activity_from AS timestamptz))
     AND (CAST(@activity_before AS timestamptz) IS NULL OR
