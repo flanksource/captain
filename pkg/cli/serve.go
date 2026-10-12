@@ -218,10 +218,10 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.Handle("GET /api/captain/prompt/runs/{runId}/stream", handlePromptRunStream(promptRuns))
 	mux.Handle("GET /api/captain/prompt/runs/{runId}", handlePromptRunSnapshot(promptRuns))
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/message", handlePromptRunMessage(promptChats))
-	mux.Handle("POST /api/captain/prompt/runs/{runId}/interrupt", handlePromptRunInterrupt(promptChats))
+	mux.Handle("POST /api/captain/prompt/runs/{runId}/interrupt", handlePromptRunControl(promptChats, interruptChat))
 	mux.Handle("POST /api/captain/prompt/runs/{runId}/stop", handlePromptRunStop(promptRuns, promptChats))
-	mux.Handle("POST /api/captain/prompt/runs/{runId}/permission-mode", handlePromptRunPermissionMode(promptChats))
-	registerSessionRoutes(mux, promptChats)
+	mux.Handle("POST /api/captain/prompt/runs/{runId}/permission-mode", handlePromptRunControl(promptChats, switchChatPermissionMode))
+	mux.Handle("/api/captain/sessions/", http.StripPrefix("/api/captain/sessions", SessionHandler()))
 	chatHandler := chat.Handler()
 	mux.Handle("/api/chat", chatHandler)
 	mux.Handle("/api/chat/", chatHandler)
@@ -324,8 +324,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 		log.Infof("Read-only database contexts: %s", strings.Join(databaseContextNames(contexts[1:]), ", "))
 	}
 
-	go prunePromptRuns(ctx, promptRuns)
-	defer promptChats.stopAll()
+	stopSessionHost := StartSessionHost(ctx)
+	defer stopSessionHost()
 
 	if err := startCredentialPublisher(ctx, stdout); err != nil {
 		return err

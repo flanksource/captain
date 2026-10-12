@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/rpc"
+	"github.com/flanksource/clicky/task"
+	flanksourceContext "github.com/flanksource/commons/context"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -63,6 +66,24 @@ var _ = Describe("prompt chat lifecycle", func() {
 		Expect(chat.state.DiscardedMessageIDs).To(Equal([]string{"queued-1"}))
 	})
 
+	It("runs as a background task so a host's drain never waits on an idle chat", func() {
+		cwd := GinkgoT().TempDir()
+		rendered := claudeAgentRender("")
+		rendered.Input.SetCwd(cwd)
+		// A missing attachment ends the run before any provider is built.
+		rendered.Input.Prompt.Attachments = []api.AttachmentRef{{Path: filepath.Join(cwd, "missing.png")}}
+		chat := newChatSession("background-run", rendered, 0, newRunStream(), nil)
+
+		handle := task.StartTask("chat run", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+			return chat.run(t)
+		})
+		handle.WaitFor()
+		_, err := handle.GetResult()
+
+		Expect(err).To(HaveOccurred())
+		Expect(handle.IsBackground()).To(BeTrue())
+	})
+
 	It("latches stop requests made before a cancel function is attached", func() {
 		stream := newRunStream()
 		Expect(stream.requestStop()).To(BeTrue())
@@ -81,7 +102,10 @@ var _ = Describe("prompt chat lifecycle", func() {
 		Expect(spec.Paths).To(HaveKey("/api/captain/prompt/runs/{runId}/interrupt"))
 		Expect(spec.Paths).To(HaveKey("/api/captain/prompt/runs/{runId}/stop"))
 		Expect(spec.Paths).To(HaveKey("/api/captain/prompt/runs/{runId}/permission-mode"))
-		Expect(spec.Paths).To(HaveKey("/api/captain/sessions/{id}/message"))
+		Expect(spec.Paths).To(HaveKeyWithValue("/api/captain/sessions/{id}/message", HaveKey("post")))
+		Expect(spec.Paths).To(HaveKeyWithValue("/api/captain/sessions/{id}/chat", HaveKey("get")))
+		Expect(spec.Paths).To(HaveKeyWithValue("/api/captain/sessions/{id}/interrupt", HaveKey("post")))
+		Expect(spec.Paths).To(HaveKeyWithValue("/api/captain/sessions/{id}/permission-mode", HaveKey("post")))
 	})
 
 	It("collapses duplicate records for the same provider session when resuming", func() {
