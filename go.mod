@@ -8,15 +8,15 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.24
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
-	github.com/firebase/genkit/go v1.11.0
+	github.com/firebase/genkit/go v1.13.1
 	github.com/flanksource/clicky v1.21.70
 	github.com/flanksource/clicky/aichat v1.21.68
 	github.com/flanksource/commons v1.60.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/google/dotprompt/go v0.0.0-20260502013637-5cd4a8405ca3
+	github.com/google/dotprompt/go v0.0.0-20260708220100-73beb993ac95
 	github.com/google/uuid v1.6.0
-	github.com/invopop/jsonschema v0.13.0
+	github.com/invopop/jsonschema v0.14.0
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.42.1
 	github.com/samber/lo v1.53.0
@@ -41,6 +41,7 @@ require (
 require (
 	github.com/flanksource/commons-db v0.1.50
 	github.com/gliderlabs/ssh v0.3.8
+	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/pelletier/go-toml/v2 v2.4.3
 )
 
@@ -63,6 +64,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sanity-io/litter v1.5.8 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
@@ -266,7 +268,6 @@ require (
 	github.com/lrita/cmap v0.0.0-20231108122212-cb084a67f554 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect
-	github.com/mailru/easyjson v0.9.1 // indirect
 	github.com/mark3labs/mcp-go v0.56.0
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
@@ -338,7 +339,6 @@ require (
 	github.com/vadimi/go-ntlm v1.2.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
-	github.com/wk8/go-ordered-map/v2 v2.1.8
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
