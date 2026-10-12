@@ -3,6 +3,7 @@ package registry
 import (
 	"sort"
 	"strings"
+	"time"
 )
 
 // ModelIdentity is captain's parsed model key. It is deliberately provider
@@ -322,6 +323,9 @@ func sortModels(models []KnownModel) {
 			return priority < 0
 		}
 		if left.ReleaseDate == right.ReleaseDate {
+			if alias := compareSnapshotAlias(left.ID, right.ID); alias != 0 {
+				return alias < 0
+			}
 			return compareModelVersions(left.ID, right.ID) > 0
 		}
 		return left.ReleaseDate > right.ReleaseDate
@@ -338,10 +342,37 @@ func sortModelsForResolution(models []KnownModel) {
 			return left.Preferred
 		}
 		if left.ReleaseDate == right.ReleaseDate {
+			if alias := compareSnapshotAlias(left.ID, right.ID); alias != 0 {
+				return alias < 0
+			}
 			return compareModelVersions(left.ID, right.ID) > 0
 		}
 		return left.ReleaseDate > right.ReleaseDate
 	})
+}
+
+// compareSnapshotAlias orders a model's alias before the dated snapshot that
+// pins it (claude-haiku-4-5 before claude-haiku-4-5-20251001): a selector for
+// the version means the model the alias tracks, not one frozen copy of it. It
+// returns <0 when left is the alias, >0 when right is, and 0 for any other pair.
+func compareSnapshotAlias(left, right string) int {
+	switch {
+	case isDatedSnapshotOf(right, left):
+		return -1
+	case isDatedSnapshotOf(left, right):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func isDatedSnapshotOf(snapshot, alias string) bool {
+	date, ok := strings.CutPrefix(snapshot, alias+"-")
+	if !ok || len(date) != len("20060102") {
+		return false
+	}
+	_, err := time.Parse("20060102", date)
+	return err == nil
 }
 
 // comparePriority orders two rows by explicit priority, returning <0 when left
