@@ -139,7 +139,7 @@ func (r *recorder) settle(outcome Outcome, iterations []database.UpsertPromptRun
 			errs = append(errs, fmt.Errorf("promptrun: record iteration %d of run %s: %w", record.Iteration, r.runID, err))
 		}
 	}
-	errs = append(errs, r.writeTranscript(notices))
+	errs = append(errs, r.closeAPITranscript(outcome), r.writeTranscript(notices))
 	_, err := r.updateRun(func(run *database.PromptRun) (database.UpdatePromptRunInput, bool) {
 		return r.finishUpdate(run, outcome, workspace), !finishedRun(run.State)
 	})

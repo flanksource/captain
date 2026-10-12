@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session/transcript"
 )
@@ -28,7 +29,7 @@ func TranscriptCandidate(
 	if path := overviewTranscriptPath(overview); path != "" {
 		return CandidateFromOverview(overview), true, nil
 	}
-	if overview.Source == "claude" || overview.Source == "codex" {
+	if api.IsTranscriptSource(overview.Source) {
 		return Candidate{}, false, nil
 	}
 	providerID := stringValue(overview.ProviderSessionID)

@@ -306,7 +306,7 @@ func (db *DB) GetTranscriptSessionByIdentity(ctx context.Context, providerSessio
 	}
 	var provider, bearing []SessionOverview
 	for _, row := range rows {
-		if row.Source != "claude" && row.Source != "codex" {
+		if !api.IsTranscriptSource(row.Source) {
 			continue
 		}
 		provider = append(provider, row)

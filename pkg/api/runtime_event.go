@@ -83,6 +83,14 @@ const (
 	// model and SessionID the session being resumed (empty for a new one). It is
 	// loop metadata, so it is not recorded on LoopIteration.Events.
 	EventTurnStart EventKind = "turn_start"
+
+	// EventTurn is one complete conversation message an API provider exchanged
+	// with the model: the input a request added (system, user or tool results) or
+	// the model's whole reply, with Usage set on a reply to that request's tokens.
+	// Message carries it. A runtime that writes no transcript of its own emits
+	// these so the run can be recorded as one; a reply is emitted before its
+	// output is validated, so a run that fails still accounts for it.
+	EventTurn EventKind = "turn"
 )
 
 // TurnStart is the Raw payload of an EventTurnStart.
@@ -116,7 +124,10 @@ type Event struct {
 	// Input and ToolCallID stay set alongside it for hosts that read only those.
 	Request *ApprovalRequest
 
-	Usage     *Usage        // when Kind == EventResult
+	// Message is the conversation message when Kind == EventTurn.
+	Message *Message
+
+	Usage     *Usage        // when Kind == EventResult, EventError or an EventTurn reply
 	Context   *ContextUsage // provider context snapshot, independent of Usage
 	CostUSD   float64       // when Kind == EventResult
 	Success   bool          // when Kind == EventResult; for EventToolResult, false = the tool errored
