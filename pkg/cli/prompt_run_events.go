@@ -38,7 +38,11 @@ type promptEventAccumulator struct {
 	// lastVerify is the newest report any verify event carried, kept so a verdict
 	// that arrives without one can still close the frame without blanking it.
 	lastVerify *api.VerifyReport
-	task       taskSink
+	// session receives the provider session id as soon as the run reports it, so
+	// the run's stream can name the session a follower subscribes to mid-run.
+	// Nil for a consumer with no stream behind it.
+	session func(sessionID, model string)
+	task    taskSink
 
 	sessionID string
 	model     string
@@ -86,6 +90,9 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 	case ai.EventSystem:
 		if ev.SessionID != "" {
 			a.sessionID = ev.SessionID
+			if a.session != nil {
+				a.session(ev.SessionID, "")
+			}
 			a.task.SetDescription("starting")
 			a.task.Infof("session %s", ev.SessionID)
 		}
