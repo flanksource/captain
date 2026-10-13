@@ -1,0 +1,74 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Plan Hooks
+description: Prompts that rewrite or decorate every saved plan revision.
+section: Prompts
+---
+
+# Plan hooks
+
+A plan hook is an ordinary `.prompt` file with a `hook:` block in its frontmatter. Captain's plan service (`plans.Save`) runs every discovered hook before it persists a plan revision, so any host that saves plans through Captain — gavel's agent plan runs, human edits, merges and plans supplied when a TODO is created — gets the hook output without code changes.
+
+Adding a hook is dropping a file into a prompt directory. Nothing is registered in Go.
+
+## Frontmatter
+
+```yaml
+---
+model: api:haiku
+hook:
+  on: plan.revision   # the event; plan.revision is the only one today
+  mode: prepend       # replace | prepend | append
+  field: tldr         # optional: a string field of output.schema; omitted uses the response text
+output:
+  schema:
+    type: object
+    required: [tldr]
+    properties:
+      tldr: { type: string }
+---
+{{role "user"}}
+Summarize {{title}}:
+
+{{{plan}}}
+```
+
+The body receives three variables:
+
+- `title` — the plan title.
+- `plan` — the revision being saved, with every hook block stripped, so a hook never summarizes its own earlier output.
+- `prior` — the latest persisted revision, also stripped; empty for a new plan.
+
+## Modes
+
+- `replace` swaps the plan body for the hook output.
+- `prepend` and `append` wrap the output in a marked block placed before or after the body:
+
+```markdown
+<!-- captain:hook:plan-tldr -->
+**TL;DR** …
+<!-- /captain:hook:plan-tldr -->
+
+# The plan body
+```
+
+Blocks are keyed by hook name (the file name without `.prompt`). Readers use `plans.Blocks(markdown)` to lift them out and `plans.StripBlocks(markdown)` to get the authored body; gavel's plan tab shows `plan-tldr` as a callout and edits only the body.
+
+When the stripped body equals the latest revision's, Captain reuses that revision as-is and runs no hook — re-saving an unchanged plan costs no model call and appends no revision. A hook that fails, or returns empty output, fails the save; nothing is persisted.
+
+## Discovery
+
+Hooks are loaded in this order, a later file shadowing an earlier one with the same name:
+
+1. Captain's embedded defaults — currently `plan-tldr.prompt`, a prepended TL;DR on `api:haiku`.
+2. `prompts.dirs` from the Captain config, relative to the config file.
+3. `<workdir>/.captain/prompts`, when it exists.
+
+Hooks run in name order. To turn off a default, shadow it with a file that only disables it:
+
+```yaml
+# .captain/prompts/plan-tldr.prompt
+---
+hook: { disabled: true }
+---
+```

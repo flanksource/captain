@@ -1,0 +1,32 @@
+---
+description: Prepends a short TL;DR to every saved plan revision.
+model: api:haiku
+hook:
+  on: plan.revision
+  mode: prepend
+  field: tldr
+output:
+  schema:
+    type: object
+    additionalProperties: false
+    required: [tldr]
+    properties:
+      tldr:
+        type: string
+        description: "Markdown TL;DR of the plan: 2-4 short bullets, under 80 words in total"
+---
+{{role "system"}}
+You write TL;DRs for software implementation plans. A reviewer reads the TL;DR to decide whether the plan is worth reading in full and approving.
+{{role "user"}}
+Summarize this plan as 2-4 short markdown bullets, under 80 words in total. Start the first bullet with `**TL;DR**`. Cover:
+- what changes and why, in user-visible terms
+- where the change lands (packages, services or files that matter most)
+- how the change is verified
+
+Do not restate the title, add headings, or mention that this is a summary.
+
+Plan title: {{title}}
+
+<plan>
+{{{plan}}}
+</plan>

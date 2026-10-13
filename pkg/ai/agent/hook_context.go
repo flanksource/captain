@@ -55,6 +55,11 @@ type HookContext struct {
 	// Failed is true when the generate/verify run itself returned an error
 	// (a provider failure, not a failing verdict).
 	Failed bool
+	// PostErr joins every Post hook error dispatched so far. The runner never
+	// short-circuits a phase, so a hook that acts only on a good outcome (a
+	// workflow.after landing step) reads it to avoid acting on a run an earlier
+	// hook — a refused commit — already failed.
+	PostErr error
 
 	// emit publishes an event on the run's stream, so what a hook does between
 	// turns reaches the same renderers as what the model does during them. Set by
