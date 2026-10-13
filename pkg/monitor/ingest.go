@@ -21,7 +21,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 7
+const parserVersion = 8
 
 type codexCheckpoint struct {
 	parser      *history.CodexParser
@@ -532,6 +532,11 @@ func unifiedIngestInput(s *session.Session, source string, sequence func(session
 			ingestTurn.Call.ContextTokens = int64(turn.Context.UsedTokens)
 			ingestTurn.Call.ContextWindowTokens = int64(turn.Context.WindowTokens)
 			ingestTurn.Call.ContextFreePercent = &turn.Context.FreePercent
+		}
+		// A turn that names no model and used no tokens made no model call — e.g.
+		// one whose only reply is Claude Code's placeholder for a failed request.
+		if turn.Model == "" && turn.Usage.TotalTokens() == 0 {
+			ingestTurn.Call = nil
 		}
 		input.Turns = append(input.Turns, ingestTurn)
 	}

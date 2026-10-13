@@ -11,7 +11,7 @@ import (
 // TranscriptParserVersion identifies the persisted transcript projection shape.
 // Consumers that parse a complete source use it when registering that source so
 // the monitor resumes from the recorded offset instead of replaying old events.
-const TranscriptParserVersion = 7
+const TranscriptParserVersion = 8
 
 // Session is the unified session aggregate. It is the single source of truth the
 // history/sessions commands render, the viewer consumes, and the chat/live
