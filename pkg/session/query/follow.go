@@ -9,6 +9,8 @@ import (
 
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/flanksource/captain/pkg/session/load"
+	"github.com/google/uuid"
 )
 
 // FollowOptions controls a live session follow.
@@ -18,8 +20,10 @@ type FollowOptions struct {
 	Replay bool
 	// After resumes a reader that already holds the transcript up to and
 	// including this message id: the first emission skips it and every message
-	// before it, so only what came later is replayed. A cursor no message in
-	// the thread carries fails Follow with database.ErrInvalidSession.
+	// before it, so only what came later is replayed. A cursor naming one of
+	// the session's prompt-run placeholders means the reader holds no
+	// transcript message yet, so everything is replayed. Any other cursor no
+	// message in the thread carries fails Follow with database.ErrInvalidSession.
 	After string
 }
 
@@ -80,6 +84,11 @@ func Follow(ctx context.Context, db *database.DB, id string, opts FollowOptions)
 	if err != nil {
 		return nil, err
 	}
+	if f.after != "" {
+		if f.placeholders, err = promptRunPlaceholderIDs(ctx, db, thread.primary.Session.ID); err != nil {
+			return nil, err
+		}
+	}
 	sub, err := hub.subscribe(ctx, thread.sessionIDs(nil))
 	if err != nil {
 		return nil, err
@@ -107,6 +116,25 @@ type follower struct {
 	owners   map[string]database.SessionOverview
 	state    *FollowState
 	tail     *transcriptTail
+	// placeholders are the ids of the messages a session read synthesises from
+	// the session's prompt run before its transcript exists. The follower never
+	// emits them, so an After cursor naming one means the reader holds nothing
+	// the transcript carries.
+	placeholders map[string]bool
+}
+
+func promptRunPlaceholderIDs(ctx context.Context, db *database.DB, sessionID uuid.UUID) (map[string]bool, error) {
+	runs, err := sessionPromptRuns(ctx, db, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	if len(runs) > 0 {
+		for _, role := range []string{"user", "assistant"} {
+			ids[load.PromptRunMessageID(runs[0].ID.String(), role)] = true
+		}
+	}
+	return ids, nil
 }
 
 func (f *follower) run(ctx context.Context, sub *sessionSubscription, events chan<- FollowEvent, pending []FollowEvent, terminal bool) {
@@ -196,7 +224,7 @@ func (f *follower) changedMessages(messages []session.Message) ([]FollowEvent, e
 	// Before the first emission, the messages up to the After cursor are
 	// already held by the reader: they are fingerprinted, never replayed.
 	held := -1
-	if !f.primed && f.after != "" {
+	if !f.primed && f.after != "" && !f.placeholders[f.after] {
 		held = slices.IndexFunc(messages, func(message session.Message) bool { return message.ID == f.after })
 		if held == -1 {
 			return nil, fmt.Errorf("%w: follow Captain session %s after %q: no message %q in the session",

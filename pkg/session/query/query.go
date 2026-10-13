@@ -55,16 +55,10 @@ func ComposeSession(
 	}
 
 	stopPromptRuns := rpchttp.Track(ctx, "prompt_runs")
-	runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &overview.ID})
+	runs, err := sessionPromptRuns(ctx, db, overview.ID)
 	stopPromptRuns()
 	if err != nil {
-		return load.Result{}, nil, fmt.Errorf("list prompt runs for Captain session %s: %w", overview.ID, err)
-	}
-	if len(runs) == 0 {
-		runs, err = db.ListPromptRuns(ctx, database.PromptRunFilter{ExecutionSessionID: &overview.ID})
-		if err != nil {
-			return load.Result{}, nil, fmt.Errorf("list prompt runs executed by Captain session %s: %w", overview.ID, err)
-		}
+		return load.Result{}, nil, err
 	}
 	if len(runs) > 0 {
 		facts := PromptRunFacts(runs[0])
@@ -101,4 +95,25 @@ func ComposeSession(
 		logger.Warnf("captain session %s: %v", overview.ID, failure)
 	}
 	return result, failures, nil
+}
+
+type promptRunLister interface {
+	ListPromptRuns(context.Context, database.PromptRunFilter) ([]database.PromptRun, error)
+}
+
+// sessionPromptRuns is the prompt runs whose facts a session read composes:
+// those the session admitted, otherwise those it executed.
+func sessionPromptRuns(ctx context.Context, db promptRunLister, sessionID uuid.UUID) ([]database.PromptRun, error) {
+	runs, err := db.ListPromptRuns(ctx, database.PromptRunFilter{SessionID: &sessionID})
+	if err != nil {
+		return nil, fmt.Errorf("list prompt runs for Captain session %s: %w", sessionID, err)
+	}
+	if len(runs) > 0 {
+		return runs, nil
+	}
+	runs, err = db.ListPromptRuns(ctx, database.PromptRunFilter{ExecutionSessionID: &sessionID})
+	if err != nil {
+		return nil, fmt.Errorf("list prompt runs executed by Captain session %s: %w", sessionID, err)
+	}
+	return runs, nil
 }
