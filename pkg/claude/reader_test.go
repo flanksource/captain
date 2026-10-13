@@ -508,6 +508,65 @@ func TestReadStreamJSON_AssistantErrorEmitsApiError(t *testing.T) {
 	}
 }
 
+func TestReadHistory_SessionFileApiErrorCarriesContinuationContext(t *testing.T) {
+	// Claude Code records a failed request as an assistant line whose message is
+	// a local placeholder (model "<synthetic>") explaining the error. The ApiError
+	// row must carry what the session file knows about the failure, and the
+	// placeholder must not read as the model the session ran under.
+	const (
+		sessionID = "41df05e8-38bd-49c9-88f0-a84d5e3c0ec7"
+		requestID = "req_011CfycXmgLgWkJAAh2nsj5Y"
+		cwd       = "/repo/worktree"
+		branch    = "shell/feature"
+		version   = "2.1.280"
+		text      = "There's an issue with the selected model (unknown). It may not exist or you may not have access to it."
+	)
+	line, err := json.Marshal(map[string]any{
+		"type": "assistant", "uuid": "e8e3", "timestamp": "2026-10-13T04:34:37.971Z",
+		"message": map[string]any{
+			"model": SyntheticModel, "role": "assistant", "stop_reason": "stop_sequence",
+			"content": []any{map[string]any{"type": "text", "text": text}},
+		},
+		"requestId": requestID, "error": "model_not_found", "isApiErrorMessage": true, "apiErrorStatus": 404,
+		"cwd": cwd, "sessionId": sessionID, "version": version, "gitBranch": branch,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := ReadHistory(strings.NewReader(string(line)))
+	if err != nil {
+		t.Fatalf("ReadHistory failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected assistant + ApiError entries, got %d", len(entries))
+	}
+	if entries[0].Message.Model != "" {
+		t.Errorf("placeholder model leaked as the session model: %q", entries[0].Message.Model)
+	}
+	uses := entries[1].Message.GetToolUses()
+	if len(uses) != 1 || uses[0].Name != "ApiError" {
+		t.Fatalf("expected ApiError synthetic tool, got %+v", uses)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(uses[0].Input, &got); err != nil {
+		t.Fatalf("unmarshal ApiError input: %v", err)
+	}
+	want := map[string]any{
+		"error": "model_not_found", "api_error_status": float64(404), "message": text,
+		"stop_reason": "stop_sequence", "requestId": requestID, "sessionId": sessionID,
+		"cwd": cwd, "gitBranch": branch, "version": version,
+	}
+	if len(got) != len(want) {
+		t.Errorf("ApiError input = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("ApiError input[%q] = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
 func TestReadStreamJSON_ParseErrorIsSurfaced(t *testing.T) {
 	// Lines that fail to unmarshal must produce ParseError rows rather than
 	// being silently dropped (CW-2).

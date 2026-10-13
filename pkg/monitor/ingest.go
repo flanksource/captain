@@ -21,7 +21,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 6
+const parserVersion = 7
 
 type codexCheckpoint struct {
 	parser      *history.CodexParser
