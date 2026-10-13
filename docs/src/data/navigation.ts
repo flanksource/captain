@@ -49,6 +49,12 @@ export const docSections: DocSection[] = [
         description: "Prompt source discovery, render API, and run stream.",
         status: "ready",
       },
+      {
+        label: "Plan Hooks",
+        href: "/prompts/hooks/",
+        description: "Prompts that rewrite or decorate every saved plan revision.",
+        status: "ready",
+      },
     ],
   },
   {

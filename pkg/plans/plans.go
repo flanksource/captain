@@ -3,7 +3,9 @@
 // captain_plan_revisions themselves: every operation is one transaction that
 // takes the plan row lock, applies Captain's rules, and then runs the host's
 // Link hook in the same transaction so host bookkeeping commits or rolls back
-// with Captain's writes.
+// with Captain's writes. Save also runs the plan.revision hooks — .prompt
+// files discovered at runtime (DiscoverHooks) that replace the revision or
+// prepend/append a marked block to it.
 //
 // Lock order is the plan row first, then whatever rows the host Link locks.
 package plans
@@ -59,21 +61,41 @@ type ApproveInput struct {
 // revision_requested.
 type ReviewInput = database.SetPlanReviewStateInput
 
-// Save creates or resolves the plan and appends its revision. New content
-// returns a decided plan to pending; equivalent content is an idempotent replay.
-func Save(ctx context.Context, db *database.DB, input SaveInput, link Link) (Outcome, error) {
+// SaveOptions are the host's extension points for Save.
+type SaveOptions struct {
+	// Hooks rewrite or decorate the markdown before it is persisted; see
+	// DiscoverHooks.
+	Hooks []Hook
+	Link  Link
+}
+
+// Save creates or resolves the plan, runs its revision hooks, and appends the
+// revision. New content returns a decided plan to pending; equivalent content
+// is an idempotent replay. Hooks run before the plan row lock is taken, but
+// inside Save's transaction, so a failing hook persists nothing.
+func Save(ctx context.Context, db *database.DB, input SaveInput, options SaveOptions) (Outcome, error) {
 	var outcome Outcome
 	err := db.Transaction(ctx, func(tx *database.DB) error {
 		plan, err := tx.CreateOrGetPlan(ctx, input.Plan)
 		if err != nil {
 			return err
 		}
+		markdown := input.Markdown
+		if len(options.Hooks) > 0 {
+			var prior string
+			if plan.LatestRevision != nil {
+				prior = plan.LatestRevision.PlanMarkdown
+			}
+			if markdown, err = applyHooks(ctx, options.Hooks, plan.Title, markdown, prior); err != nil {
+				return err
+			}
+		}
 		prior, err := tx.LockPlan(ctx, plan.ID)
 		if err != nil {
 			return err
 		}
 		revision, created, err := tx.AppendPlanRevisionWithResult(ctx, database.AppendPlanRevisionInput{
-			PlanID: prior.ID, PlanMarkdown: input.Markdown, Feedback: input.Feedback, CreatedBy: input.CreatedBy,
+			PlanID: prior.ID, PlanMarkdown: markdown, Feedback: input.Feedback, CreatedBy: input.CreatedBy,
 		})
 		if err != nil {
 			return err
@@ -83,7 +105,7 @@ func Save(ctx context.Context, db *database.DB, input SaveInput, link Link) (Out
 			return err
 		}
 		outcome = Outcome{Plan: after, Prior: prior, Revision: revision, Changed: created}
-		return runLink(ctx, tx, link, outcome)
+		return runLink(ctx, tx, options.Link, outcome)
 	})
 	if err != nil {
 		return Outcome{}, fmt.Errorf("save Captain plan: %w", err)

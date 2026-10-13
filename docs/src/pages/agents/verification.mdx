@@ -46,6 +46,27 @@ workflow:
 - **`scope`** (`""` \| `all` \| `changed`) — narrows verification to the agent's changed files instead of the whole tree.
 - **`maxIterations`** (`int`, `>= 0`) — caps the generate→verify loop; `0` means the run default of `1` (a single generation, verification votes once with no automatic re-run).
 
+## `workflow.after`
+
+Post-run shell steps that act on the verdict — landing a verified branch, pruning a worktree. They run once, at the end of the run, after the verify verdict and every commit (captain's and the host's) and before setup tears a worktree down.
+
+<CodeExample client:load language="yaml" title="workflow.after (api.AfterStep)" source={`
+setup:
+  cwd: "{{worktree}}"
+workflow:
+  verify:
+    commands: [go test ./...]
+  after:
+    - cwd: "{{repo}}"          # absolute, or relative to the run's cwd
+      when: onVerify           # onVerify (default) | onSuccess | always
+      commands:
+        - git merge --ff-only {{shq branch}}
+`} />
+
+- **`when`** — `onVerify` runs only when the run did not error and verification passed (a workflow with no `verify` behaves as `onSuccess`); `onSuccess` runs when the run did not error; `always` runs regardless. A gated step is also skipped when an earlier post-run hook (a refused commit) failed.
+- **`commands`** run sequentially with `sh -c`, bounded like verify commands; the first failure stops the step and fails the run with the command and its output tail. Each command reports on the run's stream as a `verified` / `verify_failed` event named `after:<command>`.
+- Frontmatter is templated with the run's variables. Quote caller-supplied values with `{{shq value}}` (POSIX single-quoting) so they stay one shell word — and write such commands as plain YAML scalars, not double-quoted strings, where `\'` is not a valid escape.
+
 ## A declared fixture with no verifier is an error
 
 Declaring `workflow.verify.fixture` with no `fixture` factory registered does **not** silently produce zero hooks — a workflow whose only verification is a fixture would otherwise pass vacuously. `verify.HooksFor` refuses the run outright with:

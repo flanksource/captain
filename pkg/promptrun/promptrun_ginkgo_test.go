@@ -132,7 +132,7 @@ var _ = Describe("promptrun.Run", func() {
 		// expensive; the caller's hooks sit between the checks and setup so a host
 		// commit pipeline still sees a live worktree; setup trails so its teardown
 		// is the last Post to fire.
-		It("assembles commit → cmd → prompt → fixture → caller → setup", func() {
+		It("assembles commit → cmd → prompt → fixture → caller → after → setup", func() {
 			verify.Register(verify.KindFixture, func(_ context.Context, spec api.Verify, _ verify.Options) ([]*verify.Plugin, error) {
 				return []*verify.Plugin{verify.New("fixture:"+spec.Fixture, &progressVerifier{})}, nil
 			})
@@ -140,6 +140,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Workflow = &api.Workflow{
 				Verify:  &api.Verify{Commands: []string{"true"}, Prompts: []string{judge}, Fixture: "acceptance"},
 				Commits: []api.Commit{{On: api.CommitOnRun}},
+				After:   []api.AfterStep{{Commands: []string{"true"}}},
 			}
 			request.Setup = &shell.Setup{}
 			var log []string
@@ -151,7 +152,7 @@ var _ = Describe("promptrun.Run", func() {
 			}, provider)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hookNames(hooks)).To(Equal([]string{
-				"commit:run", "verify:true", "judge:" + judge, "fixture:acceptance", "host", "setup",
+				"commit:run", "verify:true", "judge:" + judge, "fixture:acceptance", "host", "after[0]", "setup",
 			}))
 		})
 

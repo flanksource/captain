@@ -85,3 +85,25 @@ type Result struct {
 - **`Passed(verdicts)`** is `agent.VerifyPassed(verdicts)` — the rule the runner sets `HookContext.Verified` from — so a caller reading `Result.Passed` and a `Post` hook reading its context never disagree about whether the run verified.
 - **`FailureReason(verdicts)`** is the last failing verdict's reason, empty when the run passed.
 - **`FinalReport(verdicts)`** is the run's verdict as one report: a round runs every verifier the workflow declares, so it produces one report per verifier. Taking only the last of them used to throw the rest away — a round of `commands` + `fixture` came back as the fixture's tree alone. A round of one report is that report unwrapped; a round of several is `api.MergeReports`, which nests each report under its own group node (its own `summary` carried on the node, not recomputed, so an elided suite still contributes its whole tally) and passes only when every report in the round passed.
+
+## Serving prompts and prompt runs over HTTP
+
+A host that serves captain's prompt surface instead of calling `promptrun.Run` itself wires four pieces from `pkg/cli`:
+
+<CodeExample client:load language="go" title="Embedding the prompt HTTP surface" source={`
+cli.RegisterPromptEntity()                // before clicky builds the CLI / rpc executor
+stop := cli.StartSessionHost(ctx)         // prunes finished runs, stops live chats on exit
+defer stop()
+
+mux.Handle("/api/captain/prompt/runs/", http.StripPrefix("/api/captain/prompt/runs", cli.PromptRunHandler()))
+mux.Handle("/api/captain/sessions/", http.StripPrefix("/api/captain/sessions", cli.SessionHandler()))
+
+// Embedded prompts are a read-only source that resolves by bare name.
+handler := cli.PromptSourcesMiddleware(root, cli.PromptSources{
+    FS: []cli.PromptFS{{Label: "gavel", FS: prompts}},
+})
+`} />
+
+- **Start**: `POST <executor prefix>/prompt/run?id=<prompt id or bare name>` with a `PromptRenderRequest` body (`{"variables": {...}, "presets": [...], "spec": {...}}`) answers a `PromptRunResult` (`{"runId", "status": "running", "model", "provider", "mode", ...}`).
+- **Follow**: `GET /api/captain/prompt/runs/{runId}/stream` is SSE: a `run` frame whose `sessionId` is followable at `/api/captain/sessions/{id}`, then `entry`, `state` and `verify` frames, ending in `done` or `error` carrying a `PromptRunSummary`. `GET /api/captain/prompt/runs/{runId}` is the same state as one JSON snapshot.
+- **Stop**: `POST /api/captain/prompt/runs/{runId}/stop`.

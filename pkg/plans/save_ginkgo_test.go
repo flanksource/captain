@@ -71,7 +71,7 @@ var _ = Describe("plans.Save", func() {
 
 	It("creates the plan and its first revision and hands both to the host link", func(ctx SpecContext) {
 		var seen []plans.Outcome
-		outcome, err := plans.Save(ctx, db, withID(firstMarkdown), recordLink(&seen))
+		outcome, err := plans.Save(ctx, db, withID(firstMarkdown), plans.SaveOptions{Link: recordLink(&seen)})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(outcome.Changed).To(BeTrue())
@@ -86,10 +86,10 @@ var _ = Describe("plans.Save", func() {
 	})
 
 	It("is idempotent for equivalent content", func(ctx SpecContext) {
-		first, err := plans.Save(ctx, db, withID(firstMarkdown), nil)
+		first, err := plans.Save(ctx, db, withID(firstMarkdown), plans.SaveOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
-		replayed, err := plans.Save(ctx, db, withID("\r\n"+firstMarkdown+"\r\n"), nil)
+		replayed, err := plans.Save(ctx, db, withID("\r\n"+firstMarkdown+"\r\n"), plans.SaveOptions{})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(replayed.Changed).To(BeFalse())
@@ -101,12 +101,12 @@ var _ = Describe("plans.Save", func() {
 	})
 
 	It("returns an approved plan to pending when a new revision arrives", func(ctx SpecContext) {
-		first, err := plans.Save(ctx, db, withID(firstMarkdown), nil)
+		first, err := plans.Save(ctx, db, withID(firstMarkdown), plans.SaveOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		_, err = plans.Approve(ctx, db, plans.ApproveInput{PlanID: planID, Latest: true, ApprovedBy: reviewer}, nil)
 		Expect(err).NotTo(HaveOccurred())
 
-		revised, err := plans.Save(ctx, db, withID(secondMarkdown), nil)
+		revised, err := plans.Save(ctx, db, withID(secondMarkdown), plans.SaveOptions{})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(revised.Changed).To(BeTrue())
@@ -128,7 +128,7 @@ var _ = Describe("plans.Save", func() {
 			return nil
 		}
 
-		_, err := plans.Save(ctx, db, withID(firstMarkdown), link)
+		_, err := plans.Save(ctx, db, withID(firstMarkdown), plans.SaveOptions{Link: link})
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(visibleOutside).To(MatchError(database.ErrPlanNotFound))
@@ -138,7 +138,7 @@ var _ = Describe("plans.Save", func() {
 		hostErr := errors.New("host bookkeeping failed after the save")
 
 		err := db.Transaction(ctx, func(tx *database.DB) error {
-			if _, err := plans.Save(ctx, tx, withID(firstMarkdown), nil); err != nil {
+			if _, err := plans.Save(ctx, tx, withID(firstMarkdown), plans.SaveOptions{}); err != nil {
 				return err
 			}
 			return hostErr
@@ -150,7 +150,7 @@ var _ = Describe("plans.Save", func() {
 	})
 
 	It("refuses empty markdown before writing a plan", func(ctx SpecContext) {
-		_, err := plans.Save(ctx, db, withID("  \n"), nil)
+		_, err := plans.Save(ctx, db, withID("  \n"), plans.SaveOptions{})
 
 		Expect(err).To(MatchError(database.ErrInvalidPlan))
 		_, err = db.GetPlan(ctx, planID)
