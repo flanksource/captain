@@ -192,10 +192,14 @@ func (c promptRunContributor) mergeRuntime(aggregate *session.Session) {
 
 func (c promptRunContributor) message(role, text string) session.Message {
 	return session.Message{
-		ID: c.facts.RunID + "-" + role, Role: role,
+		ID: PromptRunMessageID(c.facts.RunID, role), Role: role, Placeholder: true,
 		Parts: []session.Part{{Type: session.PartText, Text: text}},
 	}
 }
+
+// PromptRunMessageID is the id of the placeholder message a prompt run
+// synthesises for role while its session has no transcript.
+func PromptRunMessageID(runID, role string) string { return runID + "-" + role }
 
 func (c promptRunContributor) resultText() (string, error) {
 	if c.facts.ResultText != "" {
