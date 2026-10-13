@@ -294,11 +294,11 @@ var _ = Describe("session get multi-result output", func() {
 		Expect(child.Detail).NotTo(BeNil())
 		Expect(child.Detail.Messages).To(Equal([]session.Message{
 			{
-				ID: runID.String() + "-user", Role: "user",
+				ID: runID.String() + "-user", Role: "user", Placeholder: true,
 				Parts: []session.Part{{Type: session.PartText, Text: "Review the attached form screenshot."}},
 			},
 			{
-				ID: runID.String() + "-assistant", Role: "assistant",
+				ID: runID.String() + "-assistant", Role: "assistant", Placeholder: true,
 				Parts: []session.Part{{Type: session.PartText, Text: `{"summary":"Use a single-column form layout."}`}},
 			},
 		}))

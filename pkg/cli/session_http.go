@@ -157,21 +157,18 @@ func writeSessionError(w http.ResponseWriter, status int, message string, fields
 }
 
 // streamSession follows a session over SSE until it ends or the client leaves.
-// Errors before the stream opens are JSON responses; afterwards they are
-// `error` frames.
+// Errors before the stream opens are JSON responses, except to a client that
+// accepts only an event stream: an EventSource never exposes a non-SSE body,
+// so it gets the failure as one `error` frame instead of an unexplained
+// connection error. Afterwards errors are always `error` frames.
 func streamSession(w http.ResponseWriter, r *http.Request, id string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeSessionError(w, http.StatusInternalServerError, "the response writer cannot stream", nil)
 		return
 	}
-	db, err := captainDB(r.Context())
-	if err != nil {
-		writeSessionError(w, http.StatusInternalServerError, err.Error(), nil)
-		return
-	}
-	events, err := sessionquery.Follow(r.Context(), db, id, sessionquery.FollowOptions{Replay: true, After: r.URL.Query().Get("after")})
-	if err != nil {
+	events, err := followSession(r, id)
+	if err != nil && !strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 		writeSessionError(w, sessionErrorStatus(err), err.Error(), nil)
 		return
 	}
@@ -181,7 +178,22 @@ func streamSession(w http.ResponseWriter, r *http.Request, id string) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	if err != nil {
+		if writeErr := writeSessionFrame(w, sessionquery.FollowEvent{Err: err}); writeErr != nil {
+			log.Warnf("captain session stream %s: report %v: %v", id, err, writeErr)
+		}
+		flusher.Flush()
+		return
+	}
 	writeSessionFrames(w, flusher, r, events)
+}
+
+func followSession(r *http.Request, id string) (<-chan sessionquery.FollowEvent, error) {
+	db, err := captainDB(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	return sessionquery.Follow(r.Context(), db, id, sessionquery.FollowOptions{Replay: true, After: r.URL.Query().Get("after")})
 }
 
 func writeSessionFrames(w http.ResponseWriter, flusher http.Flusher, r *http.Request, events <-chan sessionquery.FollowEvent) {

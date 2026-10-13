@@ -109,6 +109,10 @@ type Message struct {
 	// SourceLine is the 1-based JSONL line the message came from (0 when the
 	// source format has no line mapping).
 	SourceLine int64 `json:"sourceLine,omitempty"`
+	// Placeholder marks a message synthesised from a prompt run before its
+	// transcript exists. The transcript's own messages replace it, under
+	// different ids, once the agent writes them.
+	Placeholder bool `json:"placeholder,omitempty"`
 
 	AgentID string `json:"-"`
 	// Provisional marks a message a later parse of a grown transcript can still
