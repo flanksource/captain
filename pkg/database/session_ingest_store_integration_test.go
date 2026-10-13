@@ -476,6 +476,65 @@ func TestIngestTranscriptAndReadStores(t *testing.T) {
 // commits last: a failure after the messages phase must leave the file looking
 // un-ingested so the next pass replays it, rather than recording a high-water
 // mark for rows that were never written.
+func TestIngestReplayPrunesCallsOfTurnsThatRanNoModel(t *testing.T) {
+	db := openIngestTestDB(t)
+	modTime := time.Now().UTC().Truncate(time.Second)
+	failedAt := modTime.Add(time.Minute)
+	turnIdx2 := 2
+	const placeholder = "<synthetic>"
+
+	withFailedTurn := func(call *IngestModelCall) IngestTranscriptInput {
+		batch := testIngestBatch(modTime, 4096)
+		batch.Turns = append(batch.Turns, IngestTurn{
+			Index: turnIdx2, ProviderTurnID: "turn-2", Status: TurnStatusEnded,
+			StartedAt: &failedAt, EndedAt: &failedAt, Call: call,
+		})
+		batch.Messages = append(batch.Messages, IngestMessage{
+			Sequence: 9, ProviderMessageID: "uuid-9", Role: "user", TurnIndex: &turnIdx2,
+			PartsJSON: []byte(`[{"type":"text","text":"continue"}]`), SourceLine: 9, OccurredAt: &failedAt,
+		})
+		return batch
+	}
+	callsOn := func(turnID uuid.UUID) []modelCallRecord {
+		var calls []modelCallRecord
+		require.NoError(t, db.gorm.WithContext(t.Context()).Where("turn_id = ?", turnID).Find(&calls).Error)
+		return calls
+	}
+
+	session, err := db.IngestTranscript(t.Context(), withFailedTurn(&IngestModelCall{
+		Model: placeholder, Provider: "anthropic", Currency: "USD", StartedAt: &failedAt, EndedAt: &failedAt,
+	}))
+	require.NoError(t, err)
+	overview, err := db.GetSessionOverviewByIdentity(t.Context(), testProviderSessionID)
+	require.NoError(t, err)
+	require.NotNil(t, overview.Model)
+	require.Equal(t, placeholder, *overview.Model, "fixture: the earlier parse recorded the placeholder")
+
+	var failed turnRecord
+	require.NoError(t, db.gorm.WithContext(t.Context()).
+		Where("session_id = ? AND turn_index = ?", session.ID, turnIdx2).First(&failed).Error)
+
+	_, err = db.IngestTranscript(t.Context(), withFailedTurn(nil))
+	require.NoError(t, err)
+	assert.Empty(t, callsOn(failed.ID), "replay drops the stale transcript call")
+	overview, err = db.GetSessionOverviewByIdentity(t.Context(), testProviderSessionID)
+	require.NoError(t, err)
+	require.NotNil(t, overview.Model)
+	assert.Equal(t, "claude-sonnet-5", *overview.Model, "latest model is the last turn that ran one")
+
+	run, err := db.CreatePromptRun(t.Context(), CreatePromptRunInput{SessionID: session.ID, TurnID: &failed.ID})
+	require.NoError(t, err)
+	chatCallID, err := db.CreateChatModelCall(t.Context(), CreateChatModelCallInput{
+		TurnID: failed.ID, PromptRunID: run.ID, Model: "claude-opus-5-5", Provider: "anthropic", Mode: "agent",
+	})
+	require.NoError(t, err)
+	_, err = db.IngestTranscript(t.Context(), withFailedTurn(nil))
+	require.NoError(t, err)
+	calls := callsOn(failed.ID)
+	require.Len(t, calls, 1, "a chat call on the turn survives the replay")
+	assert.Equal(t, chatCallID, calls[0].ID)
+}
+
 func TestIngestRecordsSourceBookkeepingLast(t *testing.T) {
 	db := openIngestTestDB(t)
 	modTime := time.Now().UTC().Truncate(time.Second)
