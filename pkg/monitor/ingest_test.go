@@ -23,6 +23,27 @@ func TestUnifiedIngestInputPreservesTurnEffort(t *testing.T) {
 	}
 }
 
+func TestUnifiedIngestInputRecordsNoCallForTurnsThatRanNoModel(t *testing.T) {
+	// A turn whose only assistant output is Claude Code's placeholder for a
+	// failed request has no model and no usage: it made no model call, and a
+	// fabricated one would become the model a resume requests.
+	const model = "claude-opus-5-5"
+	input := unifiedIngestInput(&session.Session{Turns: []session.Turn{
+		{ID: "turn-9", Index: 9, Model: model},
+		{ID: "turn-10", Index: 10},
+	}}, "claude", func(session.Message, int) int64 { return 0 })
+
+	if len(input.Turns) != 2 {
+		t.Fatalf("turns = %+v, want both turns", input.Turns)
+	}
+	if call := input.Turns[0].Call; call == nil || call.Model != model {
+		t.Errorf("turn 9 call = %+v, want model %s", call, model)
+	}
+	if call := input.Turns[1].Call; call != nil {
+		t.Errorf("turn 10 call = %+v, want none", call)
+	}
+}
+
 func TestUnifiedIngestInputPreservesAgentTurnOwnership(t *testing.T) {
 	input := unifiedIngestInput(&session.Session{Turns: []session.Turn{{
 		ID: "child/turn-1", AgentID: "child", Index: 1, Model: "claude-haiku-4-5",
