@@ -1,0 +1,53 @@
+package prompt
+
+import (
+	"os/exec"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/flanksource/captain/pkg/api"
+)
+
+var _ = Describe("shq helper", func() {
+	DescribeTable("quotes a value as one POSIX shell word",
+		func(value, quoted string) {
+			Expect(ShellQuote(value)).To(Equal(quoted))
+			// The property that matters: the shell reads back exactly the value.
+			out, err := exec.Command("sh", "-c", "printf %s "+quoted).Output()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(out)).To(Equal(value))
+		},
+		Entry("plain", "topic", `'topic'`),
+		Entry("spaces", "fix the  bug", `'fix the  bug'`),
+		Entry("single quotes", "it's 'done'", `'it'\''s '\''done'\'''`),
+		Entry("command substitution", "$(rm -rf /)", `'$(rm -rf /)'`),
+		Entry("empty", "", `''`),
+	)
+
+	It("renders in frontmatter and body, beside plain run variables", func() {
+		source := `---
+setup:
+  cwd: "{{worktree}}"
+workflow:
+  verify:
+    commands: ["go test ./..."]
+  after:
+    - cwd: "{{repo}}"
+      commands:
+        - git -C {{repo}} merge --ff-only {{shq branch}}
+---
+Merge {{shq branch}} into {{repo}}.
+`
+		data := map[string]any{"repo": "/src/repo", "worktree": "/src/wt", "branch": "topic's $(rm -rf /)"}
+		req, _, err := Load(source).Render(RenderOptions{Data: data, Declared: true})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(req.Setup.Cwd).To(Equal("/src/wt"))
+		Expect(req.Workflow.After).To(Equal([]api.AfterStep{{
+			Cwd:      "/src/repo",
+			Commands: []string{`git -C /src/repo merge --ff-only 'topic'\''s $(rm -rf /)'`},
+		}}))
+		Expect(req.Prompt.User).To(Equal(`Merge 'topic'\''s $(rm -rf /)' into /src/repo.`))
+	})
+})

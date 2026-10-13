@@ -11,8 +11,9 @@ import (
 // equal PROTOCOL_VERSION in protocol.ts; bump both when the bridge contract
 // changes. Version 2 added can_use_tool interrupt and the elicit request.
 // Version 3 added session/state, which ends a turn, and parent_tool_use_id on
-// subagent tool notifications.
-const bridgeProtocolVersion = 3
+// subagent tool notifications. Version 4 made the git add/commit guard
+// conditional on initialize's guardGitCommits.
+const bridgeProtocolVersion = 4
 
 // initializeReply is agent.ts's answer to initialize.
 type initializeReply struct {
@@ -59,4 +60,9 @@ type initializeParams struct {
 	// StrictMCPConfig limits the SDK to MCPServers. Without it every ambient
 	// server (.mcp.json, user settings, plugins) loads alongside them.
 	StrictMCPConfig bool `json:"strictMcpConfig,omitempty"`
+	// GuardGitCommits blocks the agent's own `git add`/`git commit`. It is set
+	// only when the run's commits are owned — workflow.commits is declared, which
+	// is also the declaration a host owning commits (promptrun CallerOwnsCommits)
+	// keeps on the request. Otherwise git falls through to the permission rules.
+	GuardGitCommits bool `json:"guardGitCommits"`
 }

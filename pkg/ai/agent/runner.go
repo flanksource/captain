@@ -165,8 +165,12 @@ func (r *Runner[T]) post(hc *HookContext, phase Phase) error {
 		if !ok || !handlesPhase(ph, phase) {
 			continue
 		}
-		if err := ph.Post(hc, phase); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("agent: %s hook %q: %w", phase, ph.Name(), err)
+		if err := ph.Post(hc, phase); err != nil {
+			wrapped := fmt.Errorf("agent: %s hook %q: %w", phase, ph.Name(), err)
+			hc.PostErr = errors.Join(hc.PostErr, wrapped)
+			if firstErr == nil {
+				firstErr = wrapped
+			}
 		}
 	}
 	return firstErr

@@ -24,6 +24,9 @@ var elicitationTS string
 //go:embed messages.ts
 var messagesTS string
 
+//go:embed bash_guard.ts
+var bashGuardTS string
+
 //go:embed package.json
 var agentPackageJSON string
 
@@ -47,6 +50,7 @@ func prepareAgentDir() (string, error) {
 		{"protocol.ts", protocolTS},
 		{"elicitation.ts", elicitationTS},
 		{"messages.ts", messagesTS},
+		{"bash_guard.ts", bashGuardTS},
 		{"package.json", agentPackageJSON},
 	}
 	for _, source := range sources {
