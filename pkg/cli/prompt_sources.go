@@ -32,7 +32,7 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 
 	seen := map[string]bool{}
 	addLocal := func(raw, base string) error {
-		dir, err := resolvePromptDir(raw, base)
+		dir, err := promptlib.ResolveDir(raw, base)
 		if err != nil {
 			return err
 		}
@@ -74,10 +74,18 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 	if err != nil {
 		return nil, err
 	}
-	for _, dir := range promptDirsFromContext(ctx) {
+	scoped := promptSourcesFromContext(ctx)
+	for _, dir := range scoped.Dirs {
 		if err := addLocal(dir, cwd); err != nil {
 			return nil, err
 		}
+	}
+	for _, host := range scoped.FS {
+		source, err := hostPromptSource(host, sources)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, source)
 	}
 	if _, ok := firstWritableSource(sources); !ok {
 		dir := filepath.Join(cwd, ".captain", "prompts")
@@ -93,53 +101,36 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 	return sources, nil
 }
 
-func promptDirsFromContext(ctx context.Context) []string {
+func promptSourcesFromContext(ctx context.Context) PromptSources {
 	if ctx == nil {
-		return nil
+		return PromptSources{}
 	}
-	if dirs, ok := ctx.Value(promptDirsContextKey{}).([]string); ok {
-		return dirs
-	}
-	return nil
+	sources, _ := ctx.Value(promptSourcesContextKey{}).(PromptSources)
+	return sources
 }
 
-func resolvePromptDir(raw, base string) (string, error) {
-	dir := strings.TrimSpace(raw)
-	if dir == "" {
-		return "", fmt.Errorf("prompt dir cannot be empty")
+// hostPromptSource turns a host's fs.FS into a read-only source whose id is its
+// label's slug. A label that cannot be addressed, or whose id another source
+// already holds, is refused: two sources under one id make every prompt id they
+// encode ambiguous.
+func hostPromptSource(host PromptFS, existing []promptSource) (promptSource, error) {
+	label := strings.TrimSpace(host.Label)
+	if label == "" {
+		return promptSource{}, fmt.Errorf("prompt source label is required")
 	}
-	if strings.HasPrefix(dir, "~") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
+	if host.FS == nil {
+		return promptSource{}, fmt.Errorf("prompt source %q has no fs.FS", label)
+	}
+	id := slugPromptName(label)
+	if id == "" {
+		return promptSource{}, fmt.Errorf("prompt source label %q has no usable id", label)
+	}
+	for _, source := range existing {
+		if source.ID == id {
+			return promptSource{}, fmt.Errorf("prompt source %q: id %q is already registered by %q", label, id, source.Label)
 		}
-		switch {
-		case dir == "~":
-			dir = home
-		case strings.HasPrefix(dir, "~/"):
-			dir = filepath.Join(home, dir[2:])
-		default:
-			return "", fmt.Errorf("unsupported home-relative prompt dir %q", raw)
-		}
 	}
-	if !filepath.IsAbs(dir) {
-		dir = filepath.Join(base, dir)
-	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return "", fmt.Errorf("prompt dir %s: %w", abs, err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("prompt dir %s is not a directory", abs)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
-	return filepath.Clean(abs), nil
+	return promptSource{Kind: "embedded", ID: id, Label: label, WalkRoot: ".", FS: host.FS}, nil
 }
 
 func writableSourceByID(sources []promptSource, id string) (promptSource, bool) {
@@ -270,7 +261,7 @@ func ValidatePromptDirs(dirs []string) error {
 		return err
 	}
 	for _, dir := range dirs {
-		if _, err := resolvePromptDir(dir, cwd); err != nil {
+		if _, err := promptlib.ResolveDir(dir, cwd); err != nil {
 			return err
 		}
 	}

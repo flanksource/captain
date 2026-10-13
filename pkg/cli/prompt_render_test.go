@@ -19,7 +19,7 @@ func TestRenderPromptAppliesRuntimeSpec(t *testing.T) {
 	dir := t.TempDir()
 	cwd := t.TempDir()
 	t.Chdir(cwd)
-	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+	ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 	content := `---
 name: Runtime Spec
 model: claude-sonnet-4-6
@@ -278,7 +278,7 @@ func TestRenderPromptResolvesSandbox(t *testing.T) {
 
 			dir := t.TempDir()
 			t.Chdir(t.TempDir())
-			ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+			ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 			created, err := createPrompt(ctx, map[string]any{
 				"name": "Sandboxed",
 				"content": "---\nname: Sandboxed\nmodel: claude-code-opus\n" + tt.frontmatter +
@@ -317,7 +317,7 @@ func TestRenderPromptPreservesSandboxMetadata(t *testing.T) {
 	isolateCaptainConfig(t)
 	dir := t.TempDir()
 	t.Chdir(t.TempDir())
-	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+	ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 	created, err := createPrompt(ctx, map[string]any{
 		"name":    "Sandboxed",
 		"content": "---\nname: Sandboxed\nmodel: claude-code-opus\nsandbox: off\n---\n{{role \"user\"}}\nHello\n",
@@ -412,7 +412,7 @@ func TestRenderPromptRunnability(t *testing.T) {
 			isolateCaptainConfig(t)
 			dir := t.TempDir()
 			t.Chdir(t.TempDir())
-			ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+			ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 			created, err := createPrompt(ctx, map[string]any{
 				"name": "Runnable",
 				"content": "---\nname: Runnable\nmodel: claude-sonnet-4-6\n" + tt.frontmatter +
