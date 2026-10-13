@@ -49,6 +49,12 @@ type TranscriptEvent struct {
 	Data    map[string]any `json:"data,omitempty"`
 }
 
+// SyntheticModel is the model Claude Code stamps on messages it writes itself,
+// such as the placeholder explaining a failed API request. It names no model,
+// so decoding drops it: recorded as the session's model, a resume would request
+// it and fail with model_not_found.
+const SyntheticModel = "<synthetic>"
+
 // Message represents a conversation message
 type Message struct {
 	// ID is the provider's message id (e.g. "msg_011Cdhc1..."), identifying one
@@ -80,7 +86,9 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	}
 
 	m.ID = alias.ID
-	m.Model = alias.Model
+	if alias.Model != SyntheticModel {
+		m.Model = alias.Model
+	}
 	m.Role = alias.Role
 	m.StopReason = alias.StopReason
 	m.Usage = alias.Usage
