@@ -83,7 +83,7 @@ Review the screenshot.
 
 	DescribeTable("resolves a discovered prompt by bare filename",
 		func(id string) {
-			ctx := ContextWithPromptDirs(context.Background(), []string{filepath.Dir(path)})
+			ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{filepath.Dir(path)}})
 			expectedPath, err := filepath.EvalSymlinks(path)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -101,7 +101,7 @@ Review the screenshot.
 		otherDir := GinkgoT().TempDir()
 		otherPath := filepath.Join(otherDir, filepath.Base(path))
 		Expect(os.WriteFile(otherPath, []byte("Review this screenshot."), 0o600)).To(Succeed())
-		ctx := ContextWithPromptDirs(context.Background(), []string{filepath.Dir(path), otherDir})
+		ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{filepath.Dir(path), otherDir}})
 
 		_, err := resolvePromptRecord(ctx, promptRecordOptions{ID: "compare"})
 
@@ -162,7 +162,7 @@ Review the screenshot.
 				executed = append(executed, cfg.Model)
 				return AIPromptResult{Text: "ok", Model: cfg.Model.Name, Provider: cfg.Model.Provider.Name, Mode: string(cfg.Model.Mode)}, nil
 			}
-			ctx := ContextWithPromptDirs(context.Background(), []string{filepath.Dir(path)})
+			ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{filepath.Dir(path)}})
 			rendered, err := renderPromptCLI(ctx, id, AIPromptOptions{}, "", "")
 			Expect(err).NotTo(HaveOccurred())
 

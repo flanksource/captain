@@ -18,7 +18,7 @@ import (
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
 
-type promptDirsContextKey struct{}
+type promptSourcesContextKey struct{}
 
 var registerPromptEntityOnce sync.Once
 
@@ -224,16 +224,40 @@ func RegisterPromptEntity() {
 	})
 }
 
-func ContextWithPromptDirs(ctx context.Context, dirs []string) context.Context {
-	return context.WithValue(ctx, promptDirsContextKey{}, append([]string(nil), dirs...))
+// PromptFS is a read-only prompt source a host embeds (typically an embed.FS,
+// or an fs.Sub of one). Its .prompt files are listed under Label, resolve by
+// bare name like any other source, and are never written.
+type PromptFS struct {
+	Label string
+	FS    fs.FS
 }
 
-func PromptDirsMiddleware(next http.Handler, dirs []string) http.Handler {
-	if len(dirs) == 0 {
+// PromptSources are the request-scoped prompt sources layered over captain's
+// embedded examples and configured prompt dirs: writable local Dirs (resolved
+// against the process cwd) and read-only host FS sources.
+type PromptSources struct {
+	Dirs []string
+	FS   []PromptFS
+}
+
+func (s PromptSources) empty() bool { return len(s.Dirs) == 0 && len(s.FS) == 0 }
+
+// ContextWithPromptSources scopes prompt discovery and resolution under ctx to
+// sources, so `prompt list|get|render|run` see them.
+func ContextWithPromptSources(ctx context.Context, sources PromptSources) context.Context {
+	return context.WithValue(ctx, promptSourcesContextKey{}, PromptSources{
+		Dirs: append([]string(nil), sources.Dirs...),
+		FS:   append([]PromptFS(nil), sources.FS...),
+	})
+}
+
+// PromptSourcesMiddleware applies ContextWithPromptSources to every request.
+func PromptSourcesMiddleware(next http.Handler, sources PromptSources) http.Handler {
+	if sources.empty() {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next.ServeHTTP(w, r.WithContext(ContextWithPromptDirs(r.Context(), dirs)))
+		next.ServeHTTP(w, r.WithContext(ContextWithPromptSources(r.Context(), sources)))
 	})
 }
 

@@ -112,7 +112,7 @@ func TestPromptEntityCreatesUpdatesRendersAndDeletesLocalPrompt(t *testing.T) {
 	isolateCaptainConfig(t)
 
 	dir := t.TempDir()
-	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+	ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 	content := `---
 name: Greeting
 description: Test prompt
@@ -198,7 +198,7 @@ func TestPromptEntityExposesOutputSchema(t *testing.T) {
 	isolateCaptainConfig(t)
 
 	dir := t.TempDir()
-	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+	ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 	content := `---
 name: Structured
 model: claude-sonnet-4-6
@@ -261,7 +261,7 @@ func TestUpdateEmbeddedPromptRequiresSaveAs(t *testing.T) {
 	isolateCaptainConfig(t)
 
 	dir := t.TempDir()
-	ctx := ContextWithPromptDirs(context.Background(), []string{dir})
+	ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 
 	embedded, err := findEmbeddedPrompt(ctx, "testdata/commit.prompt")
 	if err != nil {
