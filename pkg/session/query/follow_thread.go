@@ -87,18 +87,13 @@ func (t followThread) sessionIDs(rows []database.TranscriptMessage) []string {
 	return ids
 }
 
-// threadMessages projects the thread's stored rows. Until the transcript
-// reaches the database the provider's log file is the only source, and it is
-// dropped the moment the database carries messages.
+// threadMessages uses the authoritative transcript when available, matching
+// the initial session read even while database ingestion is incomplete.
 func (f *follower) threadMessages(ctx context.Context, thread followThread, rows []database.TranscriptMessage) ([]session.Message, error) {
-	if len(rows) > 0 {
-		f.stopTail()
-		return f.projectRows(ctx, rows)
-	}
 	path, source, ok := preIngestTranscript(thread.primary)
 	if !ok {
 		f.stopTail()
-		return nil, nil
+		return f.projectRows(ctx, rows)
 	}
 	if f.tail == nil || f.tail.path != path {
 		f.stopTail()
@@ -108,7 +103,14 @@ func (f *follower) threadMessages(ctx context.Context, thread followThread, rows
 		}
 		f.tail = tail
 	}
-	return f.tail.messages()
+	messages, err := f.tail.messages()
+	if err != nil {
+		return nil, err
+	}
+	if len(messages) > 0 {
+		return messages, nil
+	}
+	return f.projectRows(ctx, rows)
 }
 
 func (f *follower) projectRows(ctx context.Context, rows []database.TranscriptMessage) ([]session.Message, error) {
