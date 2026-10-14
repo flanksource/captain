@@ -254,11 +254,11 @@ func cmuxExtraArgs(agent string, req ai.Request) (any, error) {
 		if err := decodeCLIArgs(req.CLIArgs, &opts); err != nil {
 			return nil, err
 		}
-		if req.Sandbox == nil {
-			return &opts, nil
-		}
 		if opts.Sandbox != "" || opts.AskForApproval != "" {
-			return nil, fmt.Errorf("sandbox conflicts with cliArgs sandbox/askForApproval")
+			if req.Sandbox != nil {
+				return nil, fmt.Errorf("sandbox conflicts with cliArgs sandbox/askForApproval")
+			}
+			return &opts, nil
 		}
 		translation, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeCmux), req.Sandbox, req.Permissions.Mode)
 		if err != nil {
