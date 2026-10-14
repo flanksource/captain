@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	tldrHook   = "plan-tldr"
-	tldrText   = "**TL;DR** add a cache"
-	notesHook  = "notes"
-	notesText  = "reviewed by bot"
+	tldrHook  = "plan-tldr"
+	tldrText  = "**TL;DR** add a cache"
+	notesHook = "notes"
+	notesText = "reviewed by bot"
 )
 
 func writePrompt(dir, name, frontmatter string) {
@@ -57,6 +57,7 @@ var _ = Describe("plan hooks", func() {
 			writePrompt(dir, notesHook, "model: api:haiku\nhook: {on: plan.revision, mode: append}")
 			writePrompt(dir, "other-event", "hook: {on: session.end, mode: append}")
 			writePrompt(dir, "plain", "model: api:haiku")
+			writePrompt(dir, "pr-status", "hook: {on: prompt.context, mode: substitute, match: '#\\d+'}")
 			hooks, err := plans.DiscoverHooks(dir)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hookNames(hooks)).To(Equal(map[string]promptlib.HookMode{notesHook: promptlib.HookAppend}))
@@ -71,6 +72,10 @@ var _ = Describe("plan hooks", func() {
 			},
 			Entry("unknown mode", "hook: {on: plan.revision, mode: overwrite}", `mode "overwrite"`),
 			Entry("missing event", "hook: {mode: prepend}", "`on` is required"),
+			Entry("match", "hook: {on: plan.revision, mode: append, match: x}", "plan.revision hooks do not support match"),
+			Entry("when", "hook: {on: plan.revision, mode: append, when: 'true'}", "plan.revision hooks do not support when"),
+			Entry("render", "hook: {on: plan.revision, mode: append, render: model}", "plan.revision hooks do not support render"),
+			Entry("substitute", "hook: {on: plan.revision, mode: substitute, match: x}", "plan.revision hooks do not support mode substitute"),
 		)
 	})
 

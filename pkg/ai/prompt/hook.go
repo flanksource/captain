@@ -16,21 +16,42 @@ const (
 	HookReplace HookMode = "replace"
 	HookPrepend HookMode = "prepend"
 	HookAppend  HookMode = "append"
+	// HookSubstitute replaces only the span `match` matched; it requires match.
+	HookSubstitute HookMode = "substitute"
+)
+
+// HookRender is how a hook produces its output.
+type HookRender string
+
+const (
+	// HookRenderTemplate renders the hook body with its variables; no model call.
+	HookRenderTemplate HookRender = "template"
+	// HookRenderModel executes the rendered hook prompt with its frontmatter model.
+	HookRenderModel HookRender = "model"
 )
 
 // HookSpec is the `hook:` frontmatter block that turns a .prompt file into a
-// lifecycle hook. The owner of the event (e.g. pkg/plans for plan.revision)
-// discovers the files and decides which events it supports.
+// lifecycle hook. The owner of the event (e.g. pkg/plans for plan.revision,
+// pkg/promptcontext for prompt.context) discovers the files, decides which
+// events it supports and which of these keys its event accepts.
 type HookSpec struct {
 	// On is the event the hook runs on, e.g. "plan.revision".
 	On string `yaml:"on"`
-	// Mode is replace, prepend or append.
+	// Mode is replace, prepend, append or substitute.
 	Mode HookMode `yaml:"mode"`
 	// Field selects one string field of the structured output; empty uses the
 	// response text.
 	Field string `yaml:"field,omitempty"`
 	// Disabled turns off a same-named hook from an earlier prompt source.
 	Disabled bool `yaml:"disabled,omitempty"`
+	// Match is an RE2 pattern the hooked content must match for the hook to run;
+	// its named groups become the hook's captures.
+	Match string `yaml:"match,omitempty"`
+	// When is a CEL predicate, evaluated after Match, that must hold for the hook
+	// to run.
+	When string `yaml:"when,omitempty"`
+	// Render is template or model; empty leaves the choice to the event owner.
+	Render HookRender `yaml:"render,omitempty"`
 }
 
 // Hook returns the template's `hook:` frontmatter, or nil when it declares none.
@@ -51,12 +72,28 @@ func (t *Template) Hook() (*HookSpec, error) {
 	if strings.TrimSpace(fm.Hook.On) == "" {
 		return nil, fmt.Errorf("prompt %s hook: `on` is required", t.name)
 	}
-	switch fm.Hook.Mode {
-	case HookReplace, HookPrepend, HookAppend:
-	default:
-		return nil, fmt.Errorf("prompt %s hook: mode %q must be one of replace, prepend, append", t.name, fm.Hook.Mode)
+	if err := fm.Hook.validate(); err != nil {
+		return nil, fmt.Errorf("prompt %s hook: %w", t.name, err)
 	}
 	return fm.Hook, nil
+}
+
+func (h HookSpec) validate() error {
+	switch h.Mode {
+	case HookReplace, HookPrepend, HookAppend:
+	case HookSubstitute:
+		if strings.TrimSpace(h.Match) == "" {
+			return fmt.Errorf("mode substitute requires `match`")
+		}
+	default:
+		return fmt.Errorf("mode %q must be one of replace, prepend, append, substitute", h.Mode)
+	}
+	switch h.Render {
+	case "", HookRenderTemplate, HookRenderModel:
+		return nil
+	default:
+		return fmt.Errorf("render %q must be one of template, model", h.Render)
+	}
 }
 
 // Name is the name render errors are reported against (a path for files).

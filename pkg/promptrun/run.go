@@ -26,6 +26,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/promptcontext"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	"github.com/flanksource/commons/logger"
 )
@@ -94,6 +95,11 @@ type Input struct {
 	// Repo is the root of the tree the run's changed files are recorded relative
 	// to; empty means the request's cwd.
 	Repo string
+	// ContextSources are where Run discovers prompt.context hooks
+	// (promptcontext.DefaultSources, plus a host's own). Run applies them to
+	// Resolved.Spec before admission, so what is recorded and every verify retry
+	// carry the enriched prompt. Empty leaves the prompt untouched.
+	ContextSources []promptcontext.Source
 }
 
 type ApprovalOptions struct {
@@ -110,6 +116,9 @@ type ApprovalOptions struct {
 // stopped. Result.PromptRunID names the row; a store error fails the run.
 func Run(ctx context.Context, in Input) (Result, error) {
 	if err := validateApprovalOptions(in, true); err != nil {
+		return Result{}, err
+	}
+	if err := applyContext(ctx, &in); err != nil {
 		return Result{}, err
 	}
 	if in.Record == nil {

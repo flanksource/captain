@@ -3,19 +3,16 @@ package plans
 import (
 	"context"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/middleware"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
+	"github.com/flanksource/captain/pkg/ai/prompt/hookrun"
 	"github.com/flanksource/captain/pkg/captainconfig"
 )
 
@@ -45,8 +42,6 @@ type Hook struct {
 	Source string
 	Run    func(ctx context.Context, input HookInput) (string, error)
 }
-
-var hookNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // HookDirs is the runtime search path for hook prompts after the embedded
 // defaults: the configured captain prompt dirs, then <workDir>/.captain/prompts
@@ -123,8 +118,8 @@ func loadHooks(fsys fs.FS, label string, byName map[string]Hook) error {
 			return nil
 		}
 		name := strings.TrimSuffix(path.Base(file), ".prompt")
-		if !hookNameRe.MatchString(name) {
-			return fmt.Errorf("%s: hook name %q must match %s", source, name, hookNameRe)
+		if !promptlib.HookNameRe.MatchString(name) {
+			return fmt.Errorf("%s: hook name %q must match %s", source, name, promptlib.HookNameRe)
 		}
 		if spec.Disabled {
 			delete(byName, name)
@@ -133,54 +128,38 @@ func loadHooks(fsys fs.FS, label string, byName map[string]Hook) error {
 		if spec.On != RevisionEvent {
 			return nil
 		}
+		if err := validateRevisionHook(*spec); err != nil {
+			return fmt.Errorf("%s: %w", source, err)
+		}
 		byName[name] = Hook{Name: name, Mode: spec.Mode, Source: source, Run: templateRun(tmpl, name, spec.Field)}
 		return nil
 	})
 }
 
-// templateRun executes a hook prompt with the model its frontmatter declares.
-func templateRun(tmpl *promptlib.Template, name, field string) func(context.Context, HookInput) (string, error) {
-	return func(ctx context.Context, input HookInput) (output string, err error) {
-		req, cfg, err := tmpl.Render(promptlib.RenderOptions{Data: map[string]any{
-			"title": input.Title, "plan": input.Markdown, "prior": input.Prior,
-		}})
-		if err != nil {
-			return "", err
-		}
-		agent, err := middleware.NewAgent(cfg)
-		if err != nil {
-			return "", fmt.Errorf("create agent: %w", err)
-		}
-		defer func() {
-			if closeErr := agent.Close(); closeErr != nil && err == nil {
-				err = fmt.Errorf("close agent: %w", closeErr)
-			}
-		}()
-		resp, err := agent.ExecutePrompt(ctx, ai.PromptRequest{Name: "plan hook " + name, Spec: req})
-		if err != nil {
-			return "", err
-		}
-		if field == "" {
-			return resp.Result, nil
-		}
-		return structuredField(resp.StructuredData, field)
+// validateRevisionHook rejects the hook keys plan.revision has no meaning for:
+// a revision hook always runs, on the whole body, through its model.
+func validateRevisionHook(spec promptlib.HookSpec) error {
+	if spec.Mode == promptlib.HookSubstitute {
+		return fmt.Errorf("%s hooks do not support mode %s", RevisionEvent, spec.Mode)
 	}
+	switch {
+	case spec.Match != "":
+		return fmt.Errorf("%s hooks do not support match", RevisionEvent)
+	case spec.When != "":
+		return fmt.Errorf("%s hooks do not support when", RevisionEvent)
+	case spec.Render != "":
+		return fmt.Errorf("%s hooks do not support render", RevisionEvent)
+	}
+	return nil
 }
 
-func structuredField(data any, field string) (string, error) {
-	raw, err := json.Marshal(data)
-	if err != nil {
-		return "", fmt.Errorf("encode structured output: %w", err)
+// templateRun executes a hook prompt with the model its frontmatter declares.
+func templateRun(tmpl *promptlib.Template, name, field string) func(context.Context, HookInput) (string, error) {
+	return func(ctx context.Context, input HookInput) (string, error) {
+		return hookrun.Execute(ctx, tmpl, hookrun.Options{Name: "plan hook " + name, Field: field, Data: map[string]any{
+			"title": input.Title, "plan": input.Markdown, "prior": input.Prior,
+		}})
 	}
-	var fields map[string]any
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return "", fmt.Errorf("structured output is not an object: %s", raw)
-	}
-	value, ok := fields[field].(string)
-	if !ok {
-		return "", fmt.Errorf("structured output has no string field %q: %s", field, raw)
-	}
-	return value, nil
 }
 
 // applyHooks runs each hook over the stripped body. When the body equals the
@@ -219,35 +198,13 @@ func applyHooks(ctx context.Context, hooks []Hook, title, markdown, prior string
 	return strings.Join(append(append(before, body), after...), "\n\n"), nil
 }
 
-const blockOpen, blockClose = "<!-- captain:hook:", " -->"
+var hookBlocks = promptlib.NewHookBlocks("captain:hook")
 
-var blockRe = regexp.MustCompile(`(?s)<!-- captain:hook:([a-z0-9-]+) -->\n?(.*?)\n?<!-- /captain:hook:([a-z0-9-]+) -->`)
-
-func block(name, output string) string {
-	return blockOpen + name + blockClose + "\n" + output + "\n<!-- /captain:hook:" + name + blockClose
-}
+func block(name, output string) string { return hookBlocks.Wrap(name, output) }
 
 // Blocks returns the text of every hook block in markdown, keyed by hook name.
-func Blocks(markdown string) map[string]string {
-	blocks := map[string]string{}
-	for _, match := range blockRe.FindAllStringSubmatch(markdown, -1) {
-		if match[1] == match[3] {
-			blocks[match[1]] = strings.TrimSpace(match[2])
-		}
-	}
-	return blocks
-}
+func Blocks(markdown string) map[string]string { return hookBlocks.Find(markdown) }
 
 // StripBlocks returns markdown without its hook blocks: the plan body a person
 // or agent authored.
-func StripBlocks(markdown string) string {
-	markdown = strings.ReplaceAll(strings.ReplaceAll(markdown, "\r\n", "\n"), "\r", "\n")
-	stripped := blockRe.ReplaceAllStringFunc(markdown, func(match string) string {
-		parts := blockRe.FindStringSubmatch(match)
-		if parts[1] != parts[3] {
-			return match
-		}
-		return ""
-	})
-	return strings.TrimSpace(stripped)
-}
+func StripBlocks(markdown string) string { return hookBlocks.Strip(markdown) }
