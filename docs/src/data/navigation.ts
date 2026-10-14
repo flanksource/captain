@@ -50,9 +50,9 @@ export const docSections: DocSection[] = [
         status: "ready",
       },
       {
-        label: "Plan Hooks",
+        label: "Prompt Hooks",
         href: "/prompts/hooks/",
-        description: "Prompts that rewrite or decorate every saved plan revision.",
+        description: "Prompts that decorate every saved plan revision or enrich a run's initial prompt.",
         status: "ready",
       },
     ],

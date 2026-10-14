@@ -14,6 +14,7 @@ require (
 	github.com/flanksource/commons v1.60.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/google/cel-go v0.31.0
 	github.com/google/dotprompt/go v0.0.0-20260708220100-73beb993ac95
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.14.0
@@ -222,7 +223,6 @@ require (
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/google/cel-go v0.31.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
