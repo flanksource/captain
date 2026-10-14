@@ -358,7 +358,7 @@ func codexModes(suppressesEscalation bool) map[PermissionMode]Support {
 			Approval: string(CodexApprovalOnRequest), Reviewer: string(CodexReviewerAutoReview),
 		}},
 		PermissionBypass: codexPosture(CodexApprovalNever, CodexReviewerUser,
-			"approval prompts are disabled without changing the configured sandbox isolation"),
+			"approval prompts are disabled without lifting sandbox isolation; with no sandbox requested it writes the workspace"),
 		PermissionDontAsk: unsupported(
 			"codex cannot preserve tool-level denial while disabling approval prompts"),
 	}

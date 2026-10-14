@@ -58,9 +58,7 @@ func TranslateCodexSandbox(runtime Runtime, ref *SandboxRef, mode PermissionMode
 	}
 	posture := CodexSandboxTranslation{Approval: codexApproval(mode), ApprovalsReviewer: codexReviewer(mode)}
 	if ref == nil {
-		if mode == PermissionPlan {
-			posture.Sandbox = CodexSandboxReadOnly
-		}
+		posture.Sandbox = codexUnsandboxedPosture(mode)
 		return posture, nil
 	}
 	if err := ref.Validate(); err != nil {
@@ -83,6 +81,25 @@ func TranslateCodexSandbox(runtime Runtime, ref *SandboxRef, mode PermissionMode
 		return translateCodexNative(runtime, ref.Policy, mode, posture)
 	default:
 		return CodexSandboxTranslation{}, fmt.Errorf("%s sandbox mode %q is unsupported", runtime, ref.Mode)
+	}
+}
+
+// codexUnsandboxedPosture states the Codex sandbox a posture needs when the run
+// asks for no sandbox. Codex's own fallback is read-only in a clean CODEX_HOME,
+// so a posture that edits its workspace (acceptEdits, auto, bypassPermissions)
+// must name workspace-write; bypass only stops the asking and never lifts
+// isolation to danger-full-access. Default and an unstated posture name no
+// sandbox and inherit the user's Codex configuration.
+func codexUnsandboxedPosture(mode PermissionMode) CodexSandbox {
+	switch mode {
+	case PermissionPlan:
+		return CodexSandboxReadOnly
+	case PermissionAcceptEdits, PermissionAuto, PermissionBypass:
+		return CodexSandboxWorkspaceWrite
+	case "", PermissionDefault:
+		return ""
+	default:
+		panic(fmt.Sprintf("invalid validated Codex permission mode %q", mode))
 	}
 }
 

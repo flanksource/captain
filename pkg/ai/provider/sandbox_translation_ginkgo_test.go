@@ -11,6 +11,19 @@ import (
 )
 
 var _ = Describe("provider-neutral sandbox translation", func() {
+	It("lets an acceptEdits Codex run write its workspace when no sandbox is requested", func() {
+		req := ai.Request{Prompt: api.Prompt{User: "edit"}, Permissions: api.Permissions{Mode: api.PermissionAcceptEdits}}
+
+		args, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: "gpt-5.5"}, req)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(cleanup)
+		turn, err := buildTurnStartParams("gpt-5.5", req, "thread-1", nil)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(sandboxFlagValue(args, "--sandbox")).To(Equal("workspace-write"))
+		Expect(turn["sandboxPolicy"]).To(Equal(map[string]any{"type": "workspaceWrite"}))
+	})
+
 	It("writes one Claude settings document with native isolation and approval", func() {
 		required := true
 		allowLocalBinding := false

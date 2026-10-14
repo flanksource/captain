@@ -125,6 +125,39 @@ func TestCmuxExtraArgs(t *testing.T) {
 	}
 }
 
+func TestCmuxExtraArgsCodexPostureWithoutSandbox(t *testing.T) {
+	cases := []struct {
+		name string
+		req  ai.Request
+		want api.CodexCmuxOptions
+	}{
+		{
+			name: "acceptEdits writes its workspace",
+			req:  ai.Request{Permissions: api.Permissions{Mode: api.PermissionAcceptEdits}},
+			want: api.CodexCmuxOptions{Sandbox: api.CodexSandboxWorkspaceWrite, AskForApproval: api.CodexApprovalOnRequest},
+		},
+		{
+			name: "explicit cliArgs posture is kept",
+			req: ai.Request{
+				Permissions: api.Permissions{Mode: api.PermissionAcceptEdits},
+				CLIArgs:     map[string]any{"sandbox": "danger-full-access"},
+			},
+			want: api.CodexCmuxOptions{Sandbox: api.CodexSandboxDangerFull},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := cmuxExtraArgs("codex", tc.req)
+			if err != nil {
+				t.Fatalf("cmuxExtraArgs: %v", err)
+			}
+			if !reflect.DeepEqual(got, &tc.want) {
+				t.Errorf("cmuxExtraArgs = %#v, want %#v", got, &tc.want)
+			}
+		})
+	}
+}
+
 func TestWithEnvSortsAndQuotes(t *testing.T) {
 	got := withEnv("claude", map[string]string{"B": "2", "A": "o'clock"})
 	want := `A='o'\''clock' B='2' claude`

@@ -71,19 +71,19 @@ var _ = Describe("Codex app-server permissions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(start).To(HaveKeyWithValue("approvalPolicy", "never"))
 		Expect(start).To(HaveKeyWithValue("ephemeral", true))
-		Expect(start).NotTo(HaveKey("sandbox"))
+		Expect(start).To(HaveKeyWithValue("sandbox", "workspace-write"))
 		Expect(start).NotTo(HaveKey("runtimeWorkspaceRoots"))
 
 		resume, err := buildResumeParams(request, nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resume).To(HaveKeyWithValue("approvalPolicy", "never"))
-		Expect(resume).NotTo(HaveKey("sandbox"))
+		Expect(resume).To(HaveKeyWithValue("sandbox", "workspace-write"))
 		Expect(resume).NotTo(HaveKey("runtimeWorkspaceRoots"))
 
 		turn, err := buildTurnStartParams("gpt-5.6", request, "thread-1", nil)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(turn).To(HaveKeyWithValue("approvalPolicy", "never"))
-		Expect(turn).NotTo(HaveKey("sandboxPolicy"))
+		Expect(turn).To(HaveKeyWithValue("sandboxPolicy", map[string]any{"type": "workspaceWrite"}))
 		Expect(turn).NotTo(HaveKey("runtimeWorkspaceRoots"))
 	})
 
