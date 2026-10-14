@@ -144,6 +144,12 @@ var _ = Describe("VerifyReport", func() {
 				leaf("a", passed), leaf("b", func(n *api.VerifyNode) { n.Pending = true }),
 			}, api.VerifyStateQueued),
 			Entry("all skipped is skipped", []api.VerifyNode{leaf("a", func(n *api.VerifyNode) { n.Skipped = true })}, api.VerifyStateSkipped),
+			Entry("a skip beside a pass still passes", []api.VerifyNode{
+				leaf("a", passed), leaf("b", func(n *api.VerifyNode) { n.Skipped = true }),
+			}, api.VerifyStatePassed),
+			Entry("an elided summary with a skip beside passes still passes", []api.VerifyNode{
+				{Name: "go test", Summary: &api.VerifySummary{Total: 40, Passed: 39, Skipped: 1}},
+			}, api.VerifyStatePassed),
 			Entry("all passed is passed", []api.VerifyNode{leaf("a", passed), leaf("b", passed)}, api.VerifyStatePassed),
 		)
 
