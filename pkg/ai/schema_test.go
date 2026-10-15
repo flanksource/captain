@@ -213,14 +213,25 @@ func TestOpenAICompatibleSchema_RemovesAnnotationsFromReferences(t *testing.T) {
 	}
 
 	root := decodeSchemaObject(t, got)
-	if root["$ref"] != "#/$defs/PlanEnvelope" || root["$schema"] == nil || root["$defs"] == nil {
-		t.Fatalf("root reference metadata was not preserved: %#v", root)
+	if root["$schema"] == nil || root["$defs"] == nil {
+		t.Fatalf("root schema metadata was not preserved: %#v", root)
 	}
-	if _, exists := root["$id"]; exists {
-		t.Fatalf("root reference retained unsupported $id sibling: %#v", root)
+	for _, key := range []string{"$id", "$ref"} {
+		if _, exists := root[key]; exists {
+			t.Fatalf("root retained %s; OpenAI requires an inline object root: %#v", key, root)
+		}
+	}
+	if root["type"] != "object" || root["additionalProperties"] != false {
+		t.Fatalf("root = %#v, want the inlined PlanEnvelope object", root)
+	}
+	if !reflect.DeepEqual(root["required"], []any{"plan", "summary"}) {
+		t.Fatalf("root required = %#v, want every PlanEnvelope property", root["required"])
 	}
 	defs := root["$defs"].(map[string]any)
 	planEnvelope := defs["PlanEnvelope"].(map[string]any)
+	if !reflect.DeepEqual(root["properties"], planEnvelope["properties"]) {
+		t.Fatalf("root properties = %#v, want PlanEnvelope's %#v", root["properties"], planEnvelope["properties"])
+	}
 	plan := planEnvelope["properties"].(map[string]any)["plan"].(map[string]any)
 	if !reflect.DeepEqual(plan, map[string]any{"$ref": "#/$defs/PlanResult"}) {
 		t.Fatalf("plan reference = %#v, want a standalone $ref", plan)
@@ -236,6 +247,21 @@ func TestOpenAICompatibleSchema_RemovesAnnotationsFromReferences(t *testing.T) {
 		if object["additionalProperties"] != false {
 			t.Errorf("%s additionalProperties = %v, want false", name, object["additionalProperties"])
 		}
+	}
+}
+
+func TestOpenAICompatibleSchema_RejectsUnresolvableRootReference(t *testing.T) {
+	for name, raw := range map[string]string{
+		"missing definition": `{"$ref":"#/$defs/Missing","$defs":{}}`,
+		"remote reference":   `{"$ref":"https://example.com/envelope.json"}`,
+		"non-object root":    `{"$ref":"#/$defs/Name","$defs":{"Name":{"type":"string"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := OpenAICompatibleSchema(json.RawMessage(raw))
+			if err == nil || !strings.Contains(err.Error(), "must resolve to an object definition") {
+				t.Fatalf("OpenAICompatibleSchema(%s) error = %v, want unresolvable root $ref", raw, err)
+			}
+		})
 	}
 }
 
