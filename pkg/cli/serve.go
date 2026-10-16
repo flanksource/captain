@@ -214,13 +214,8 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}, and the
 	// /tasks/runs/stream run-list SSE the clicky-ui useTaskRuns hook subscribes to.
 	task.RegisterHandlers(route.NewRouter(mux), "/api/captain")
-	// Live session history for a prompt run.
-	mux.Handle("GET /api/captain/prompt/runs/{runId}/stream", handlePromptRunStream(promptRuns))
-	mux.Handle("GET /api/captain/prompt/runs/{runId}", handlePromptRunSnapshot(promptRuns))
-	mux.Handle("POST /api/captain/prompt/runs/{runId}/message", handlePromptRunMessage(promptChats))
-	mux.Handle("POST /api/captain/prompt/runs/{runId}/interrupt", handlePromptRunControl(promptChats, interruptChat))
-	mux.Handle("POST /api/captain/prompt/runs/{runId}/stop", handlePromptRunStop(promptRuns, promptChats))
-	mux.Handle("POST /api/captain/prompt/runs/{runId}/permission-mode", handlePromptRunControl(promptChats, switchChatPermissionMode))
+	// Live session history and controls for a prompt run.
+	mux.Handle("/api/captain/prompt/runs/", http.StripPrefix("/api/captain/prompt/runs", PromptRunHandler()))
 	mux.Handle("/api/captain/sessions/", http.StripPrefix("/api/captain/sessions", SessionHandler()))
 	chatHandler := chat.Handler()
 	mux.Handle("/api/chat", chatHandler)
@@ -281,7 +276,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	httpSrv := &http.Server{
 		Addr: addr,
 		Handler: rpchttp.TimingMiddleware(
-			auth(DatabaseContextMiddleware(PromptDirsMiddleware(root, opts.PromptDirs)))),
+			auth(DatabaseContextMiddleware(PromptSourcesMiddleware(root, PromptSources{Dirs: opts.PromptDirs})))),
 		TLSConfig: tlsConfig,
 		// Bounded at the headers rather than the whole request: a synchronous
 		// relay runs the supervisor's hook set inside the push, and a prompt

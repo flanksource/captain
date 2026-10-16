@@ -26,6 +26,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/promptcontext"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	"github.com/flanksource/commons/logger"
 )
@@ -94,6 +95,11 @@ type Input struct {
 	// Repo is the root of the tree the run's changed files are recorded relative
 	// to; empty means the request's cwd.
 	Repo string
+	// ContextSources are where Run discovers prompt.context hooks
+	// (promptcontext.DefaultSources, plus a host's own). Run applies them to
+	// Resolved.Spec before admission, so what is recorded and every verify retry
+	// carry the enriched prompt. Empty leaves the prompt untouched.
+	ContextSources []promptcontext.Source
 }
 
 type ApprovalOptions struct {
@@ -112,6 +118,9 @@ func Run(ctx context.Context, in Input) (Result, error) {
 	if err := validateApprovalOptions(in, true); err != nil {
 		return Result{}, err
 	}
+	if err := applyContext(ctx, &in); err != nil {
+		return Result{}, err
+	}
 	if in.Record == nil {
 		result, _, err := execute(ctx, in, nil)
 		return result, err
@@ -122,12 +131,12 @@ func Run(ctx context.Context, in Input) (Result, error) {
 	}
 	rec := newRecorder(ctx, in.Record, run)
 	result, stopped, runErr := execute(ctx, in, rec)
-	return rec.complete(in.Record.Outcome, result, runErr, stopped)
+	return rec.Complete(in.Record.Outcome, result, runErr, stopped)
 }
 
 // execute is one run, recorded through rec when it is non-nil. stopped reports
 // that the run ended because its context did — cancelled or out of time.
-func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error) {
+func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error) {
 	start := time.Now()
 	admission, err := preflight(in)
 	if err != nil {
@@ -165,7 +174,7 @@ func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error)
 		OnEvent: func(iter int, ev ai.Event) {
 			identity.observe(ev)
 			if rec != nil {
-				rec.observe(iter, ev)
+				rec.Observe(iter, ev)
 			}
 			if in.OnEvent != nil {
 				in.OnEvent(iter, ev)
@@ -191,7 +200,7 @@ func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error)
 // runHooks is Hooks plus, for a recorded run, the recorder: its progress tap
 // wraps the caller's, and its hook trails setup so it records the spec setup
 // produced.
-func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Model, rec *recorder) ([]any, error) {
+func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Model, rec *Recorder) ([]any, error) {
 	if rec == nil {
 		return Hooks(ctx, *in, provider)
 	}
@@ -202,7 +211,7 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 	rec.transcribeAPIRun()
 	callerProgress := in.Verify.Progress
 	in.Verify.Progress = func(report api.VerifyReport) {
-		rec.progress(report)
+		rec.Progress(report)
 		if callerProgress != nil {
 			callerProgress(report)
 		}

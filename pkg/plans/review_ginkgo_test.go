@@ -27,10 +27,10 @@ var _ = Describe("plans.Approve and plans.Review", func() {
 		input := saveInput(sessionID, firstMarkdown)
 		input.Plan.ID = planID
 		var err error
-		first, err = plans.Save(ctx, db, input, nil)
+		first, err = plans.Save(ctx, db, input, plans.SaveOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		input.Markdown = secondMarkdown
-		latest, err = plans.Save(ctx, db, input, nil)
+		latest, err = plans.Save(ctx, db, input, plans.SaveOptions{})
 		Expect(err).NotTo(HaveOccurred())
 	})
 
@@ -128,7 +128,7 @@ var _ = Describe("plans.Approve and plans.Review", func() {
 		Entry("save", func(ctx context.Context, link plans.Link) error {
 			input := saveInput(first.Plan.SourceSessionID, "# Plan\n\n- third approach")
 			input.Plan.ID = planID
-			_, err := plans.Save(ctx, db, input, link)
+			_, err := plans.Save(ctx, db, input, plans.SaveOptions{Link: link})
 			return err
 		}),
 		Entry("approve", func(ctx context.Context, link plans.Link) error {

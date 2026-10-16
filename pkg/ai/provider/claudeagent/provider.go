@@ -529,6 +529,7 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 		MCPServers:         callerToolServers(p.callerTools),
 		StrictMCPConfig:    req.Permissions.MCP.Disabled,
 		CallerToolUseIDKey: callerToolUseIDKey(p.callerTools),
+		GuardGitCommits:    req.Workflow != nil && len(req.Workflow.Commits) > 0,
 	}, nil
 }
 

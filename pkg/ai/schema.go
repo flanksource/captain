@@ -233,6 +233,11 @@ func OpenAICompatibleSchema(schema json.RawMessage) (json.RawMessage, error) {
 	if err := normalizeOpenAISchema(v, "$"); err != nil {
 		return nil, err
 	}
+	if root, ok := v.(map[string]any); ok {
+		if err := inlineOpenAIRootRef(root); err != nil {
+			return nil, err
+		}
+	}
 	out, err := json.Marshal(v)
 	if err != nil {
 		return nil, fmt.Errorf("openai schema transform: marshal schema: %w", err)
@@ -350,6 +355,29 @@ func normalizeOpenAIRef(node map[string]any, path string) (bool, error) {
 	}
 
 	return path != "$", nil
+}
+
+// inlineOpenAIRootRef replaces an invopop-style root `$ref` with the (already
+// normalized) definition it names. OpenAI strict structured output — Codex's
+// turn outputSchema included — requires the root itself to be `type: object`
+// and rejects a reference-only root as `type: "None"`. $defs stays, because
+// nested references still resolve through it.
+func inlineOpenAIRootRef(root map[string]any) error {
+	ref, hasRef := root["$ref"].(string)
+	if !hasRef {
+		return nil
+	}
+	defName, localRef := strings.CutPrefix(ref, "#/$defs/")
+	defs, _ := root["$defs"].(map[string]any)
+	definition, resolved := defs[defName].(map[string]any)
+	if !localRef || !resolved || !isObjectSchema(definition) {
+		return fmt.Errorf("openai schema transform: root $ref %q must resolve to an object definition in $defs", ref)
+	}
+	delete(root, "$ref")
+	for key, value := range definition {
+		root[key] = value
+	}
+	return nil
 }
 
 // AnthropicCompatibleSchema returns a copy of schema with constraints that

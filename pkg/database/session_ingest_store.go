@@ -455,8 +455,12 @@ func (db *DB) upsertTurns(ctx context.Context, sessionID uuid.UUID, turns []Inge
 	}
 
 	calls := make([]modelCallRecord, 0, len(turns))
+	var callless []uuid.UUID
 	for _, turn := range turns {
 		if turn.Call == nil {
+			if turnID, ok := ids[turn.Index]; ok {
+				callless = append(callless, turnID)
+			}
 			continue
 		}
 		turnID, ok := ids[turn.Index]
@@ -467,6 +471,17 @@ func (db *DB) upsertTurns(ctx context.Context, sessionID uuid.UUID, turns []Inge
 	}
 	if err := db.upsertTurnCalls(ctx, calls); err != nil {
 		return nil, err
+	}
+	// A replay can find that a turn made no model call after an earlier parse
+	// recorded one; drop that stale transcript call (call 0, no prompt run) so
+	// the session's latest model is the last turn that really ran one. Chat
+	// calls always carry a prompt run and are never touched.
+	if len(callless) > 0 {
+		if err := db.gorm.WithContext(ctx).
+			Where("turn_id IN ? AND call_index = 0 AND prompt_run_id IS NULL", callless).
+			Delete(&modelCallRecord{}).Error; err != nil {
+			return nil, fmt.Errorf("prune %d stale Captain model calls: %w", len(callless), err)
+		}
 	}
 	return ids, nil
 }

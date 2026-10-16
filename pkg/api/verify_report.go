@@ -240,8 +240,9 @@ func StateForNode(n VerifyNode) VerifyState {
 // StateForReport derives a report's state from its whole tree, in the order a
 // reader cares about: an outright failure first, then a check that never
 // finished, then a soft failure, then anything still moving, then the states a
-// finished-and-uneventful tree can be in. An empty tree has not started, so it
-// is queued.
+// finished-and-uneventful tree can be in. A tree is skipped only when nothing in
+// it passed, so a skip beside passes still passes (clicky-ui's outcomeFor rolls
+// containers up the same way). An empty tree has not started, so it is queued.
 //
 // It is the one definition of that precedence: StateForNode is this function
 // applied to a single node, so the state NewNodeReport stamps and the one
@@ -259,7 +260,7 @@ func StateForReport(tests []VerifyNode) VerifyState {
 		return VerifyStateRunning
 	case s.Pending > 0:
 		return VerifyStateQueued
-	case s.Skipped > 0:
+	case s.Skipped > 0 && s.Passed == 0:
 		return VerifyStateSkipped
 	case s.Passed > 0:
 		return VerifyStatePassed

@@ -12,7 +12,7 @@ import (
 
 // Hooks assembles the run's hook list in the order the runner dispatches them:
 //
-//	commit → cmd → prompt → fixture → caller → setup
+//	commit → cmd → prompt → fixture → caller → after → setup
 //
 // The order is the run's safety contract, because agent.Runner dispatches Post
 // hooks in list order at every phase. Commit hooks lead so a PhaseRun squash is
@@ -20,8 +20,10 @@ import (
 // checks run cheap to expensive (verify.HooksFor's own order), so a run that is
 // going to fail fails on the fast check. The caller's hooks sit between the
 // checks and setup: a host commit pipeline at PhaseRun still sees a live
-// worktree, and a host PreRun runs before the tree is relocated. Setup trails so
-// that its teardown is the last thing to happen.
+// worktree, and a host PreRun runs before the tree is relocated. The
+// workflow.after steps follow every commit (captain's and the caller's) at
+// PhaseRun, so a landing step sees the committed work in a still-live worktree.
+// Setup trails so that its teardown is the last thing to happen.
 //
 // It is exported so a host can assert the list it will run — and so a caller
 // that drives verifiers out of loop can still ask what a spec declares.
@@ -46,12 +48,17 @@ func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	afterHooks, err := verify.AfterHooksFor(in.Resolved.Spec.Workflow, opts)
+	if err != nil {
+		return nil, err
+	}
 	var hooks []any
 	if !in.CallerOwnsCommits {
 		hooks = append(hooks, commit.HooksForWorkflow(in.Resolved.Spec.Workflow)...)
 	}
 	hooks = append(hooks, verifyHooks...)
 	hooks = append(hooks, in.Hooks...)
+	hooks = append(hooks, afterHooks...)
 	if in.Provider == nil && in.Resolved.Spec.Setup != nil {
 		hooks = append(hooks, &setup.Plugin{})
 	}

@@ -21,7 +21,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 6
+const parserVersion = 8
 
 type codexCheckpoint struct {
 	parser      *history.CodexParser
@@ -268,7 +268,7 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	var codex *codexPreparation
 	switch source {
 	case "claude":
-		input, err = ing.claudeIngestInput(ctx, path)
+		input, err = claudeIngestInput(ctx, ing.db, ing.monitor.cfg.HostID, path)
 	case api.TranscriptSourceAPI:
 		input, err = apiIngestInput(path)
 	case "codex":
@@ -287,30 +287,16 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 		}
 		return err
 	}
-	if codex != nil && codex.session.ForkedFrom != "" {
-		parent, err := ing.db.CreateOrGetSession(ctx, database.CreateSessionInput{
-			ProviderSessionID: codex.session.ForkedFrom, Source: "codex", HostID: ing.monitor.cfg.HostID,
-		})
-		if err != nil {
+	if codex != nil {
+		if err := linkCodexFork(ctx, ing.db, ing.monitor.cfg.HostID, &input, codex.session); err != nil {
 			ing.dropCodexCheckpoint(path)
 			return err
 		}
-		input.Session.ParentSessionID = &parent.ID
-		if codex.session.Root != nil {
-			input.Session.AgentType = codex.session.Root.Type
-			input.Session.Description = codex.session.Root.Desc
-		}
 	}
-	input.Session.HostID = ing.monitor.cfg.HostID
-	input.Source.SourceKind = source
-	input.Source.Path = path
-	input.Source.ParserVersion = parserVersion
-	input.Source.ObservedSize = info.Size()
-	input.Source.ByteOffset = info.Size()
+	stampSource(&input, ing.monitor.cfg.HostID, source, path, info)
 	if codex != nil {
 		input.Source.ByteOffset = codex.offset
 	}
-	input.Source.ObservedModTime = observedModTime(info)
 
 	metrics := &ing.monitor.ingest
 	metrics.messagesParsed.Add(int64(len(input.Messages)))
@@ -358,7 +344,72 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	return nil
 }
 
-func (ing *ingestor) claudeIngestInput(ctx context.Context, path string) (database.IngestTranscriptInput, error) {
+// BuildIngestInput parses the transcript at path, wherever it is stored, into
+// what database.IngestTranscript files: for a host that receives transcripts
+// from agents that ran on another machine, rather than one this monitor finds
+// under the agents' own session roots. Every message in the file is offered, so
+// ingesting a re-uploaded, longer copy files only what was appended. source is
+// claude, codex or api; hostID names the host the sessions are filed under.
+func BuildIngestInput(ctx context.Context, db *database.DB, hostID, source, path string) (database.IngestTranscriptInput, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return database.IngestTranscriptInput{}, fmt.Errorf("read %s transcript %s: %w", source, path, err)
+	}
+	var input database.IngestTranscriptInput
+	switch source {
+	case "claude":
+		input, err = claudeIngestInput(ctx, db, hostID, path)
+	case api.TranscriptSourceAPI:
+		input, err = apiIngestInput(path)
+	case "codex":
+		var s *session.Session
+		if input, s, err = codexIngestInput(path); err == nil {
+			err = linkCodexFork(ctx, db, hostID, &input, s)
+		}
+	default:
+		return database.IngestTranscriptInput{}, fmt.Errorf("unknown transcript source %q for %s; want claude, codex or api", source, path)
+	}
+	if err != nil {
+		return database.IngestTranscriptInput{}, fmt.Errorf("read %s transcript %s: %w", source, path, err)
+	}
+	stampSource(&input, hostID, source, path, info)
+	input.Source.LastEventKey = strconv.FormatInt(highWaterMark(&input, 0), 10)
+	return input, nil
+}
+
+// stampSource records which host filed the transcript and the file it was read
+// from, as of the stat the ingest read it at.
+func stampSource(input *database.IngestTranscriptInput, hostID, source, path string, info os.FileInfo) {
+	input.Session.HostID = hostID
+	input.Source.SourceKind = source
+	input.Source.Path = path
+	input.Source.ParserVersion = parserVersion
+	input.Source.ObservedSize = info.Size()
+	input.Source.ByteOffset = info.Size()
+	input.Source.ObservedModTime = observedModTime(info)
+}
+
+// linkCodexFork files a forked Codex thread under the thread it forked from,
+// with the subagent's own type and description.
+func linkCodexFork(ctx context.Context, db *database.DB, hostID string, input *database.IngestTranscriptInput, s *session.Session) error {
+	if s == nil || s.ForkedFrom == "" {
+		return nil
+	}
+	parent, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+		ProviderSessionID: s.ForkedFrom, Source: "codex", HostID: hostID,
+	})
+	if err != nil {
+		return err
+	}
+	input.Session.ParentSessionID = &parent.ID
+	if s.Root != nil {
+		input.Session.AgentType = s.Root.Type
+		input.Session.Description = s.Root.Desc
+	}
+	return nil
+}
+
+func claudeIngestInput(ctx context.Context, db *database.DB, hostID, path string) (database.IngestTranscriptInput, error) {
 	s, info, err := session.BuildTranscriptFile(path)
 	if err != nil {
 		return database.IngestTranscriptInput{}, err
@@ -366,8 +417,8 @@ func (ing *ingestor) claudeIngestInput(ctx context.Context, path string) (databa
 	input := unifiedIngestInput(s, "claude", transcriptSequence)
 	input.Source.SourceIdentity = info.RootSessionID
 	if info.IsAgent {
-		root, err := ing.db.CreateOrGetSession(ctx, database.CreateSessionInput{
-			ProviderSessionID: info.RootSessionID, Source: "claude", HostID: ing.monitor.cfg.HostID,
+		root, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: info.RootSessionID, Source: "claude", HostID: hostID,
 		})
 		if err != nil {
 			return database.IngestTranscriptInput{}, err
@@ -463,16 +514,16 @@ func consumeCodexSuffix(file *os.File, offset, size int64, parser *history.Codex
 	return uses, position, nil
 }
 
-func codexIngestInput(path string) (database.IngestTranscriptInput, error) {
+func codexIngestInput(path string) (database.IngestTranscriptInput, *session.Session, error) {
 	sessions := session.BuildCodex([]string{path})
 	if len(sessions) == 0 {
-		return database.IngestTranscriptInput{}, fmt.Errorf("codex transcript %s is not parseable", path)
+		return database.IngestTranscriptInput{}, nil, fmt.Errorf("codex transcript %s is not parseable", path)
 	}
 	s := sessions[0]
 	input := unifiedIngestInput(s, "codex", transcriptSequence)
 	input.Session.ProviderSessionID = s.ID
 	input.Source.SourceIdentity = s.ID
-	return input, nil
+	return input, s, nil
 }
 
 // transcriptSequence keys messages by their transcript line: stable across
@@ -532,6 +583,11 @@ func unifiedIngestInput(s *session.Session, source string, sequence func(session
 			ingestTurn.Call.ContextTokens = int64(turn.Context.UsedTokens)
 			ingestTurn.Call.ContextWindowTokens = int64(turn.Context.WindowTokens)
 			ingestTurn.Call.ContextFreePercent = &turn.Context.FreePercent
+		}
+		// A turn that names no model and used no tokens made no model call — e.g.
+		// one whose only reply is Claude Code's placeholder for a failed request.
+		if turn.Model == "" && turn.Usage.TotalTokens() == 0 {
+			ingestTurn.Call = nil
 		}
 		input.Turns = append(input.Turns, ingestTurn)
 	}

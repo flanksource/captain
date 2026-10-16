@@ -1,0 +1,124 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Prompt Hooks
+description: Prompts that decorate every saved plan revision or enrich a run's initial prompt.
+section: Prompts
+---
+
+# Plan hooks
+
+A plan hook is an ordinary `.prompt` file with a `hook:` block in its frontmatter. Captain's plan service (`plans.Save`) runs every discovered hook before it persists a plan revision, so any host that saves plans through Captain — gavel's agent plan runs, human edits, merges and plans supplied when a TODO is created — gets the hook output without code changes.
+
+Adding a hook is dropping a file into a prompt directory. Nothing is registered in Go.
+
+## Frontmatter
+
+```yaml
+---
+model: api:haiku
+hook:
+  on: plan.revision   # the event; see prompt.context below for the other one
+  mode: prepend       # replace | prepend | append
+  field: tldr         # optional: a string field of output.schema; omitted uses the response text
+output:
+  schema:
+    type: object
+    required: [tldr]
+    properties:
+      tldr: { type: string }
+---
+{{role "user"}}
+Summarize {{title}}:
+
+{{{plan}}}
+```
+
+The body receives three variables:
+
+- `title` — the plan title.
+- `plan` — the revision being saved, with every hook block stripped, so a hook never summarizes its own earlier output.
+- `prior` — the latest persisted revision, also stripped; empty for a new plan.
+
+## Modes
+
+- `replace` swaps the plan body for the hook output.
+- `prepend` and `append` wrap the output in a marked block placed before or after the body:
+
+```markdown
+<!-- captain:hook:plan-tldr -->
+**TL;DR** …
+<!-- /captain:hook:plan-tldr -->
+
+# The plan body
+```
+
+Blocks are keyed by hook name (the file name without `.prompt`). Readers use `plans.Blocks(markdown)` to lift them out and `plans.StripBlocks(markdown)` to get the authored body; gavel's plan tab shows `plan-tldr` as a callout and edits only the body.
+
+When the stripped body equals the latest revision's, Captain reuses that revision as-is and runs no hook — re-saving an unchanged plan costs no model call and appends no revision. A hook that fails, or returns empty output, fails the save; nothing is persisted.
+
+## Discovery
+
+Hooks are loaded in this order, a later file shadowing an earlier one with the same name:
+
+1. Captain's embedded defaults — currently `plan-tldr.prompt`, a prepended TL;DR on `api:haiku`.
+2. `prompts.dirs` from the Captain config, relative to the config file.
+3. `<workdir>/.captain/prompts`, when it exists.
+
+Hooks run in name order. To turn off a default, shadow it with a file that only disables it:
+
+```yaml
+# .captain/prompts/plan-tldr.prompt
+---
+hook: { disabled: true }
+---
+```
+
+# Prompt context hooks
+
+A `prompt.context` hook enriches a run's initial prompt. `promptrun.Run` discovers the hooks from `Input.ContextSources` and applies them to `Prompt.User` before the run is admitted, so the recorded spec, the agent's first turn and every verify retry see the enriched prompt. A run with no context sources is sent exactly as authored.
+
+The consumer case: a host sets `metadata["gavel.pr.url"]` on the prompt, and this hook tells the agent where to read live PR status.
+
+```yaml
+# .captain/prompts/pr-status.prompt
+---
+hook:
+  on: prompt.context
+  mode: append
+  when: '"gavel.pr.url" in metadata'
+---
+Read live PR status: gavel pr status {{lookup metadata "gavel.pr.url"}} --json --logs
+```
+
+## Matching
+
+A context hook must declare `match`, `when`, or both; an unconditional hook is a load error.
+
+- `match` is an RE2 pattern run on the initial prompt. No match skips the hook. Named groups (`(?P<num>\d+)`) become `captures`, and each is also a top-level template variable.
+- `when` is a CEL predicate evaluated after `match`. It must return a bool, and a name it does not declare is a load error. It sees `prompt` (string), `source` (the prompt's source), `metadata` and `labels` (string maps), `model`, `cwd` (empty when the spec has no setup) and `captures`. Reading a key a map does not have is an evaluation error that fails the run; test with `"key" in metadata` first.
+
+The pattern and predicate are compiled when the hooks are discovered, so a broken hook fails before any run, naming the hook and its source.
+
+## Rendering and modes
+
+`render: template` (the default) renders the hook body with the variables above and calls no model. `render: model` runs the rendered prompt through the model its frontmatter declares, like a plan hook; `field` then selects a string field of its structured output.
+
+- `prepend` and `append` wrap the output in a block before or after the prompt.
+- `substitute` replaces only the span `match` matched, and requires `match`.
+- `replace` is rejected: it would discard the authored request, and `substitute` covers a targeted rewrite.
+
+```markdown
+Fix the flaky test
+
+<!-- captain:context:pr-status -->
+Read live PR status: gavel pr status https://example.com/acme/repo/pull/7 --json --logs
+<!-- /captain:context:pr-status -->
+```
+
+A substituted block records the span it replaced on its opening marker (`<!-- captain:context:NAME replaced="#12" -->`). Before applying, Captain strips every `captain:context` block, restoring substituted spans, and matches against that stripped prompt, so re-applying (a resumed run, a preview followed by the run) produces the same prompt and no hook ever matches another hook's output. Hooks run in name order and each one matches the same stripped prompt. Two substitutions over overlapping spans, an empty output, or a failing predicate or render fails the run, naming the hook.
+
+The applied hook names are recorded comma-joined in `metadata["captain.context"]`, and the run's provenance attributes `/prompt/user` to `context hook <name>`.
+
+## Discovery
+
+`promptcontext.DefaultSources(cfg, workDir)` returns the plan hooks' search path: `prompts.dirs` from the Captain config, then `<workdir>/.captain/prompts`. A host puts its own sources, for example an embedded FS of the prompts it ships, as `promptcontext.Source{FS, Label}` ahead of them, so a user directory can shadow or disable what the host ships. Later sources shadow earlier ones by file name, and `hook: { disabled: true }` removes a hook. Captain ships no context hooks of its own.

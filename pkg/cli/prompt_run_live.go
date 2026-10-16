@@ -48,7 +48,7 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 
 	start := time.Now()
 	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Mode)
-	acc.cwd, acc.idPrefix, acc.verify = req.Cwd(), runID, stream.setVerify
+	acc.cwd, acc.idPrefix, acc.verify, acc.session = req.Cwd(), runID, stream.setVerify, stream.setRunMetadata
 	result, err := promptrun.Run(ctx, promptrun.Input{
 		Resolved: promptResolution(rendered, req),
 		Config:   rendered.Config,

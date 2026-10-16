@@ -51,7 +51,7 @@ var _ = Describe("prompt entity writes", func() {
 		captainconfig.SetPathForTesting(filepath.Join(GinkgoT().TempDir(), ".captain.yaml"))
 		DeferCleanup(captainconfig.SetPathForTesting, "")
 		dir = GinkgoT().TempDir()
-		ctx = ContextWithPromptDirs(context.Background(), []string{dir})
+		ctx = ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{dir}})
 	})
 
 	createPrompt := func(name, content string) PromptDetail {

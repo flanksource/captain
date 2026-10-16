@@ -41,7 +41,7 @@ var _ = Describe("read-only plan lookup", Serial, func() {
 		saved, err = plans.Save(ctx, db, plans.SaveInput{
 			Plan:     database.CreatePlanInput{SourceSessionID: session.ID, Variant: "primary"},
 			Markdown: planMarkdown,
-		}, nil)
+		}, plans.SaveOptions{})
 		Expect(err).NotTo(HaveOccurred())
 
 		discovered = 0

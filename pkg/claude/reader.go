@@ -446,7 +446,7 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 			Message:   msg,
 			Injected:  sj.Type == "user" && injectedUserLine(sj, msg),
 		}}
-		if errEntry, ok := apiErrorFromAssistantLine(sj, raw); ok {
+		if errEntry, ok := apiErrorFromAssistantLine(sj, msg, raw); ok {
 			out = append(out, errEntry)
 		}
 		return out
@@ -557,14 +557,43 @@ func single(e HistoryEntry) []HistoryEntry { return []HistoryEntry{e} }
 
 // apiErrorFromAssistantLine yields an ApiError row when the assistant line
 // carries a top-level "error" field (e.g. invalid_request, 4xx/5xx from the
-// model API). The error would otherwise be invisible in history output.
-func apiErrorFromAssistantLine(sj streamJSONLine, raw []byte) (HistoryEntry, bool) {
+// model API). The error would otherwise be invisible in history output. Beside
+// the error it carries the explanation Claude Code wrote (which names the
+// model it requested), the request id, and the session and directory a
+// continuation resumes from.
+func apiErrorFromAssistantLine(sj streamJSONLine, msg Message, raw []byte) (HistoryEntry, bool) {
 	if len(sj.Error) == 0 || string(sj.Error) == "null" {
 		return HistoryEntry{}, false
 	}
-	return syntheticEntry(sj, "ApiError", raw, []string{
-		"error", "api_error_status", "stop_reason", "terminal_reason",
-	}), true
+	var full map[string]any
+	_ = json.Unmarshal(raw, &full)
+	input := map[string]any{}
+	// Stream-json lines spell the status api_error_status, session files apiErrorStatus.
+	for key, from := range map[string][]string{
+		"error": {"error"}, "api_error_status": {"api_error_status", "apiErrorStatus"},
+		"stop_reason": {"stop_reason"}, "terminal_reason": {"terminal_reason"}, "requestId": {"requestId", "request_id"},
+	} {
+		for _, k := range from {
+			if v, ok := full[k]; ok && v != nil {
+				input[key] = v
+				break
+			}
+		}
+	}
+	if text, ok := singleTextContent(msg); ok {
+		input["message"] = text
+	}
+	for key, value := range map[string]string{
+		"stop_reason": string(msg.StopReason), "model": msg.Model, "sessionId": sj.sessionID(),
+		"cwd": sj.CWD, "gitBranch": sj.GitBranch, "version": sj.Version,
+	} {
+		if _, ok := input[key]; !ok && value != "" {
+			input[key] = value
+		}
+	}
+	entry := syntheticEntry(sj, "ApiError", raw, nil)
+	entry.Message.Content[0].Input, _ = json.Marshal(input)
+	return entry, true
 }
 
 // parseErrorEntry builds a synthetic ParseError row for a line that failed
