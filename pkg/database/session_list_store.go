@@ -18,9 +18,8 @@ const (
 	maxSessionListLimit     = 500
 )
 
-// SessionListSummary is the bounded list projection. Message and tool counts
-// are aggregated only after pagination; other detail-only aggregates remain on
-// the overview path.
+// SessionListSummary is the bounded list projection of one
+// captain_session_overview_rows row.
 type SessionListSummary struct {
 	ID                  uuid.UUID             `gorm:"column:id" json:"id"`
 	ProviderSessionID   *string               `gorm:"column:provider_session_id" json:"providerSessionId,omitempty"`
@@ -97,12 +96,17 @@ type SessionListFilter struct {
 	ActivityBefore       *time.Time
 	Limit                int
 	Cursor               string
+	// IncludeTotal counts every session the filters match, ignoring Cursor
+	// and Limit. Counting reads all matches instead of stopping at one page,
+	// so callers that never show a total leave it off and get Total 0.
+	IncludeTotal bool
 }
 
 type SessionListPage struct {
-	Rows       []SessionListSummary `json:"rows"`
-	Total      int64                `json:"total"`
-	NextCursor string               `json:"nextCursor,omitempty"`
+	Rows []SessionListSummary `json:"rows"`
+	// Total is set only when the filter asked for it (IncludeTotal).
+	Total      int64  `json:"total"`
+	NextCursor string `json:"nextCursor,omitempty"`
 }
 
 type sessionListCursor struct {
@@ -123,8 +127,27 @@ func (db *DB) ListSessionSummaries(ctx context.Context, filter SessionListFilter
 	if err != nil {
 		return SessionListPage{}, err
 	}
+	var rows []SessionListSummary
+	if err := db.gorm.WithContext(ctx).Raw(sessionListQuery(filter.IncludeTotal), sessionListArgs(filter, cursor, limit)...).Scan(&rows).Error; err != nil {
+		return SessionListPage{}, fmt.Errorf("list Captain session summaries: %w", err)
+	}
+	page := SessionListPage{Rows: rows}
+	if len(rows) > 0 {
+		page.Total = rows[0].TotalCount
+	}
+	if len(page.Rows) > limit {
+		page.Rows = page.Rows[:limit]
+		page.NextCursor, err = encodeSessionListCursor(page.Rows[limit-1])
+		if err != nil {
+			return SessionListPage{}, err
+		}
+	}
+	return page, nil
+}
+
+func sessionListArgs(filter SessionListFilter, cursor *sessionListCursor, limit int) []any {
 	projectRoot := strings.TrimRight(strings.TrimSpace(filter.ProjectRoot), "/")
-	args := []any{
+	return []any{
 		sql.Named("excluded_model", api.CodexAutoReviewModel),
 		sql.Named("source", strings.TrimSpace(filter.Source)),
 		sql.Named("project", strings.TrimSpace(filter.Project)),
@@ -141,22 +164,6 @@ func (db *DB) ListSessionSummaries(ctx context.Context, filter SessionListFilter
 		sql.Named("cursor_id", cursorID(cursor)),
 		sql.Named("fetch_limit", limit+1),
 	}
-	var rows []SessionListSummary
-	if err := db.gorm.WithContext(ctx).Raw(sessionListQuery, args...).Scan(&rows).Error; err != nil {
-		return SessionListPage{}, fmt.Errorf("list Captain session summaries: %w", err)
-	}
-	page := SessionListPage{Rows: rows}
-	if len(rows) > 0 {
-		page.Total = rows[0].TotalCount
-	}
-	if len(page.Rows) > limit {
-		page.Rows = page.Rows[:limit]
-		page.NextCursor, err = encodeSessionListCursor(page.Rows[limit-1])
-		if err != nil {
-			return SessionListPage{}, err
-		}
-	}
-	return page, nil
 }
 
 func sessionListLimit(limit int) (int, error) {
@@ -210,134 +217,48 @@ func cursorID(cursor *sessionListCursor) any {
 	return cursor.ID
 }
 
-const sessionListQuery = `
-WITH latest_call AS MATERIALIZED (
-  SELECT DISTINCT ON (t.session_id)
-    t.session_id, c.model, c.provider AS model_provider, c.mode AS model_mode, c.effort,
-    CASE WHEN c.context_free_percent IS NOT NULL THEN c.context_tokens END AS context_tokens,
-    CASE WHEN c.context_free_percent IS NOT NULL THEN c.context_window_tokens END AS context_window_tokens,
-    c.context_free_percent
-  FROM captain_turns t
-  JOIN captain_model_calls c ON c.turn_id = t.id
-  ORDER BY t.session_id, COALESCE(c.ended_at, c.started_at, c.created_at) DESC, c.call_index DESC
-), active_process AS MATERIALIZED (
-  SELECT DISTINCT ON (p.session_id)
-    p.session_id, p.pid, p.status, p.command, p.cwd, p.process_started_at, p.sampled_at,
-    p.last_heartbeat_at, p.lease_owner, p.lease_expires_at, p.cpu_percent, p.memory_percent
-  FROM captain_session_processes p
-  WHERE p.ended_at IS NULL
-  ORDER BY p.session_id, COALESCE(p.last_heartbeat_at, p.process_started_at) DESC, p.id DESC
-), eligible AS MATERIALIZED (
-  SELECT
-    s.id, s.provider_session_id, s.source, s.provider, s.host_id, s.parent_session_id, s.parent_relation,
-    s.root_session_id, s.path, s.project, s.cwd, s.title, s.initial_prompt, s.slug,
-    s.cli_version, s.lifecycle_status, s.activity_state, s.state_reason, s.git, s.metadata, s.started_at, s.ended_at,
-    s.last_activity_at, COALESCE(s.last_activity_at, s.started_at, s.created_at) AS activity_at,
-    ap.pid, ap.status AS process_status, ap.command AS process_command, ap.cwd AS process_cwd,
-    ap.process_started_at, ap.sampled_at AS process_sampled_at, ap.last_heartbeat_at,
-    ap.lease_owner, ap.lease_expires_at, ap.session_id IS NOT NULL AS process_active,
-    ap.cpu_percent, ap.memory_percent, lc.model, lc.model_provider, lc.model_mode, lc.effort,
-    lc.context_tokens, lc.context_window_tokens, lc.context_free_percent, count(*) OVER () AS total_count
-  FROM captain_sessions s
-  LEFT JOIN latest_call lc ON lc.session_id = s.id
-  LEFT JOIN active_process ap ON ap.session_id = s.id
-  WHERE COALESCE(s.metadata->>'model', lc.model, '') <> @excluded_model
-    AND (@source = '' OR s.source = @source)
-    AND (@project = '' OR s.project = @project)
-    AND (@project_root = '' OR s.cwd = @project_root OR s.cwd LIKE @project_prefix ESCAPE '\')
-    AND (NOT @roots_only OR s.parent_session_id IS NULL)
-    AND (NOT @exclude_subagents OR s.parent_relation IS DISTINCT FROM 'agent')
-    AND (NOT @live_only OR ap.session_id IS NOT NULL)
-    AND (NOT @exclude_inactive_empty OR
-      ap.session_id IS NOT NULL OR s.activity_state IN ('ask', 'approval') OR
-      NULLIF(btrim(s.path), '') IS NOT NULL OR NULLIF(btrim(s.initial_prompt), '') IS NOT NULL OR
-      EXISTS (SELECT 1 FROM captain_session_sources src WHERE src.session_id = s.id AND NULLIF(btrim(src.path), '') IS NOT NULL) OR
-      EXISTS (SELECT 1 FROM captain_messages m WHERE m.session_id = s.id) OR
-      EXISTS (SELECT 1 FROM captain_prompt_runs pr WHERE pr.session_id = s.id) OR
-      EXISTS (SELECT 1 FROM captain_prompt_runs pr WHERE pr.execution_session_id = s.id))
-    AND (CAST(@activity_from AS timestamptz) IS NULL OR
-      COALESCE(s.last_activity_at, s.started_at, s.created_at) >= CAST(@activity_from AS timestamptz))
-    AND (CAST(@activity_before AS timestamptz) IS NULL OR
-      COALESCE(s.last_activity_at, s.started_at, s.created_at) < CAST(@activity_before AS timestamptz))
-    AND (
-      @query = '' OR concat_ws(' ', s.id::text, s.provider_session_id, s.source, s.provider,
-        s.project, s.cwd, s.title, s.initial_prompt, s.slug, s.cli_version,
-        s.git->>'branch', lc.model, lc.model_provider, lc.model_mode, lc.effort, ap.pid::text, ap.status,
-        ap.cwd, ap.command) ILIKE '%' || @query || '%'
-    )
-), paged AS MATERIALIZED (
-  SELECT *
-  FROM eligible
-  WHERE CAST(@cursor_activity AS timestamptz) IS NULL OR
-    (activity_at, id) < (CAST(@cursor_activity AS timestamptz), CAST(@cursor_id AS uuid))
-  ORDER BY activity_at DESC, id DESC
-  LIMIT @fetch_limit
-), latest_source AS (
-  SELECT DISTINCT ON (src.session_id) src.session_id, src.path
-  FROM captain_session_sources src
-  JOIN paged p ON p.id = src.session_id
-  ORDER BY src.session_id, src.updated_at DESC, src.id DESC
-), call_stats AS (
-  SELECT
-    t.session_id,
-    COALESCE(sum(c.input_tokens), 0)::bigint AS input_tokens,
-    COALESCE(sum(c.output_tokens), 0)::bigint AS output_tokens,
-    COALESCE(sum(c.cache_read_tokens), 0)::bigint AS cache_read_tokens,
-    COALESCE(sum(c.cache_write_tokens), 0)::bigint AS cache_write_tokens,
-    COALESCE(sum(c.input_tokens + c.output_tokens + c.reasoning_tokens + c.cache_read_tokens + c.cache_write_tokens), 0)::bigint AS total_tokens,
-    COALESCE(sum(CASE WHEN c.provider_cost_usd > 0 THEN c.provider_cost_usd
-      ELSE c.input_cost + c.output_cost + c.reasoning_cost + c.cache_read_cost + c.cache_write_cost END)
-      FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS cost_usd,
-    COALESCE(sum(c.provider_cost_usd)
-      FILTER (WHERE upper(c.currency) = 'USD'), 0::numeric) AS provider_cost_usd
-  FROM captain_turns t
-  JOIN paged p ON p.id = t.session_id
-  JOIN captain_model_calls c ON c.turn_id = t.id
-  GROUP BY t.session_id
-), message_stats AS (
-  SELECT
-    m.session_id,
-    count(*)::bigint AS message_count,
-    COALESCE(sum((
-      SELECT count(*)
-      FROM jsonb_array_elements(
-        CASE
-          WHEN jsonb_typeof(m.parts) = 'array' THEN m.parts
-          ELSE '[]'::jsonb
-        END
-      ) part
-      WHERE (
-        part ->> 'type' = 'dynamic-tool'
-        OR part ->> 'type' LIKE 'tool-%'
-      )
-        AND COALESCE(part ->> 'toolName', '') <> ''
-    )), 0)::bigint AS tool_call_count
-  FROM captain_messages m
-  JOIN paged p ON p.id = m.session_id
-  GROUP BY m.session_id
-)
-SELECT
-  p.id, p.provider_session_id, p.source, p.provider, p.host_id, p.parent_session_id, p.parent_relation,
-  p.root_session_id, p.path, COALESCE(src.path, p.path) AS history_file, p.project, p.cwd,
-  p.title, p.initial_prompt, p.slug, p.cli_version, p.lifecycle_status, p.activity_state, p.state_reason, p.git, p.metadata,
-  p.started_at, p.ended_at, p.last_activity_at, p.activity_at, p.pid, p.process_status,
-  p.process_command, p.process_cwd, p.process_started_at, p.process_sampled_at,
-  p.last_heartbeat_at, p.lease_owner, p.lease_expires_at, p.process_active,
-  p.cpu_percent, p.memory_percent, p.model, p.model_provider, p.model_mode, p.effort, p.context_tokens,
-  p.context_window_tokens,
-  p.context_free_percent,
-  COALESCE(cs.input_tokens, 0) AS input_tokens,
-  COALESCE(cs.output_tokens, 0) AS output_tokens,
-  COALESCE(cs.cache_read_tokens, 0) AS cache_read_tokens,
-  COALESCE(cs.cache_write_tokens, 0) AS cache_write_tokens,
-  COALESCE(cs.total_tokens, 0) AS total_tokens,
-  COALESCE(cs.cost_usd, 0::numeric) AS cost_usd,
-  COALESCE(cs.provider_cost_usd, 0::numeric) AS provider_cost_usd,
-  COALESCE(ms.message_count, 0) AS message_count,
-  COALESCE(ms.tool_call_count, 0) AS tool_call_count,
-  p.total_count
-FROM paged p
-LEFT JOIN latest_source src ON src.session_id = p.id
-LEFT JOIN call_stats cs ON cs.session_id = p.id
-LEFT JOIN message_stats ms ON ms.session_id = p.id
-ORDER BY p.activity_at DESC, p.id DESC`
+// sessionListQuery reads one page from captain_session_overview_rows, which
+// migration 88 keeps current, keyset-paged on (activity_at, id) so a page is
+// a bounded walk of captain_session_overview_rows_activity_idx. The total,
+// when asked for, is an uncorrelated count of every match that ignores the
+// cursor; it runs once and leaves the page on the index.
+func sessionListQuery(includeTotal bool) string {
+	total := "0::bigint"
+	if includeTotal {
+		total = "(SELECT count(*) " + sessionListMatches + ")"
+	}
+	return "SELECT " + sessionListColumns + ", " + total + " AS total_count\n" +
+		sessionListMatches + "\n  AND " + sessionListAfterCursor +
+		"\nORDER BY o.activity_at DESC, o.id DESC\nLIMIT @fetch_limit"
+}
+
+const sessionListColumns = `
+  o.id, o.provider_session_id, o.source, o.provider, o.host_id, o.parent_session_id, o.parent_relation,
+  o.root_session_id, o.path, o.history_file, o.project, o.cwd, o.title, o.initial_prompt, o.slug,
+  o.cli_version, o.lifecycle_status, o.activity_state, o.state_reason, o.git, o.metadata,
+  o.started_at, o.ended_at, o.last_activity_at, o.activity_at, o.pid, o.process_status,
+  o.command AS process_command, o.process_cwd, o.process_started_at, o.process_sampled_at,
+  o.last_heartbeat_at, o.lease_owner, o.lease_expires_at, o.process_active,
+  o.cpu_percent, o.memory_percent, o.model, o.model_provider, o.model_mode, o.effort,
+  o.context_tokens, o.context_window_tokens, o.context_free_percent,
+  o.input_tokens, o.output_tokens, o.cache_read_tokens, o.cache_write_tokens, o.total_tokens,
+  o.cost_usd, o.provider_cost_usd, o.message_count, o.tool_call_count`
+
+const sessionListMatches = `FROM captain_session_overview_rows o
+WHERE COALESCE(o.metadata->>'model', o.model, '') <> @excluded_model
+  AND (@source = '' OR o.source = @source)
+  AND (@project = '' OR o.project = @project)
+  AND (@project_root = '' OR o.cwd = @project_root OR o.cwd LIKE @project_prefix ESCAPE '\')
+  AND (NOT @roots_only OR o.parent_session_id IS NULL)
+  AND (NOT @exclude_subagents OR o.parent_relation IS DISTINCT FROM 'agent')
+  AND (NOT @live_only OR o.process_active)
+  AND (NOT @exclude_inactive_empty OR
+    o.process_active OR o.activity_state IN ('ask', 'approval') OR
+    NULLIF(btrim(o.path), '') IS NOT NULL OR NULLIF(btrim(o.initial_prompt), '') IS NOT NULL OR
+    o.source_path_present OR o.message_count > 0 OR o.prompt_run_count > 0 OR o.execution_run_count > 0)
+  AND (CAST(@activity_from AS timestamptz) IS NULL OR o.activity_at >= CAST(@activity_from AS timestamptz))
+  AND (CAST(@activity_before AS timestamptz) IS NULL OR o.activity_at < CAST(@activity_before AS timestamptz))
+  AND (@query = '' OR o.search_text ILIKE '%' || @query || '%')`
+
+const sessionListAfterCursor = `(CAST(@cursor_activity AS timestamptz) IS NULL OR
+    (o.activity_at, o.id) < (CAST(@cursor_activity AS timestamptz), CAST(@cursor_id AS uuid)))`

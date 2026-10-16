@@ -69,13 +69,16 @@ type DB struct {
 type dependencies struct {
 	migrate func(context.Context, string, string) error
 	open    func(string, *gorm.Config) (*gorm.DB, error)
+	// ensure completes the UNLOGGED overviews once a migrated handle is open.
+	ensure func(context.Context, *DB) error
 }
 
 var defaultDependencies = dependencies{
 	migrate: func(ctx context.Context, dsn, schemaName string) error {
 		return migrations.Apply(ctx, dsn, migrations.WithSchema(schemaName))
 	},
-	open: commonsdb.NewGorm,
+	open:   commonsdb.NewGorm,
+	ensure: func(ctx context.Context, db *DB) error { return db.EnsureOverviews(ctx) },
 }
 
 // Open reuses an injected pool or opens a Captain-owned pool. It does not
@@ -113,7 +116,13 @@ func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, err
 		}
 	}
 	if options.gorm != nil {
-		return &DB{gorm: options.gorm, schema: options.schema}, nil
+		db := &DB{gorm: options.gorm, schema: options.schema}
+		if options.migrate {
+			if err := deps.ensure(ctx, db); err != nil {
+				return nil, err
+			}
+		}
+		return db, nil
 	}
 
 	scopedDSN := dsn
@@ -141,7 +150,13 @@ func open(ctx context.Context, deps dependencies, optionFns ...Option) (*DB, err
 		sqlDB.SetMaxOpenConns(options.maxOpenConns)
 		sqlDB.SetMaxIdleConns(options.maxOpenConns)
 	}
-	return &DB{gorm: gormDB, owned: true, schema: options.schema}, nil
+	db := &DB{gorm: gormDB, owned: true, schema: options.schema}
+	if options.migrate {
+		if err := deps.ensure(ctx, db); err != nil {
+			return nil, errors.Join(err, db.Close())
+		}
+	}
+	return db, nil
 }
 
 // Use wraps an already migrated shared GORM pool. The returned handle does not
