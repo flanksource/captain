@@ -137,7 +137,7 @@ func (m *Monitor) recordClaudeStatusLineCost(ctx context.Context, ev HookEvent, 
 		log.Warnf("hook %s/%s: session ID, transcript path, and CLI cost estimate are required", ev.Provider, ev.Event)
 		return
 	}
-	session, err := m.db.CreateOrGetSession(ctx, database.CreateSessionInput{
+	sessionID, err := m.providerSessionID(ctx, database.CreateSessionInput{
 		ProviderSessionID: ev.SessionID, Source: ev.Provider, HostID: m.cfg.HostID,
 		CWD: ev.CWD, Path: path,
 	})
@@ -149,7 +149,8 @@ func (m *Monitor) recordClaudeStatusLineCost(ctx context.Context, ev HookEvent, 
 	if observedAt.IsZero() {
 		observedAt = time.Now().UTC()
 	}
-	if err := m.db.ReportClaudeCLICost(ctx, session.ID, *ev.ClaudeCLICostUSD, observedAt); err != nil {
+	if err := m.db.ReportClaudeCLICost(ctx, sessionID, *ev.ClaudeCLICostUSD, observedAt); err != nil {
+		m.sessionIDs.forgetSession(sessionID)
 		log.Warnf("hook claude/%s: record session %s CLI cost estimate: %v", ev.Event, ev.SessionID, err)
 	}
 }
@@ -161,16 +162,18 @@ func (m *Monitor) endHookSessionProcesses(ctx context.Context, ev HookEvent) {
 	if ev.SessionID == "" {
 		return
 	}
-	session, err := m.db.CreateOrGetSession(ctx, database.CreateSessionInput{
+	sessionID, err := m.providerSessionID(ctx, database.CreateSessionInput{
 		ProviderSessionID: ev.SessionID, Source: ev.Provider, HostID: m.cfg.HostID, CWD: ev.CWD,
 	})
 	if err != nil {
 		log.Warnf("hook %s/SessionEnd: resolve session %s: %v", ev.Provider, ev.SessionID, err)
 		return
 	}
-	if _, err := m.db.EndSessionProcesses(ctx, session.ID); err != nil {
+	if _, err := m.db.EndSessionProcesses(ctx, sessionID); err != nil {
 		log.Warnf("hook %s/SessionEnd: close processes for %s: %v", ev.Provider, ev.SessionID, err)
 	}
+	// The poll must rewrite a row closed under it if the process lives on.
+	m.samples.forgetSession(sessionID)
 }
 
 // withinHookRoot reports whether cleanPath (already filepath.Clean'd) lives

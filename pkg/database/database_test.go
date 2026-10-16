@@ -23,6 +23,10 @@ func TestOpenMigratesThenOpensStandalonePool(t *testing.T) {
 			calls = append(calls, "open:"+dsn)
 			return opened, nil
 		},
+		ensure: func(context.Context, *DB) error {
+			calls = append(calls, "ensure")
+			return nil
+		},
 	}, WithDSN(" postgres://captain "), WithMigrations())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -30,7 +34,7 @@ func TestOpenMigratesThenOpensStandalonePool(t *testing.T) {
 	if db.Gorm() != opened || !db.owned {
 		t.Fatalf("database = %+v, want owned standalone pool", db)
 	}
-	want := []string{"migrate:postgres://captain:public", "open:postgres://captain"}
+	want := []string{"migrate:postgres://captain:public", "open:postgres://captain", "ensure"}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}
@@ -50,6 +54,10 @@ func TestOpenMigratesThenReusesInjectedPool(t *testing.T) {
 			t.Fatal("injected pool must not open another application pool")
 			return nil, nil
 		},
+		ensure: func(context.Context, *DB) error {
+			calls = append(calls, "ensure")
+			return nil
+		},
 	}, WithGorm(shared), WithDSN("postgres://shared"), WithMigrations())
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -57,7 +65,7 @@ func TestOpenMigratesThenReusesInjectedPool(t *testing.T) {
 	if db.Gorm() != shared || db.owned {
 		t.Fatalf("database = %+v, want non-owning injected pool", db)
 	}
-	if want := []string{"migrate:postgres://shared:public"}; !reflect.DeepEqual(calls, want) {
+	if want := []string{"migrate:postgres://shared:public", "ensure"}; !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}
 	if err := db.Close(); err != nil {

@@ -134,11 +134,13 @@ func TestRunUntil_HitsMaxIterations(t *testing.T) {
 
 // A provider that reports usage but no cost (codex-cli/cmux, gemini-cli) must
 // still accrue a real cost so MaxCostUSD can enforce a budget for it (finding
-// C2). The loop prices the usage from the registry.
+// C2). The loop prices the usage from the registry. The model must be one the
+// bundled catalog prices: a retired id is priced only by a live OpenRouter
+// fetch, which CI cannot rely on.
 func TestRunUntil_PricesUsageWhenProviderReportsNoCost(t *testing.T) {
 	p := &fakeStreamingProvider{
 		runtime: RuntimeOf(Anthropic, ModeAPI),
-		model:   "claude-sonnet-4",
+		model:   "claude-sonnet-5",
 		scripts: [][]Event{{
 			{Kind: EventResult, Success: true, CostUSD: 0, Usage: &Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}},
 		}},
