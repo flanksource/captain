@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,7 +55,7 @@ type sessionReadResponse struct {
 // provider session id, like the message route, and answer errors as JSON {error}.
 func SessionHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{id}", handleSessionRead)
+	mux.HandleFunc("GET /{id}", sessionRead(captainDB))
 	mux.HandleFunc("POST /{id}/tokens", handleSessionTokens)
 	mux.Handle("POST /{id}/message", handleSessionMessage(promptChats))
 	mux.Handle("GET /{id}/chat", handleSessionChat(promptChats))
@@ -63,19 +64,42 @@ func SessionHandler() http.Handler {
 	return mux
 }
 
-func handleSessionRead(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimSpace(r.PathValue("id"))
-	if wantsSessionStream(r) {
-		streamSession(w, r, id)
-		return
+// SessionReader serves SessionHandler's GET /{id}, the read and follow of a session, from db,
+// for a host that keeps Captain's tables in its own database. It serves none of the other routes.
+func SessionReader(db *database.DB) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /{id}", sessionRead(func(context.Context) (*database.DB, error) { return db, nil }))
+	return mux
+}
+
+// sessionDB opens the database a session is read from.
+type sessionDB func(context.Context) (*database.DB, error)
+
+// sessionRead reads, or follows, the session {id} names in the database open opens.
+func sessionRead(open sessionDB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if wantsSessionStream(r) {
+			streamSession(w, r, id, open)
+			return
+		}
+		writeSessionRead(w, r, id, open)
 	}
+}
+
+func writeSessionRead(w http.ResponseWriter, r *http.Request, id string, open sessionDB) {
 	opts, err := sessionWindowFromQuery(id, r)
 	if err != nil {
 		writeSessionError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
 	opts.Primary = true
-	result, err := RunSessionGet(r.Context(), opts)
+	db, err := trackedSessionDB(r.Context(), open)
+	if err != nil {
+		writeSessionError(w, sessionErrorStatus(err), err.Error(), nil)
+		return
+	}
+	result, err := runSessionGet(r.Context(), db, opts)
 	if err != nil {
 		writeSessionError(w, sessionErrorStatus(err), err.Error(), nil)
 		return
@@ -140,13 +164,13 @@ func writeSessionError(w http.ResponseWriter, status int, message string, fields
 // accepts only an event stream: an EventSource never exposes a non-SSE body,
 // so it gets the failure as one `error` frame instead of an unexplained
 // connection error. Afterwards errors are always `error` frames.
-func streamSession(w http.ResponseWriter, r *http.Request, id string) {
+func streamSession(w http.ResponseWriter, r *http.Request, id string, open sessionDB) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeSessionError(w, http.StatusInternalServerError, "the response writer cannot stream", nil)
 		return
 	}
-	events, err := followSession(r, id)
+	events, err := followSession(r, id, open)
 	if err != nil && !strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 		writeSessionError(w, sessionErrorStatus(err), err.Error(), nil)
 		return
@@ -167,8 +191,8 @@ func streamSession(w http.ResponseWriter, r *http.Request, id string) {
 	writeSessionFrames(w, flusher, r, events)
 }
 
-func followSession(r *http.Request, id string) (<-chan sessionquery.FollowEvent, error) {
-	db, err := captainDB(r.Context())
+func followSession(r *http.Request, id string, open sessionDB) (<-chan sessionquery.FollowEvent, error) {
+	db, err := open(r.Context())
 	if err != nil {
 		return nil, err
 	}
