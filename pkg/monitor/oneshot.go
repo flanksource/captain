@@ -2,13 +2,14 @@ package monitor
 
 import (
 	"context"
+	"errors"
 )
 
 // RunOnce freshens the database exactly once: one process poll and one
 // incremental backfill pass, guarded by the same single-writer advisory lock as
 // Run. When a live monitor already holds the lock the database is being kept
 // current continuously and RunOnce is a no-op.
-func RunOnce(ctx context.Context, cfg Config) error {
+func RunOnce(ctx context.Context, cfg Config) (err error) {
 	m, err := New(cfg)
 	if err != nil {
 		return err
@@ -20,7 +21,7 @@ func RunOnce(ctx context.Context, cfg Config) error {
 	if conn == nil {
 		return nil
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { err = errors.Join(err, releaseWriterLock(conn)) }()
 
 	ingestor := newIngestor(m)
 	// Ingest transcripts before polling processes so processes bind to real

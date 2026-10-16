@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -157,12 +158,28 @@ func newHost(t *testing.T) *host {
 	return &host{t: t, home: t.TempDir(), bin: resolveCaptainBinary(t)}
 }
 
+// inheritedDatabaseEnv names the variables a captain child would otherwise
+// resolve a database from. A developer shell that exports one (GAVEL_DB_DSN
+// pointing at their own gavel database) made a host without sessionDBURL
+// migrate and write that real database, so a host sees only the URL it was
+// given.
+var inheritedDatabaseEnv = []string{
+	"CAPTAIN_SESSION_DB_URL", "GAVEL_DB_DSN", "GAVEL_GITHUB_CACHE_DSN", "COMMONS_DB_URL", "DATABASE_URL", "DB_URL",
+}
+
 func (h *host) env() []string {
 	databaseURL := h.sessionDBURL
 	if databaseURL == "" {
 		databaseURL = "off"
 	}
-	return append(os.Environ(), "HOME="+h.home, "CAPTAIN_SESSION_DB_URL="+databaseURL)
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if !slices.Contains(inheritedDatabaseEnv, name) {
+			env = append(env, entry)
+		}
+	}
+	return append(env, "HOME="+h.home, "CAPTAIN_SESSION_DB_URL="+databaseURL)
 }
 
 // run executes a captain command to completion.
