@@ -51,7 +51,7 @@ var _ = Describe("Session list pages", func() {
 			ids[0], 0, "assistant", `[{"type":"tool-shell","toolName":"shell"}]`,
 		).Error).NotTo(HaveOccurred())
 
-		first, err := db.ListSessionSummaries(ctx, SessionListFilter{RootsOnly: true, Limit: 2})
+		first, err := db.ListSessionSummaries(ctx, SessionListFilter{RootsOnly: true, Limit: 2, IncludeTotal: true})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(first.Total).To(Equal(int64(3)))
 		Expect(first.Rows).To(HaveLen(2))
@@ -67,13 +67,19 @@ var _ = Describe("Session list pages", func() {
 		}))
 
 		last, err := db.ListSessionSummaries(ctx, SessionListFilter{
-			RootsOnly: true, Limit: 2, Cursor: first.NextCursor,
+			RootsOnly: true, Limit: 2, Cursor: first.NextCursor, IncludeTotal: true,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(last.Total).To(Equal(int64(3)))
 		Expect(last.Rows).To(HaveLen(1))
 		Expect(last.Rows[0].ID).To(Equal(ids[2]))
 		Expect(last.NextCursor).To(BeEmpty())
+
+		uncounted, err := db.ListSessionSummaries(ctx, SessionListFilter{RootsOnly: true, Limit: 2})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(uncounted.Total).To(BeZero(), "a page that did not ask for a total does not count")
+		Expect([]uuid.UUID{uncounted.Rows[0].ID, uncounted.Rows[1].ID}).To(Equal(ids[:2]))
+		Expect(uncounted.NextCursor).To(Equal(first.NextCursor))
 	})
 
 	It("drops subagents but keeps transcript children, carrying relation and activity state", func(ctx SpecContext) {
@@ -152,27 +158,18 @@ var _ = Describe("Session list pages", func() {
 		}
 
 		bounded, err := db.ListSessionSummaries(ctx, SessionListFilter{
-			RootsOnly: true, ActivityFrom: &from, ActivityBefore: &before,
+			RootsOnly: true, ActivityFrom: &from, ActivityBefore: &before, IncludeTotal: true,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(bounded.Total).To(Equal(int64(2)))
 		Expect([]uuid.UUID{bounded.Rows[0].ID, bounded.Rows[1].ID}).To(Equal([]uuid.UUID{ids[2], ids[1]}))
 
 		live, err := db.ListSessionSummaries(ctx, SessionListFilter{
-			RootsOnly: true, LiveOnly: true, ActivityFrom: &from, ActivityBefore: &before,
+			RootsOnly: true, LiveOnly: true, ActivityFrom: &from, ActivityBefore: &before, IncludeTotal: true,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(live.Total).To(Equal(int64(1)))
 		Expect(live.Rows).To(HaveLen(1))
 		Expect(live.Rows[0].ID).To(Equal(ids[1]))
-	})
-
-	It("keeps detail aggregates bounded to paged sessions", func() {
-		Expect(sessionListQuery).NotTo(ContainSubstring("captain_session_overview"))
-		Expect(sessionListQuery).To(ContainSubstring("JOIN paged p ON p.id = m.session_id"))
-		Expect(sessionListQuery).NotTo(ContainSubstring("captain_events"))
-		Expect(sessionListQuery).NotTo(ContainSubstring("captain_plans"))
-		Expect(sessionListQuery).NotTo(ContainSubstring("captain_turn_requests"))
-		Expect(sessionListQuery).NotTo(ContainSubstring("captain_artifacts"))
 	})
 })

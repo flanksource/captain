@@ -225,6 +225,12 @@ table "captain_prompt_runs" {
   index "captain_prompt_runs_session_created_idx" {
     columns = [column.session_id, column.created_at]
   }
+  # Hosts resolve a session write to its aggregate's runs through
+  # root_session_id (gavel's todo-session lookup runs on every captain_sessions
+  # write); unindexed, each of those was a sequential scan of every run.
+  index "captain_prompt_runs_root_session_id_idx" {
+    columns = [column.root_session_id]
+  }
   index "captain_prompt_runs_batch_id_idx" {
     columns = [column.batch_id]
   }

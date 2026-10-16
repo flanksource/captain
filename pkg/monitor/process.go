@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
@@ -23,6 +24,9 @@ type Process struct {
 	StartedAt     *time.Time
 	CWD           string
 	Command       string
+	// ProviderSessionID is the process's own session id read from its
+	// environment (see environmentSessionID); empty when it carries none.
+	ProviderSessionID string
 }
 
 // pollProcesses is one monitor tick: sample agent processes, bind each to a
@@ -46,6 +50,10 @@ func (m *Monitor) pollProcesses(ctx context.Context, watcher *transcriptWatcher)
 			continue
 		}
 		if err := m.persistProcess(ctx, sessionID, proc, sampledAt); err != nil {
+			// The cached binding may name a session deleted since; resolve it
+			// afresh next poll.
+			m.sessionIDs.forgetSession(sessionID)
+			m.samples.forgetSession(sessionID)
 			log.Warnf("persist process pid %d: %v", proc.PID, err)
 			continue
 		}
@@ -53,8 +61,12 @@ func (m *Monitor) pollProcesses(ctx context.Context, watcher *transcriptWatcher)
 			m.watchLiveSession(ctx, watcher, proc, sessionID)
 		}
 	}
-	if _, err := m.db.EndVanishedProcesses(ctx, m.cfg.HostID, alive); err != nil {
-		return err
+	m.samples.retainPIDs(alive)
+	if m.samples.sweepDue(alive) {
+		if _, err := m.db.EndVanishedProcesses(ctx, m.cfg.HostID, alive); err != nil {
+			return err
+		}
+		m.samples.markSwept(alive)
 	}
 	if watcher != nil {
 		for path, source := range m.trackedPaths() {
@@ -65,19 +77,19 @@ func (m *Monitor) pollProcesses(ctx context.Context, watcher *transcriptWatcher)
 }
 
 // resolveProcessSession binds a process to a session, in precedence order: the
-// authoritative argv session id; the previously recorded binding (unless it
-// still points at a provisional stub); the newest ingested session in the same
-// working directory; finally a provisional session that later transcript
-// ingest fills in.
+// authoritative argv session id; the process's own environment session id; the
+// previously recorded binding (unless it still points at a provisional stub);
+// the newest ingested session in the same working directory; finally a
+// provisional session that later transcript ingest fills in.
 func (m *Monitor) resolveProcessSession(ctx context.Context, proc Process) (uuid.UUID, error) {
-	if providerSessionID := sessionprocess.SessionIDFromCommand(proc.Command); providerSessionID != "" {
-		session, err := m.db.CreateOrGetSession(ctx, database.CreateSessionInput{
+	providerSessionID := sessionprocess.SessionIDFromCommand(proc.Command)
+	if providerSessionID == "" {
+		providerSessionID = proc.ProviderSessionID
+	}
+	if providerSessionID != "" {
+		return m.providerSessionID(ctx, database.CreateSessionInput{
 			ProviderSessionID: providerSessionID, Source: proc.Source, HostID: m.cfg.HostID, CWD: proc.CWD,
 		})
-		if err != nil {
-			return uuid.Nil, err
-		}
-		return session.ID, nil
 	}
 	sticky, stickyProvisional, err := m.stickyProcessSession(ctx, proc)
 	if err != nil {
@@ -119,8 +131,20 @@ func (m *Monitor) stickyProcessSession(ctx context.Context, proc Process) (uuid.
 	return existing, session.ProviderSessionID == "" && session.Path == "", nil
 }
 
+// persistProcess writes a process sample only when it says something new: the
+// binding changed, or the row's heartbeat is due. The heartbeat interval is the
+// idle poll cadence, so a row is never staler than an idle monitor would leave
+// it, and far inside staleProcessCutoff.
 func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc Process, sampledAt time.Time) error {
 	startedAt := processStartOrNow(proc)
+	key := processKey{pid: int64(proc.PID), startedAt: startedAt}
+	binding := processBinding{
+		sessionID: sessionID, status: proc.Status, command: proc.Command, cwd: proc.CWD, source: proc.Source,
+	}
+	last, seen := m.samples.lastWritten(key)
+	if seen && last.binding == binding && sampledAt.Sub(last.writtenAt) < m.cfg.IdleProcessInterval {
+		return nil
+	}
 	input := database.SessionProcessInput{
 		SessionID: sessionID, HostID: m.cfg.HostID, BootID: bootID(),
 		PID: int64(proc.PID), ProcessStartedAt: startedAt,
@@ -134,11 +158,19 @@ func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc 
 	// Close a superseded process identity before inserting the observation. This
 	// avoids using a predictable unique-key violation as control flow (and the
 	// corresponding ERROR log), and also drains legacy rows whose timezone bug
-	// left the same PID open under a different start timestamp.
-	if err := m.db.EndOtherSessionProcesses(ctx, sessionID, int64(proc.PID), startedAt); err != nil {
+	// left the same PID open under a different start timestamp. While this
+	// monitor has already bound the process to the same session there is no
+	// other row to close.
+	if !seen || last.binding.sessionID != sessionID {
+		if err := m.db.EndOtherSessionProcesses(ctx, sessionID, int64(proc.PID), startedAt); err != nil {
+			return err
+		}
+	}
+	if err := m.db.UpsertSessionProcess(ctx, input); err != nil {
 		return err
 	}
-	return m.db.UpsertSessionProcess(ctx, input)
+	m.samples.record(key, processSample{binding: binding, writtenAt: sampledAt})
+	return nil
 }
 
 // watchLiveSession points the watcher at wherever this live session's
@@ -153,8 +185,15 @@ func (m *Monitor) watchLiveSession(ctx context.Context, watcher *transcriptWatch
 	case "codex":
 		watcher.watchDir(codexDayDir(time.Now()), "codex")
 	}
-	if session, err := m.db.GetSession(ctx, sessionID); err == nil && session.Path != "" {
-		watcher.track(session.Path, proc.Source)
+	path := m.samples.sessionPath(sessionID)
+	if path == "" {
+		if session, err := m.db.GetSession(ctx, sessionID); err == nil {
+			path = session.Path
+			m.samples.rememberPath(sessionID, path)
+		}
+	}
+	if path != "" {
+		watcher.track(path, proc.Source)
 	}
 }
 
@@ -189,8 +228,23 @@ func discoverAgentProcesses() ([]Process, error) {
 			Source: agent.Source, PID: agent.PID, Status: agent.Status,
 			CPUPercent: agent.CPUPercent, MemoryPercent: agent.MemoryPercent,
 			MemoryRSSKB: int64(agent.RSSBytes / 1024), StartedAt: agent.StartedAt,
-			CWD: agent.CWD, Command: agent.Command,
+			CWD: agent.CWD, Command: agent.Command, ProviderSessionID: environmentSessionID(agent),
 		}
 	}
 	return processes, nil
+}
+
+// environmentSessionID is the session id an agent process carries in its own
+// environment. Agents export their id to the commands they spawn, so a nested
+// agent inherits its parent's: an id for a different source, or one stamped
+// with another agent's CLAUDE_PID, belongs to an ancestor and is ignored.
+func environmentSessionID(agent sessionprocess.Agent) string {
+	source, sessionID := sessionprocess.IdentityFromEnvironment(agent.Environment)
+	if source != agent.Source {
+		return ""
+	}
+	if owner := agent.Environment["CLAUDE_PID"]; owner != "" && owner != strconv.Itoa(agent.PID) {
+		return ""
+	}
+	return sessionID
 }
