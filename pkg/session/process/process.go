@@ -91,7 +91,10 @@ func agentFrom(process clickyprocess.Process, source string) Agent {
 func Source(command string) string {
 	lower := strings.ToLower(command)
 	switch executableName(lower) {
-	case "captain", "ctop", "claude-manager":
+	// cmux hook helpers ("cmux hooks claude spool-forwarder") inherit their
+	// agent's session environment; counting them would bind a second live
+	// process to that session.
+	case "captain", "ctop", "claude-manager", "cmux":
 		return ""
 	}
 	if strings.Contains(lower, "claude.app") || strings.Contains(lower, "codex.app") {

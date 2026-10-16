@@ -19,6 +19,8 @@ var _ = Describe("agent process semantics", func() {
 		Entry("vendored Claude", vendoredClaudeCommand, "claude"),
 		Entry("Claude working in Captain", claudeInCaptain, "claude"),
 		Entry("Captain itself", captainServeCommand, ""),
+		Entry("cmux Claude hook spool forwarder", "/Applications/cmux.app/Contents/Resources/bin/cmux hooks claude spool-forwarder", ""),
+		Entry("cmux Claude hook inbox wait", "/Applications/cmux.app/Contents/Resources/bin/cmux hooks claude inbox-wait", ""),
 		Entry("Claude desktop", "/Applications/Claude.app/Contents/MacOS/Claude", ""),
 		Entry("Codex desktop helper", "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/browser_crashpad_handler", ""),
 		Entry("Codex", "/Users/acme/.local/bin/codex-darwin-arm64 exec", "codex"),
