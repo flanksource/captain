@@ -63,11 +63,11 @@ var _ = Describe("Session list availability", func() {
 			}
 		}
 
-		unfiltered, err := db.ListSessionSummaries(ctx, SessionListFilter{})
+		unfiltered, err := db.ListSessionSummaries(ctx, SessionListFilter{IncludeTotal: true})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(unfiltered.Total).To(Equal(int64(len(kinds))))
 		var actual []uuid.UUID
-		filter := SessionListFilter{ExcludeInactiveEmpty: true, Limit: 2}
+		filter := SessionListFilter{ExcludeInactiveEmpty: true, Limit: 2, IncludeTotal: true}
 		for {
 			page, err := db.ListSessionSummaries(ctx, filter)
 			Expect(err).NotTo(HaveOccurred())
