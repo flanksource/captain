@@ -153,7 +153,7 @@ func benchmarkCodexIngestInput(b *testing.B, path string, fixture codexBenchmark
 	b.ReportAllocs()
 	b.SetBytes(int64(len(fixture.data)))
 	for b.Loop() {
-		input, err := codexIngestInput(path)
+		input, _, err := codexIngestInput(path)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -270,7 +270,7 @@ func prepareCodexBenchmarkFixture(b *testing.B, name string, fixture codexBenchm
 	if err := os.WriteFile(path, fixture.data, 0o600); err != nil {
 		b.Fatalf("write codex fixture: %v", err)
 	}
-	input, err := codexIngestInput(path)
+	input, _, err := codexIngestInput(path)
 	if err != nil {
 		b.Fatalf("parse codex fixture: %v", err)
 	}
