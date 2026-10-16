@@ -422,6 +422,56 @@ var _ = Describe("a recorded prompt run", func() {
 		})
 	})
 
+	Describe("Track, for a host whose run executes elsewhere", func() {
+		It("files the run live from the events and progress the host relays, then its finish", func(ctx SpecContext) {
+			rec := recording(nil)
+			admitted, err := promptrun.Admit(ctx, promptrun.Input{Resolved: resolved, Record: rec})
+			Expect(err).NotTo(HaveOccurred())
+			recorder := promptrun.Track(ctx, rec, admitted, api.RuntimeOf(api.Anthropic, api.ModeAgent), resolved.Spec.Model, resolved.Spec, "")
+
+			spec := resolved.Spec
+			Expect(recorder.Start(&spec)).To(Succeed())
+			run, err := db.GetPromptRun(ctx, admitted.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(run.State).To(Equal(database.PromptRunStateRunning))
+			Expect(run.Phase).To(Equal(database.PromptRunPhaseGenerate))
+			Expect(run.StartedAt).NotTo(BeNil())
+			Expect(run.Runtime.Resolved.Model).To(Equal("claude-sonnet-5"))
+
+			providerSessionID := uuid.NewString()
+			for _, ev := range answeredTurn(providerSessionID) {
+				recorder.Observe(1, ev)
+			}
+			admission, err := db.GetSession(ctx, run.SessionID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(admission.ProviderSessionID).To(Equal(providerSessionID), "the session is bound as soon as an event names it")
+			Expect(admission.CWD).To(Equal(cwd))
+			run, err = db.GetPromptRun(ctx, admitted.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(run.ExecutionSessionID).NotTo(BeNil())
+
+			report := api.NewNodeReport(api.VerifyKindFixture, "fixture", api.VerifyNode{Name: "acceptance", Running: true})
+			report.Iteration = 1
+			recorder.Progress(report)
+			run, err = db.GetPromptRun(ctx, admitted.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(run.Phase).To(Equal(database.PromptRunPhaseVerify))
+			iterations, err := db.ListPromptRunIterations(ctx, run.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(iterations).To(HaveLen(1))
+			Expect(iterations[0].State).To(Equal(database.PromptRunIterationStateRunning))
+
+			result, err := recorder.Complete(nil, promptrun.Result{Response: &ai.Response{Text: "done"}, Passed: true}, nil, false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.PromptRunID).To(Equal(admitted.ID))
+			run, err = db.GetPromptRun(ctx, admitted.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(run.State).To(Equal(database.PromptRunStateSucceeded))
+			Expect(run.Phase).To(Equal(database.PromptRunPhaseFinished))
+			Expect(run.ResultText).To(Equal("done"))
+		})
+	})
+
 	It("fails a recording with neither an existing session nor a tree to place it in", func(ctx SpecContext) {
 		rec := recording(nil)
 		rec.Placement = promptrun.Placement{}

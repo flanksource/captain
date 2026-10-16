@@ -19,14 +19,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// recorder files one admitted run's lifecycle: start, transcript binding,
+// Recorder files one admitted run's lifecycle: start, transcript binding,
 // progress, and finish. Every write runs on a context detached from the run's
 // own, so a stopped run is still written down.
 //
 // Writes that happen mid-run (an event callback, a progress snapshot) cannot
 // fail the step that triggered them; the first such error is kept and fails the
 // run when it finishes, like any other store error.
-type recorder struct {
+type Recorder struct {
 	ctx         context.Context
 	db          *database.DB
 	runID       uuid.UUID
@@ -51,16 +51,30 @@ type recorder struct {
 	apiFailed bool
 }
 
-func newRecorder(ctx context.Context, rec *Recording, run *database.PromptRun) *recorder {
-	return &recorder{
+func newRecorder(ctx context.Context, rec *Recording, run *database.PromptRun) *Recorder {
+	return &Recorder{
 		ctx: context.WithoutCancel(ctx), db: rec.DB, runID: run.ID, sessionID: run.SessionID, driver: rec.Runtime.Driver,
 	}
+}
+
+// Track files an admitted run that executes outside this process — in a
+// sandbox that relays its events back — live, through the same writes Run makes
+// for a run it executes itself. The host calls Start once the run's setup is
+// done, Observe for every relayed event, Progress for every verification
+// snapshot, and Complete with the run's result. runtime and model are what
+// executes the run, and providerSessionID a provider session known before the
+// first turn (empty when none is).
+func Track(ctx context.Context, rec *Recording, run *database.PromptRun, runtime api.Runtime, model api.Model, spec api.Spec, providerSessionID string) *Recorder {
+	r := newRecorder(ctx, rec, run)
+	r.prepare(runtime, model, spec, providerSessionID)
+	r.transcribeAPIRun()
+	return r
 }
 
 // prepare records what dispatch settled: the runtime that executes the run, the
 // model it resolved to, and a provider session id known before the first turn
 // (a pre-assigned id, or the session a resumed run continues).
-func (r *recorder) prepare(runtime api.Runtime, model api.Model, spec api.Spec, providerSessionID string) {
+func (r *Recorder) prepare(runtime api.Runtime, model api.Model, spec api.Spec, providerSessionID string) {
 	r.runtime, r.model, r.verifyOnly = runtime, model, spec.IsVerifyOnly()
 	r.knownSessID = strings.TrimSpace(firstNonEmpty(providerSessionID, spec.SessionID))
 }
@@ -70,7 +84,7 @@ func (r *recorder) prepare(runtime api.Runtime, model api.Model, spec api.Spec, 
 // their effective permission and the input schema the provider is sent. A
 // provider that rejects a tool names it by position, and this is the list that
 // position indexes.
-func (r *recorder) offerTools(tools []api.ToolDefinition, spec api.Spec) error {
+func (r *Recorder) offerTools(tools []api.ToolDefinition, spec api.Spec) error {
 	if len(tools) == 0 {
 		return nil
 	}
@@ -97,17 +111,17 @@ type offeredTool struct {
 // derived from the run: it exists before the first request, which is the one a
 // run rejected outright never gets past. Only a run whose events the recorder
 // sees can be transcribed.
-func (r *recorder) transcribeAPIRun() {
+func (r *Recorder) transcribeAPIRun() {
 	if r.knownSessID != "" || r.verifyOnly || TranscriptSource(r.runtime) != api.TranscriptSourceAPI {
 		return
 	}
 	r.knownSessID = uuid.NewSHA1(r.runID, []byte(api.TranscriptSourceAPI)).String()
 }
 
-// start marks the run running with the spec that actually runs — the one setup
+// Start marks the run running with the spec that actually runs — the one setup
 // already transformed — and the runtime it resolved to, then binds a provider
 // session known up front.
-func (r *recorder) start(spec *api.Spec) error {
+func (r *Recorder) Start(spec *api.Spec) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rendered, err := SpecDocument(*spec)
@@ -133,7 +147,7 @@ func (r *recorder) start(spec *api.Spec) error {
 	return r.bindTranscript(r.knownSessID)
 }
 
-func (r *recorder) activePhase() database.PromptRunPhase {
+func (r *Recorder) activePhase() database.PromptRunPhase {
 	if r.verifyOnly {
 		return database.PromptRunPhaseVerify
 	}
@@ -142,7 +156,7 @@ func (r *recorder) activePhase() database.PromptRunPhase {
 
 // resolvedRuntime layers what this run resolved over what the run already
 // recorded, so a resumed run that cannot name a field keeps the original's.
-func (r *recorder) resolvedRuntime(current database.PromptRunRuntime, spec *api.Spec) database.PromptRunRuntime {
+func (r *Recorder) resolvedRuntime(current database.PromptRunRuntime, spec *api.Spec) database.PromptRunRuntime {
 	merged := current
 	merged.Resolved = database.PromptRunRuntimeSelection{
 		Provider: firstNonEmpty(r.runtime.Provider, current.Resolved.Provider),
@@ -155,7 +169,7 @@ func (r *recorder) resolvedRuntime(current database.PromptRunRuntime, spec *api.
 
 // recordCWD stamps the directory the agent works in on the admission session: a
 // per-run worktree is known only once setup has run.
-func (r *recorder) recordCWD(sessionID uuid.UUID, cwd string) error {
+func (r *Recorder) recordCWD(sessionID uuid.UUID, cwd string) error {
 	cwd = strings.TrimRight(strings.TrimSpace(cwd), "/")
 	if cwd == "" {
 		return nil
@@ -178,7 +192,7 @@ func (r *recorder) recordCWD(sessionID uuid.UUID, cwd string) error {
 // bindTranscript binds the provider's session id to the admission session and,
 // for a runtime that leaves a transcript, the transcript session the monitor
 // ingests into — then arms the monitor on it. Binding happens once per id.
-func (r *recorder) bindTranscript(providerSessionID string) error {
+func (r *Recorder) bindTranscript(providerSessionID string) error {
 	providerSessionID = strings.TrimSpace(providerSessionID)
 	if providerSessionID == "" || providerSessionID == r.boundSession {
 		return nil
@@ -207,7 +221,7 @@ func (r *recorder) bindTranscript(providerSessionID string) error {
 
 // openAPITranscript starts the transcript of an API-mode run before it is
 // registered, since registration resolves the file by its id.
-func (r *recorder) openAPITranscript(transcript *database.Session) error {
+func (r *Recorder) openAPITranscript(transcript *database.Session) error {
 	if transcript.Source != api.TranscriptSourceAPI || r.apiLog != nil {
 		return nil
 	}
@@ -227,7 +241,7 @@ func (r *recorder) openAPITranscript(transcript *database.Session) error {
 }
 
 // writeAPITranscript appends what an API-mode run exchanged with its model.
-func (r *recorder) writeAPITranscript(ev ai.Event) {
+func (r *Recorder) writeAPITranscript(ev ai.Event) {
 	if r.apiLog == nil {
 		return
 	}
@@ -248,7 +262,7 @@ func (r *recorder) writeAPITranscript(ev ai.Event) {
 // closeAPITranscript ends an API-mode run's transcript. A run that failed
 // without its stream saying why — a request refused before it was sent — has
 // its error written here, so the transcript never ends without its cause.
-func (r *recorder) closeAPITranscript(outcome Outcome) error {
+func (r *Recorder) closeAPITranscript(outcome Outcome) error {
 	if r.apiLog == nil {
 		return nil
 	}
@@ -261,7 +275,7 @@ func (r *recorder) closeAPITranscript(outcome Outcome) error {
 	return err
 }
 
-func (r *recorder) bindProviderSession(sessionID uuid.UUID, providerSessionID string) (*database.Session, error) {
+func (r *Recorder) bindProviderSession(sessionID uuid.UUID, providerSessionID string) (*database.Session, error) {
 	admission, err := r.db.GetSession(r.ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("promptrun: load admission session: %w", err)
@@ -281,7 +295,7 @@ func (r *recorder) bindProviderSession(sessionID uuid.UUID, providerSessionID st
 // transcriptSession is the session the provider's on-disk log is ingested into.
 // A run binds its execution session once; a resumed run re-arms the one it has.
 // A runtime that writes no transcript (the API mode) has none.
-func (r *recorder) transcriptSession(run *database.PromptRun, admission *database.Session) (*database.Session, error) {
+func (r *Recorder) transcriptSession(run *database.PromptRun, admission *database.Session) (*database.Session, error) {
 	if run.ExecutionSessionID != nil {
 		return r.db.GetSession(r.ctx, *run.ExecutionSessionID)
 	}
@@ -307,7 +321,7 @@ func (r *recorder) transcriptSession(run *database.PromptRun, admission *databas
 // createTranscriptSession is the transcript child of an admission session that
 // is not itself a transcript (a host's operation session). A run admitted on
 // the transcript row itself — a continuation of a provider session — is its own.
-func (r *recorder) createTranscriptSession(admission *database.Session, source string) (*database.Session, error) {
+func (r *Recorder) createTranscriptSession(admission *database.Session, source string) (*database.Session, error) {
 	description := ""
 	if admission.Description != "" {
 		description = "Agent session for " + admission.Description
@@ -357,9 +371,9 @@ func registerTranscript(ctx context.Context, db *database.DB, transcript *databa
 	return nil
 }
 
-// observe binds the provider session the moment the stream names it, and moves
+// Observe binds the provider session the moment the stream names it, and moves
 // the run back to generating when a retried turn starts producing.
-func (r *recorder) observe(iter int, ev ai.Event) {
+func (r *Recorder) Observe(iter int, ev ai.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if ev.Kind == ai.EventSystem && ev.SessionID != "" {
@@ -381,8 +395,8 @@ func generating(kind ai.EventKind) bool {
 	return kind == ai.EventText || kind == ai.EventThinking || kind == ai.EventToolUse
 }
 
-// progress files an in-flight verification snapshot on the iteration it judges.
-func (r *recorder) progress(report api.VerifyReport) {
+// Progress files an in-flight verification snapshot on the iteration it judges.
+func (r *Recorder) Progress(report api.VerifyReport) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if report.Iteration < 1 {
@@ -403,13 +417,13 @@ func (r *recorder) progress(report api.VerifyReport) {
 	r.keep(err)
 }
 
-func (r *recorder) keep(err error) {
+func (r *Recorder) keep(err error) {
 	if err != nil && r.firstWriteErr == nil {
 		r.firstWriteErr = err
 	}
 }
 
-func (r *recorder) updateRun(build func(*database.PromptRun) (database.UpdatePromptRunInput, bool)) (*database.PromptRun, error) {
+func (r *Recorder) updateRun(build func(*database.PromptRun) (database.UpdatePromptRunInput, bool)) (*database.PromptRun, error) {
 	return updateRun(r.ctx, r.db, r.runID, build)
 }
 
@@ -444,13 +458,13 @@ const versionRaceAttempts = 3
 
 // hook is the recorder's place in the hook list: last, so its PreRun sees the
 // request setup already transformed.
-func (r *recorder) hook() *recordHook { return &recordHook{recorder: r} }
+func (r *Recorder) hook() *recordHook { return &recordHook{recorder: r} }
 
-type recordHook struct{ recorder *recorder }
+type recordHook struct{ recorder *Recorder }
 
 func (h *recordHook) Name() string { return "promptrun-recorder" }
 
-func (h *recordHook) PreRun(hc *agent.HookContext) error { return h.recorder.start(hc.Request) }
+func (h *recordHook) PreRun(hc *agent.HookContext) error { return h.recorder.Start(hc.Request) }
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
