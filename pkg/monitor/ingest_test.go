@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 )
@@ -41,6 +43,38 @@ func TestUnifiedIngestInputRecordsNoCallForTurnsThatRanNoModel(t *testing.T) {
 	}
 	if call := input.Turns[1].Call; call != nil {
 		t.Errorf("turn 10 call = %+v, want none", call)
+	}
+}
+
+func TestAPIIngestInputAcceptsATranscriptIngestedBeforeTheFirstReply(t *testing.T) {
+	const sessionID = "0195c1de-4ab8-7000-8000-00000000b42f"
+	path := filepath.Join(t.TempDir(), sessionID+".jsonl")
+	transcript, err := claude.CreateSyntheticTranscript(path, sessionID, "/home/dev/example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const model = "claude-haiku-5-5"
+	if err := transcript.Start(model, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := transcript.Append(model, api.Message{Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: "Triage this."}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := transcript.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	input, err := apiIngestInput(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Turns) == 0 {
+		t.Fatal("want the prompt's turn, got none")
+	}
+	for _, turn := range input.Turns {
+		if turn.Call != nil {
+			t.Errorf("turn %d call = %+v, want none before the model replied", turn.Index, turn.Call)
+		}
 	}
 }
 

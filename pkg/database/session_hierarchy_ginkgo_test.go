@@ -7,6 +7,79 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+var _ = Describe("nested agent roots", Ordered, func() {
+	var db *DB
+
+	BeforeAll(func(ctx SpecContext) {
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_nested_agent_roots"})
+		var err error
+		db, err = Open(ctx, WithDSN(handle.DSN()), WithMigrations())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
+	})
+
+	// grandparent ← parent ← child, with the parent's own hierarchy unknown
+	// until it is adopted.
+	nest := func(ctx SpecContext, name string) (grandparent, parent *Session) {
+		GinkgoHelper()
+		var err error
+		grandparent, err = db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: name + "-grandparent", Source: "codex", HostID: "nested-test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		parent, err = db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: name + "-parent", Source: "codex", HostID: "nested-test",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		return grandparent, parent
+	}
+
+	It("re-derives a child's root that went stale when its parent was adopted", func(ctx SpecContext) {
+		grandparent, parent := nest(ctx, "stale")
+		child := CreateSessionInput{
+			ProviderSessionID: "stale-child", Source: "codex", HostID: "nested-test", ParentSessionID: &parent.ID,
+		}
+		_, err := db.CreateOrGetSession(ctx, child)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.CreateOrGetSession(ctx, CreateSessionInput{
+			ProviderSessionID: "stale-parent", Source: "codex", HostID: "nested-test", ParentSessionID: &grandparent.ID,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		// The row a child insert racing the adoption leaves behind.
+		Expect(db.Gorm().Exec(`UPDATE captain_sessions SET root_session_id = ? WHERE provider_session_id = 'stale-child'`,
+			parent.ID).Error).To(Succeed())
+
+		reingested, err := db.CreateOrGetSession(ctx, child)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reingested.ParentSessionID).To(Equal(&parent.ID))
+		Expect(reingested.RootSessionID).To(Equal(&grandparent.ID))
+	})
+
+	It("derives a child's root after a concurrent adoption of its parent commits", func(ctx SpecContext) {
+		grandparent, parent := nest(ctx, "racing")
+		adoption := db.Gorm().Begin()
+		DeferCleanup(func() { adoption.Rollback() })
+		Expect(adoption.Exec(`UPDATE captain_sessions SET parent_session_id = ?, parent_relation = 'agent', root_session_id = ? WHERE id = ?`,
+			grandparent.ID, grandparent.ID, parent.ID).Error).To(Succeed())
+
+		created := make(chan *Session, 1)
+		go func() {
+			defer GinkgoRecover()
+			child, err := db.CreateOrGetSession(ctx, CreateSessionInput{
+				ProviderSessionID: "racing-child", Source: "codex", HostID: "nested-test", ParentSessionID: &parent.ID,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			created <- child
+		}()
+		Consistently(created, "300ms").ShouldNot(Receive(), "the child insert must wait for the parent's adoption")
+		Expect(adoption.Commit().Error).To(Succeed())
+
+		var child *Session
+		Eventually(created, "5s").Should(Receive(&child))
+		Expect(child.RootSessionID).To(Equal(&grandparent.ID))
+	})
+})
+
 var _ = Describe("session hierarchy enrichment", func() {
 	It("records transcript ownership when an existing provider session is adopted", func(ctx SpecContext) {
 		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_transcript_hierarchy"})
