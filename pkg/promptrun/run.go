@@ -131,12 +131,12 @@ func Run(ctx context.Context, in Input) (Result, error) {
 	}
 	rec := newRecorder(ctx, in.Record, run)
 	result, stopped, runErr := execute(ctx, in, rec)
-	return rec.complete(in.Record.Outcome, result, runErr, stopped)
+	return rec.Complete(in.Record.Outcome, result, runErr, stopped)
 }
 
 // execute is one run, recorded through rec when it is non-nil. stopped reports
 // that the run ended because its context did — cancelled or out of time.
-func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error) {
+func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error) {
 	start := time.Now()
 	admission, err := preflight(in)
 	if err != nil {
@@ -174,7 +174,7 @@ func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error)
 		OnEvent: func(iter int, ev ai.Event) {
 			identity.observe(ev)
 			if rec != nil {
-				rec.observe(iter, ev)
+				rec.Observe(iter, ev)
 			}
 			if in.OnEvent != nil {
 				in.OnEvent(iter, ev)
@@ -200,7 +200,7 @@ func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error)
 // runHooks is Hooks plus, for a recorded run, the recorder: its progress tap
 // wraps the caller's, and its hook trails setup so it records the spec setup
 // produced.
-func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Model, rec *recorder) ([]any, error) {
+func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Model, rec *Recorder) ([]any, error) {
 	if rec == nil {
 		return Hooks(ctx, *in, provider)
 	}
@@ -211,7 +211,7 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 	rec.transcribeAPIRun()
 	callerProgress := in.Verify.Progress
 	in.Verify.Progress = func(report api.VerifyReport) {
-		rec.progress(report)
+		rec.Progress(report)
 		if callerProgress != nil {
 			callerProgress(report)
 		}
