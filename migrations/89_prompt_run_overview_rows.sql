@@ -242,12 +242,14 @@ $$;
 -- (and so the change notification) for a row that is already current. A run
 -- that no longer exists has no row: the foreign key's cascade removed it.
 --
--- Refreshes of one run serialize on a transaction-scoped advisory lock taken
--- in id order before the compute statement, so under READ COMMITTED the last
--- refresh to commit saw every committed write, including for a row a crash
--- truncated (there is no row to lock yet). The lock is not a base-table row
--- lock, so a writer holding the run row never waits on a refresh and two
--- commit-time flushes cannot deadlock over run rows.
+-- Locks like captain_session_overview_rebuild (88): a run without a row (new,
+-- or truncated by a crash) gets one first, then every row is locked in id
+-- order, and only then recomputed, so under READ COMMITTED the recompute's
+-- snapshot is taken after any concurrent refresh holding a row lock has
+-- committed and the last refresh to commit saw every committed write. The
+-- locks are on overview rows, not run rows, so a writer holding a run row
+-- never waits on a refresh; and a row lock lives on its tuple, so refreshing
+-- every run in one transaction takes no shared lock-table entry per run.
 CREATE OR REPLACE FUNCTION public.captain_prompt_run_overview_refresh(p_ids uuid[])
 RETURNS void
 LANGUAGE plpgsql
@@ -261,10 +263,16 @@ BEGIN
   IF cardinality(ids) = 0 THEN
     RETURN;
   END IF;
-  -- 0x4f565250 is "OVRP", the prompt-run overview's advisory lock class.
-  PERFORM pg_advisory_xact_lock(1331057232, hashtext(id::text))
-  FROM unnest(ids) WITH ORDINALITY AS run(id, position)
-  ORDER BY position;
+  -- The rows are NOT NULL throughout, so the row to lock is a computed one;
+  -- the upsert below recomputes it under the lock.
+  INSERT INTO public.captain_prompt_run_overview_rows
+  SELECT * FROM public.captain_prompt_run_overview_rebuild(ARRAY(
+    SELECT m.run_id FROM unnest(ids) AS m(run_id)
+    WHERE NOT EXISTS (SELECT 1 FROM public.captain_prompt_run_overview_rows o WHERE o.id = m.run_id)
+  )) ORDER BY id
+  ON CONFLICT (id) DO NOTHING;
+  PERFORM 1 FROM public.captain_prompt_run_overview_rows o
+  WHERE o.id = ANY (ids) ORDER BY o.id FOR UPDATE;
   INSERT INTO public.captain_prompt_run_overview_rows AS o
   SELECT * FROM public.captain_prompt_run_overview_rebuild(ids) ORDER BY id
   ON CONFLICT (id) DO UPDATE SET (
@@ -372,12 +380,14 @@ FOR EACH ROW
 WHEN (OLD.* IS DISTINCT FROM NEW.*)
 EXECUTE FUNCTION public.captain_prompt_run_overview_notify();
 
--- ensure rebuilds the rows a crash truncated: every prompt run without one.
--- Writes since the crash may already have recomputed some runs, so it looks
--- for missing rows rather than an empty table. The lock holds off writers
--- until the rebuild commits, and the check is repeated under it so concurrent
--- callers rebuild once.
-CREATE OR REPLACE FUNCTION public.captain_prompt_run_overview_ensure()
+-- Crash recovery truncates UNLOGGED tables, and a commit only recomputes the
+-- runs it touched. Rebuilds up to batch_limit runs (all when NULL) that have
+-- no overview row, most recent first, and reports whether it rebuilt any.
+-- Callers repeat until it returns false so no single transaction holds row
+-- locks for the whole backfill; writers keep committing meanwhile, since
+-- refresh serializes per run.
+DROP FUNCTION IF EXISTS public.captain_prompt_run_overview_ensure();
+CREATE OR REPLACE FUNCTION public.captain_prompt_run_overview_ensure(batch_limit integer DEFAULT NULL)
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -386,23 +396,19 @@ AS $$
 DECLARE
   missing uuid[];
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.captain_prompt_runs r
-    WHERE NOT EXISTS (SELECT 1 FROM public.captain_prompt_run_overview_rows o WHERE o.id = r.id)
-  ) THEN
-    RETURN false;
+  IF batch_limit IS NOT NULL AND batch_limit < 1 THEN
+    RAISE EXCEPTION 'captain_prompt_run_overview_ensure batch_limit must be positive, got %', batch_limit;
   END IF;
-  LOCK TABLE public.captain_prompt_run_overview_rows IN SHARE ROW EXCLUSIVE MODE;
   missing := ARRAY(
     SELECT r.id FROM public.captain_prompt_runs r
     WHERE NOT EXISTS (SELECT 1 FROM public.captain_prompt_run_overview_rows o WHERE o.id = r.id)
-    ORDER BY r.id
+    ORDER BY r.created_at DESC, r.id DESC
+    LIMIT batch_limit
   );
   IF cardinality(missing) = 0 THEN
     RETURN false;
   END IF;
-  INSERT INTO public.captain_prompt_run_overview_rows
-  SELECT * FROM public.captain_prompt_run_overview_rebuild(missing) ORDER BY id;
+  PERFORM public.captain_prompt_run_overview_refresh(missing);
   RETURN true;
 END;
 $$;
@@ -489,4 +495,4 @@ SELECT public.captain_prompt_run_overview_refresh(ARRAY(SELECT id FROM public.ca
 REVOKE ALL ON FUNCTION public.captain_prompt_run_overview_rebuild(uuid[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.captain_prompt_run_overview_refresh(uuid[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.captain_prompt_run_overview_notify() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.captain_prompt_run_overview_ensure() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.captain_prompt_run_overview_ensure(integer) FROM PUBLIC;

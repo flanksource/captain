@@ -182,6 +182,16 @@ var _ = Describe("captain_prompt_run_overview_rows", Ordered, func() {
 		Expect(healed).To(BeZero(), "the touched run's row is recomputed exactly and is the only row")
 		Expect(usage(ctx, run).TotalTokens).To(Equal(int64(6)))
 
+		var batched bool
+		Expect(raw.QueryRowContext(ctx, `SELECT captain_prompt_run_overview_ensure(1)`).Scan(&batched)).To(Succeed())
+		Expect(batched).To(BeTrue())
+		expectInSync(ctx, "a one-run ensure batch", 2)
+		Expect(raw.QueryRowContext(ctx, `SELECT captain_prompt_run_overview_ensure(1)`).Scan(&batched)).To(Succeed())
+		Expect(batched).To(BeFalse(), "no run is left without a row")
+		_, err := raw.ExecContext(ctx, `SELECT captain_prompt_run_overview_ensure(0)`)
+		Expect(err).To(MatchError(ContainSubstring("batch_limit must be positive")))
+
+		exec(ctx, `TRUNCATE captain_prompt_run_overview_rows`)
 		rebuilt, err := db.EnsurePromptRunOverview(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(rebuilt).To(BeTrue())
@@ -228,6 +238,24 @@ var _ = Describe("captain_prompt_run_overview_rows", Ordered, func() {
 		Expect(before.Relations).To(ContainElements("captain_model_calls", "captain_prompt_run_iterations", "captain_plans"))
 		Expect(after.Relations).To(Equal([]string{"captain_prompt_run_overview_rows"}))
 		Expect(after.Buffers).To(BeNumerically("<", before.Buffers))
+	})
+
+	It("refreshes every run in one transaction without a shared lock-table entry per run", func(ctx SpecContext) {
+		var runs int
+		Expect(raw.QueryRowContext(ctx, `SELECT count(*) FROM captain_prompt_runs`).Scan(&runs)).To(Succeed())
+		Expect(runs).To(BeNumerically(">=", 1000), "the read spec seeds the runs this refresh covers")
+
+		tx, err := raw.BeginTx(ctx, nil)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { _ = tx.Rollback() })
+		_, err = tx.ExecContext(ctx, `SELECT captain_prompt_run_overview_refresh(ARRAY(SELECT id FROM captain_prompt_runs))`)
+		Expect(err).NotTo(HaveOccurred())
+		var advisory int
+		Expect(tx.QueryRowContext(ctx, `SELECT count(*) FROM pg_locks
+			WHERE pid = pg_backend_pid() AND locktype = 'advisory'`).Scan(&advisory)).To(Succeed())
+		Expect(advisory).To(BeZero(), "advisory locks fill max_locks_per_transaction and fail a large refresh")
+		Expect(tx.Commit()).To(Succeed())
+		expectInSync(ctx, "a refresh of every run", runs)
 	})
 })
 
