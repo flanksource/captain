@@ -122,6 +122,15 @@ func TestRunOnceIngestsAndIsIncremental(t *testing.T) {
 		assert.False(t, overview.ProcessActive)
 	})
 
+	t.Run("completes the overview rows a crash truncated", func(t *testing.T) {
+		require.NoError(t, db.Gorm().Exec(`TRUNCATE captain_session_overview_rows`).Error)
+		noProcesses := func() ([]Process, error) { return nil, nil }
+		require.NoError(t, RunOnce(t.Context(), Config{DB: db, HostID: "test-host", DiscoverProcesses: noProcesses}))
+		overview, err := db.GetSessionOverviewByIdentity(t.Context(), fixtureSessionID)
+		require.NoError(t, err, "an unchanged transcript is not re-ingested, so only ensure can restore its row")
+		assert.EqualValues(t, 3, overview.MessageCount)
+	})
+
 	t.Run("writer lock excludes a second monitor", func(t *testing.T) {
 		m, err := New(Config{DB: db, HostID: "test-host"})
 		require.NoError(t, err)

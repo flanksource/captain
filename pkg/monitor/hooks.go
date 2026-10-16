@@ -150,6 +150,7 @@ func (m *Monitor) recordClaudeStatusLineCost(ctx context.Context, ev HookEvent, 
 		observedAt = time.Now().UTC()
 	}
 	if err := m.db.ReportClaudeCLICost(ctx, sessionID, *ev.ClaudeCLICostUSD, observedAt); err != nil {
+		m.sessionIDs.forgetSession(sessionID)
 		log.Warnf("hook claude/%s: record session %s CLI cost estimate: %v", ev.Event, ev.SessionID, err)
 	}
 }

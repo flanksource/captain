@@ -23,6 +23,11 @@ func RunOnce(ctx context.Context, cfg Config) (err error) {
 	}
 	defer func() { err = errors.Join(err, releaseWriterLock(conn)) }()
 
+	// The one-shot CLI opens the database without migrations, so Open never
+	// completed the UNLOGGED overviews a PostgreSQL restart truncated.
+	if err := m.db.EnsureOverviews(ctx); err != nil {
+		return err
+	}
 	ingestor := newIngestor(m)
 	// Ingest transcripts before polling processes so processes bind to real
 	// sessions instead of provisional stubs.
