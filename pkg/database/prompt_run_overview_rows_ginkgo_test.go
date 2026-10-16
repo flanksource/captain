@@ -241,9 +241,10 @@ var _ = Describe("captain_prompt_run_overview_rows", Ordered, func() {
 	})
 
 	It("refreshes every run in one transaction without a shared lock-table entry per run", func(ctx SpecContext) {
+		seedOverviewLoad(ctx, raw, 1000, 1)
 		var runs int
 		Expect(raw.QueryRowContext(ctx, `SELECT count(*) FROM captain_prompt_runs`).Scan(&runs)).To(Succeed())
-		Expect(runs).To(BeNumerically(">=", 1000), "the read spec seeds the runs this refresh covers")
+		Expect(runs).To(BeNumerically(">=", 1000))
 
 		tx, err := raw.BeginTx(ctx, nil)
 		Expect(err).NotTo(HaveOccurred())
