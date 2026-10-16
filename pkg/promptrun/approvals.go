@@ -81,7 +81,7 @@ func bindToolApprovals(in *Input) error {
 	return nil
 }
 
-func bindApprovals(ctx context.Context, in *Input, rec *recorder) error {
+func bindApprovals(ctx context.Context, in *Input, rec *Recorder) error {
 	if in.Approvals == nil {
 		return nil
 	}

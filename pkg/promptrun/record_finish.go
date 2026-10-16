@@ -106,9 +106,10 @@ func resultText(response *api.Response, structured map[string]any) (string, erro
 	return string(raw), nil
 }
 
-// complete finishes a run Run executed: classify it, file it, and hand back the
-// result stamped with the run's id. Store errors join the run's own.
-func (r *recorder) complete(classify func(Result, error, bool) (Outcome, error), result Result, runErr error, stopped bool) (Result, error) {
+// Complete finishes a run Run executed or a host Tracks: classify it, file it,
+// and hand back the result stamped with the run's id. Store errors join the
+// run's own.
+func (r *Recorder) Complete(classify func(Result, error, bool) (Outcome, error), result Result, runErr error, stopped bool) (Result, error) {
 	result.PromptRunID = r.runID
 	if classify == nil {
 		classify = DefaultOutcome
@@ -129,7 +130,7 @@ func (r *recorder) complete(classify func(Result, error, bool) (Outcome, error),
 // the run bound, and the run's terminal state with its workspace record (nil
 // for a run that reported none). A run something else already finished — a
 // Cancel that raced the run's own end — keeps the state it has.
-func (r *recorder) settle(outcome Outcome, iterations []database.UpsertPromptRunIterationInput, notices []api.Notice, workspace *api.WorkspaceRecord) error {
+func (r *Recorder) settle(outcome Outcome, iterations []database.UpsertPromptRunIterationInput, notices []api.Notice, workspace *api.WorkspaceRecord) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	errs := []error{r.firstWriteErr}
@@ -149,7 +150,7 @@ func (r *recorder) settle(outcome Outcome, iterations []database.UpsertPromptRun
 	return errors.Join(errs...)
 }
 
-func (r *recorder) finishUpdate(run *database.PromptRun, outcome Outcome, workspace *api.WorkspaceRecord) database.UpdatePromptRunInput {
+func (r *Recorder) finishUpdate(run *database.PromptRun, outcome Outcome, workspace *api.WorkspaceRecord) database.UpdatePromptRunInput {
 	phase := outcome.Phase
 	if phase == "" {
 		phase = r.settledPhase(run.Phase)
@@ -170,7 +171,7 @@ func (r *recorder) finishUpdate(run *database.PromptRun, outcome Outcome, worksp
 
 // settledPhase is the phase a run ended in when its outcome names none: the one
 // it was in, or — for a run that never started — its first working phase.
-func (r *recorder) settledPhase(current database.PromptRunPhase) database.PromptRunPhase {
+func (r *Recorder) settledPhase(current database.PromptRunPhase) database.PromptRunPhase {
 	if current == database.PromptRunPhaseQueued || current == database.PromptRunPhasePreRun {
 		return r.activePhase()
 	}
@@ -183,7 +184,7 @@ func (r *recorder) settledPhase(current database.PromptRunPhase) database.Prompt
 // dashboard streams messages from. A run that bound no transcript (the API
 // mode, a verify-only run) has nowhere to put them; its verdicts are on its
 // iterations instead.
-func (r *recorder) writeTranscript(notices []api.Notice) error {
+func (r *Recorder) writeTranscript(notices []api.Notice) error {
 	run, err := r.db.GetPromptRun(r.ctx, r.runID)
 	if err != nil {
 		return err
