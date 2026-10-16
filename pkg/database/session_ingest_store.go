@@ -338,23 +338,66 @@ func validateIngest(input IngestTranscriptInput) error {
 	return nil
 }
 
+// sessionProjection is one projected column: the value assigned when the row
+// is written, and the predicate that is true only when that assignment would
+// change the stored value.
+type sessionProjection struct {
+	column  string
+	assign  any
+	differs string
+	arg     any
+}
+
 // projectSessionColumns overwrites the monitor-owned projection columns with
 // the freshly parsed values. Identity, hierarchy, and state-machine columns are
 // never touched here. last_activity_at is the exception to the overwrite: it
 // only ever advances (see below).
+//
+// Every append re-derives the whole transcript, so the projection is nearly
+// always already current. The write is guarded on at least one column actually
+// differing: an unconditional UPDATE still mints a new row version, fires the
+// row triggers, and rewrites the TOASTed metadata even when nothing changed.
 func (db *DB) projectSessionColumns(ctx context.Context, id uuid.UUID, input IngestSessionInput) error {
-	updates := map[string]any{}
-	for column, value := range map[string]string{
-		"path": input.Path, "project": input.Project, "cwd": normalizeCWD(input.CWD), "title": input.Title,
-		"initial_prompt": input.InitialPrompt, "slug": input.Slug, "agent_type": input.AgentType,
-		"description": input.Description, "cli_version": input.CLIVersion,
+	projections := sessionProjections(input)
+	if len(projections) == 0 {
+		return nil
+	}
+	updates := make(map[string]any, len(projections))
+	differs := make([]string, 0, len(projections))
+	args := make([]any, 0, len(projections))
+	for _, projection := range projections {
+		updates[projection.column] = projection.assign
+		differs = append(differs, projection.differs)
+		args = append(args, projection.arg)
+	}
+	if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
+		Where("id = ?", id).
+		Where("("+strings.Join(differs, " OR ")+")", args...).
+		Updates(updates).Error; err != nil {
+		return fmt.Errorf("project Captain session columns: %w", err)
+	}
+	return nil
+}
+
+// sessionProjections lists the columns an ingest projects, in a fixed order so
+// the guarded UPDATE is one stable statement shape.
+func sessionProjections(input IngestSessionInput) []sessionProjection {
+	var projections []sessionProjection
+	for _, text := range []struct{ column, value string }{
+		{"path", input.Path}, {"project", input.Project}, {"cwd", normalizeCWD(input.CWD)},
+		{"title", input.Title}, {"initial_prompt", input.InitialPrompt}, {"slug", input.Slug},
+		{"agent_type", input.AgentType}, {"description", input.Description}, {"cli_version", input.CLIVersion},
 	} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			updates[column] = trimmed
+		if trimmed := strings.TrimSpace(text.value); trimmed != "" {
+			projections = append(projections, sessionProjection{
+				column: text.column, assign: trimmed, differs: text.column + " IS DISTINCT FROM ?", arg: trimmed,
+			})
 		}
 	}
 	if input.StartedAt != nil {
-		updates["started_at"] = *input.StartedAt
+		projections = append(projections, sessionProjection{
+			column: "started_at", assign: *input.StartedAt, differs: "started_at IS DISTINCT FROM ?", arg: *input.StartedAt,
+		})
 	}
 	if input.LastActivityAt != nil {
 		// The transcript max is real evidence: entries the child rows never
@@ -363,21 +406,26 @@ func (db *DB) projectSessionColumns(ctx context.Context, id uuid.UUID, input Ing
 		// never of its absence -- a re-ingest re-derives a single file and must
 		// not erase prompt-run, turn, or event activity that file never
 		// contained. Monotonic here, exactly as in captain_touch_session_activity.
-		updates["last_activity_at"] = gorm.Expr("GREATEST(last_activity_at, ?)", input.LastActivityAt.UTC())
+		activity := input.LastActivityAt.UTC()
+		projections = append(projections, sessionProjection{
+			column: "last_activity_at", assign: gorm.Expr("GREATEST(last_activity_at, ?)", activity),
+			differs: "(last_activity_at IS NULL OR last_activity_at < ?)", arg: activity,
+		})
 	}
 	if input.Git != nil {
-		updates["git"] = jsonbValue(input.Git)
+		git := jsonbValue(input.Git)
+		projections = append(projections, sessionProjection{
+			column: "git", assign: git, differs: "git IS DISTINCT FROM ?::jsonb", arg: git,
+		})
 	}
 	if input.Metadata != nil {
-		updates["metadata"] = gorm.Expr("metadata || ?::jsonb", jsonbValue(input.Metadata))
+		metadata := jsonbValue(input.Metadata)
+		projections = append(projections, sessionProjection{
+			column: "metadata", assign: gorm.Expr("metadata || ?::jsonb", metadata),
+			differs: "metadata || ?::jsonb IS DISTINCT FROM metadata", arg: metadata,
+		})
 	}
-	if len(updates) == 0 {
-		return nil
-	}
-	if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-		return fmt.Errorf("project Captain session columns: %w", err)
-	}
-	return nil
+	return projections
 }
 
 func (db *DB) upsertSessionSource(ctx context.Context, sessionID uuid.UUID, input IngestSourceInput) error {

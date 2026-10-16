@@ -13,6 +13,7 @@ package monitor
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
@@ -84,6 +85,11 @@ type Monitor struct {
 	// per hook batch, and the counters have to outlive all of them.
 	ingest ingestMetrics
 
+	// sessionIDs and samples spare the per-second hooks and the process poll
+	// from re-reading and rewriting rows that have not changed.
+	sessionIDs *sessionIDCache
+	samples    processSamples
+
 	readyOnce sync.Once
 	ready     chan struct{}
 }
@@ -117,6 +123,7 @@ func New(cfg Config) (*Monitor, error) {
 		cfg: cfg, db: cfg.DB, tracked: map[string]string{},
 		hookEvents:       make(chan HookEvent, 128),
 		statusLineEvents: make(chan HookEvent, 128),
+		sessionIDs:       newSessionIDCache(sessionIDCacheSize),
 		ready:            make(chan struct{}),
 	}, nil
 }
@@ -204,13 +211,15 @@ func (m *Monitor) Run(ctx context.Context) error {
 			return err
 		}
 		if conn != nil {
-			err := m.runLocked(ctx, conn)
-			_ = conn.Close()
+			runErr := m.runLocked(ctx, conn)
+			if err := releaseWriterLock(conn); err != nil {
+				return err
+			}
 			if ctx.Err() != nil {
 				return nil
 			}
-			if err != nil {
-				return err
+			if runErr != nil {
+				return runErr
 			}
 			continue
 		}
@@ -233,6 +242,15 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 		return err
 	}
 	defer watcher.close()
+	// Another monitor may have held the lock since this one last wrote, so the
+	// remembered samples no longer describe the rows.
+	m.samples.reset()
+	// The writer completes the UNLOGGED overviews a PostgreSQL restart
+	// truncated; it is the one process every Captain host runs.
+	if err := m.db.EnsureOverviews(runCtx); err != nil {
+		cancel()
+		return err
+	}
 
 	// Arm live transcript directories before the historical scan. Backfill can
 	// take minutes on a cold database; it must never prevent fsnotify events or
@@ -322,6 +340,9 @@ func requestBackfill(requests chan<- struct{}) {
 
 // tryAcquireWriterLock takes the monitor advisory lock on a dedicated
 // connection so it is held for the monitor's lifetime, not a pooled statement.
+// The connection is labeled before the lock is tried, so whoever holds the lock
+// is always identifiable; it is therefore never handed back to the pool (see
+// releaseWriterLock), whether it won the lock or only probed for the holder.
 func (m *Monitor) tryAcquireWriterLock(ctx context.Context) (*sql.Conn, int, error) {
 	sqlDB, err := m.db.Gorm().DB()
 	if err != nil {
@@ -333,15 +354,13 @@ func (m *Monitor) tryAcquireWriterLock(ctx context.Context) (*sql.Conn, int, err
 	}
 	if _, err := conn.ExecContext(ctx, "SELECT set_config('application_name', $1, false)",
 		fmt.Sprintf("%s%d", monitorLockAppPrefix, os.Getpid())); err != nil {
-		_ = conn.Close()
-		return nil, 0, fmt.Errorf("register Captain monitor lock owner: %w", err)
+		return nil, 0, errors.Join(fmt.Errorf("register Captain monitor lock owner: %w", err), releaseWriterLock(conn))
 	}
 	for {
 		var acquired bool
 		if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1, $2)",
 			monitorLockNamespace, monitorLockKey).Scan(&acquired); err != nil {
-			_ = conn.Close()
-			return nil, 0, fmt.Errorf("acquire Captain monitor lock: %w", err)
+			return nil, 0, errors.Join(fmt.Errorf("acquire Captain monitor lock: %w", err), releaseWriterLock(conn))
 		}
 		if acquired {
 			return conn, 0, nil
@@ -351,12 +370,28 @@ func (m *Monitor) tryAcquireWriterLock(ctx context.Context) (*sql.Conn, int, err
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
-		_ = conn.Close()
-		if err != nil {
+		if err := errors.Join(err, releaseWriterLock(conn)); err != nil {
 			return nil, 0, err
 		}
 		return nil, holderPID, nil
 	}
+}
+
+// releaseWriterLock closes the dedicated lock connection's backend instead of
+// returning it to the pool. Its session state must not leak into pooled work:
+// the session-level advisory lock while held, and the captain-monitor
+// application_name that would mislabel an ordinary connection in
+// pg_stat_activity. Ending the backend drops both. database/sql discards a
+// connection, rather than pooling it, when Raw reports driver.ErrBadConn.
+func releaseWriterLock(conn *sql.Conn) error {
+	err := conn.Raw(func(any) error { return driver.ErrBadConn })
+	if errors.Is(err, driver.ErrBadConn) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("discard Captain monitor lock connection: the pool kept it")
+	}
+	return fmt.Errorf("discard Captain monitor lock connection: %w", err)
 }
 
 func queryMonitorLockHolderPID(ctx context.Context, conn *sql.Conn) (int, error) {

@@ -283,7 +283,11 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 	// The label is filled in by whichever writer first knows a concrete one. A
 	// later writer disagreeing about it is not a conflict — it is the same
 	// transcript described from a different vantage point.
+	// A requested hierarchy may be adopted below; either way the row could
+	// differ from the one already read.
+	written := record.ParentSessionID != nil || record.RootSessionID != nil || len(record.Metadata) > 0
 	if existing.Provider == "" && record.Provider != "" {
+		written = true
 		if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
 			Where("id = ? AND provider = ''", existing.ID).
 			Update("provider", record.Provider).Error; err != nil {
@@ -307,7 +311,12 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 			return nil, fmt.Errorf("merge Captain session metadata: %w", err)
 		}
 	}
-	return db.GetSession(ctx, existing.ID)
+	if written {
+		return db.GetSession(ctx, existing.ID)
+	}
+	// Nothing was written, so the row read above is the current one.
+	out := sessionFromRecord(*existing)
+	return &out, nil
 }
 
 // ReportClaudeCLICost stores Claude Code's cumulative whole-session client
