@@ -77,9 +77,7 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 	if strings.TrimSpace(opts.ID) == "" {
 		return SessionGetResult{}, fmt.Errorf("id is required")
 	}
-	stopDatabase := rpchttp.Track(ctx, "database")
-	db, err := captainDB(ctx)
-	stopDatabase()
+	db, err := trackedSessionDB(ctx, captainDB)
 	if err != nil {
 		return SessionGetResult{}, err
 	}
@@ -88,6 +86,13 @@ func RunSessionGet(ctx context.Context, opts SessionGetOptions) (SessionGetResul
 		return SessionGetResult{}, followSessionGet(ctx, db, opts, os.Stdout)
 	}
 	return runSessionGet(ctx, db, opts)
+}
+
+// trackedSessionDB opens a session's database, timed as the request's database phase.
+func trackedSessionDB(ctx context.Context, open sessionDB) (*database.DB, error) {
+	stopDatabase := rpchttp.Track(ctx, "database")
+	defer stopDatabase()
+	return open(ctx)
 }
 
 func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptions) (SessionGetResult, error) {
