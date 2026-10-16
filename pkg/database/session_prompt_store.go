@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -261,11 +262,31 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 		existing = found
 	}
 	if existing == nil {
-		result := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
-		if result.Error != nil {
-			return nil, fmt.Errorf("create Captain session: %w", result.Error)
+		var rowsAffected int64
+		err := db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Re-derive the root under a share lock on the parent: an adoption of
+			// the parent updates its row, so it either commits first and this reads
+			// the new root, or waits for this insert and its root cascade sees it.
+			if record.ParentSessionID != nil {
+				var root uuid.UUID
+				err := tx.Raw(`SELECT COALESCE(root_session_id, id) FROM captain_sessions WHERE id = ? FOR SHARE`,
+					*record.ParentSessionID).Row().Scan(&root)
+				if errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("%w: parent session %s no longer exists", ErrSessionConflict, *record.ParentSessionID)
+				}
+				if err != nil {
+					return err
+				}
+				record.RootSessionID = &root
+			}
+			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
+			rowsAffected = result.RowsAffected
+			return result.Error
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create Captain session: %w", err)
 		}
-		if result.RowsAffected == 1 {
+		if rowsAffected == 1 {
 			return db.GetSession(ctx, record.ID)
 		}
 		found, err := db.findSessionByIdentity(ctx, record)

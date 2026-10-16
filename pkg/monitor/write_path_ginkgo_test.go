@@ -123,6 +123,24 @@ var _ = Describe("monitor steady-state writes", Ordered, func() {
 		Expect(status).To(Equal("active"))
 	})
 
+	It("keeps one open row when two live processes bind to the same session", func(ctx SpecContext) {
+		const shared = "claude --session-id 0199e2aa-0000-7000-8000-00000000f001"
+		processes := []Process{
+			{Source: "claude", PID: 4401, Status: "sleeping", StartedAt: &started, CWD: "/work/shared", Command: shared},
+			{Source: "claude", PID: 4402, Status: "sleeping", StartedAt: &started, CWD: "/work/shared", Command: shared},
+		}
+		m := newMonitor(&processes)
+		Expect(m.pollProcesses(ctx, nil)).To(Succeed())
+
+		processes[0].Status = "active" // a binding change on the process whose row the other closed
+		Expect(m.pollProcesses(ctx, nil)).To(Succeed())
+
+		var open []int64
+		Expect(db.Gorm().Raw(`SELECT pid FROM captain_session_processes WHERE pid IN (4401, 4402) AND ended_at IS NULL`).
+			Scan(&open).Error).To(Succeed())
+		Expect(open).To(ConsistOf(int64(4401)))
+	})
+
 	It("sweeps vanished processes on a tenure's first poll and when a PID vanishes, not on a steady set", func(ctx SpecContext) {
 		const sweep = "host_id = $3 AND ended_at IS NULL"
 		processes := []Process{

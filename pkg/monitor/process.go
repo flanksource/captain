@@ -158,13 +158,11 @@ func (m *Monitor) persistProcess(ctx context.Context, sessionID uuid.UUID, proc 
 	// Close a superseded process identity before inserting the observation. This
 	// avoids using a predictable unique-key violation as control flow (and the
 	// corresponding ERROR log), and also drains legacy rows whose timezone bug
-	// left the same PID open under a different start timestamp. While this
-	// monitor has already bound the process to the same session there is no
-	// other row to close.
-	if !seen || last.binding.sessionID != sessionID {
-		if err := m.db.EndOtherSessionProcesses(ctx, sessionID, int64(proc.PID), startedAt); err != nil {
-			return err
-		}
+	// left the same PID open under a different start timestamp. It runs on every
+	// write, not only on a new binding: another live process bound to the same
+	// session may have closed this row since, and the upsert reopens it.
+	if err := m.db.EndOtherSessionProcesses(ctx, sessionID, int64(proc.PID), startedAt); err != nil {
+		return err
 	}
 	if err := m.db.UpsertSessionProcess(ctx, input); err != nil {
 		return err
