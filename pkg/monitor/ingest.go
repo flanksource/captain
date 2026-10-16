@@ -21,7 +21,7 @@ import (
 
 // parserVersion invalidates every ingested transcript when the parsing or
 // mapping logic changes shape.
-const parserVersion = 6
+const parserVersion = 8
 
 type codexCheckpoint struct {
 	parser      *history.CodexParser
@@ -242,6 +242,14 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 	pathLock.Lock()
 	defer pathLock.Unlock()
 
+	// Claude Code links a resumed session's sub-agent transcripts to the original
+	// session's files. The target is ingested under its own path; following the
+	// link would file the same agent under a second parent.
+	if linkInfo, err := rootFS.Lstat(relativePath); err == nil && linkInfo.Mode()&os.ModeSymlink != 0 {
+		ing.monitor.untrackTranscript(path)
+		return nil
+	}
+
 	var codexFile *os.File
 	var info os.FileInfo
 	if source == "codex" {
@@ -396,6 +404,11 @@ func apiIngestInput(path string) (database.IngestTranscriptInput, error) {
 	input.Source.SourceIdentity = info.RootSessionID
 	for i := range input.Turns {
 		call := input.Turns[i].Call
+		// The watcher can read the transcript mid-run, before the model's reply
+		// lands: that turn has made no call yet.
+		if call == nil {
+			continue
+		}
 		call.Mode = string(api.ModeAPI)
 		provider, err := api.ProviderFor(call.Model)
 		if err != nil {
@@ -532,6 +545,11 @@ func unifiedIngestInput(s *session.Session, source string, sequence func(session
 			ingestTurn.Call.ContextTokens = int64(turn.Context.UsedTokens)
 			ingestTurn.Call.ContextWindowTokens = int64(turn.Context.WindowTokens)
 			ingestTurn.Call.ContextFreePercent = &turn.Context.FreePercent
+		}
+		// A turn that names no model and used no tokens made no model call — e.g.
+		// one whose only reply is Claude Code's placeholder for a failed request.
+		if turn.Model == "" && turn.Usage.TotalTokens() == 0 {
+			ingestTurn.Call = nil
 		}
 		input.Turns = append(input.Turns, ingestTurn)
 	}

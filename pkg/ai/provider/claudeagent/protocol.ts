@@ -4,8 +4,9 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 // must equal bridgeProtocolVersion in bridge_params.go, which refuses an older
 // bridge. Version 2 added can_use_tool interrupt and the elicit request.
 // Version 3 added session/state, which ends a turn, and parent_tool_use_id on
-// subagent tool notifications.
-export const PROTOCOL_VERSION = 3;
+// subagent tool notifications. Version 4 made the git add/commit guard
+// conditional on initialize's guardGitCommits.
+export const PROTOCOL_VERSION = 4;
 
 export type JsonRpcId = number | string | null;
 

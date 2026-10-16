@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -261,11 +262,31 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 		existing = found
 	}
 	if existing == nil {
-		result := db.gorm.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
-		if result.Error != nil {
-			return nil, fmt.Errorf("create Captain session: %w", result.Error)
+		var rowsAffected int64
+		err := db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Re-derive the root under a share lock on the parent: an adoption of
+			// the parent updates its row, so it either commits first and this reads
+			// the new root, or waits for this insert and its root cascade sees it.
+			if record.ParentSessionID != nil {
+				var root uuid.UUID
+				err := tx.Raw(`SELECT COALESCE(root_session_id, id) FROM captain_sessions WHERE id = ? FOR SHARE`,
+					*record.ParentSessionID).Row().Scan(&root)
+				if errors.Is(err, sql.ErrNoRows) {
+					return fmt.Errorf("%w: parent session %s no longer exists", ErrSessionConflict, *record.ParentSessionID)
+				}
+				if err != nil {
+					return err
+				}
+				record.RootSessionID = &root
+			}
+			result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
+			rowsAffected = result.RowsAffected
+			return result.Error
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create Captain session: %w", err)
 		}
-		if result.RowsAffected == 1 {
+		if rowsAffected == 1 {
 			return db.GetSession(ctx, record.ID)
 		}
 		found, err := db.findSessionByIdentity(ctx, record)
@@ -283,7 +304,11 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 	// The label is filled in by whichever writer first knows a concrete one. A
 	// later writer disagreeing about it is not a conflict — it is the same
 	// transcript described from a different vantage point.
+	// A requested hierarchy may be adopted below; either way the row could
+	// differ from the one already read.
+	written := record.ParentSessionID != nil || record.RootSessionID != nil || len(record.Metadata) > 0
 	if existing.Provider == "" && record.Provider != "" {
+		written = true
 		if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
 			Where("id = ? AND provider = ''", existing.ID).
 			Update("provider", record.Provider).Error; err != nil {
@@ -307,7 +332,12 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 			return nil, fmt.Errorf("merge Captain session metadata: %w", err)
 		}
 	}
-	return db.GetSession(ctx, existing.ID)
+	if written {
+		return db.GetSession(ctx, existing.ID)
+	}
+	// Nothing was written, so the row read above is the current one.
+	out := sessionFromRecord(*existing)
+	return &out, nil
 }
 
 // ReportClaudeCLICost stores Claude Code's cumulative whole-session client

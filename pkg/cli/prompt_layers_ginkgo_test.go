@@ -54,7 +54,7 @@ func newRuntimeCatalogFixture() (runtimeCatalogFixture, *probeSource, *probeSour
 	presetProbe, profileProbe := &probeSource{Source: presets}, &probeSource{Source: profiles}
 	catalog, err := runtimeprofiles.NewCatalog(presetProbe, profileProbe)
 	Expect(err).NotTo(HaveOccurred())
-	ctx := ContextWithPromptDirs(context.Background(), []string{GinkgoT().TempDir()})
+	ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{GinkgoT().TempDir()}})
 	return runtimeCatalogFixture{
 		ctx: ContextWithRuntimeCatalog(ctx, catalog), catalog: catalog, presets: presets, profiles: profiles,
 	}, presetProbe, profileProbe

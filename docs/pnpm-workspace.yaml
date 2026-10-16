@@ -2,6 +2,8 @@ packages:
   - .
 
 minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - '@flanksource/*'
 trustPolicy: no-downgrade
 trustPolicyExclude:
   # @astrojs/check requires this pre-provenance release; pnpm documents it as an exact exclusion.

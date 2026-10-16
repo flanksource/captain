@@ -17,6 +17,19 @@ func (db *DB) reconcileSessionHierarchy(ctx context.Context, existing *sessionRe
 		equalOptionalParentRelation(existing.ParentRelation, requested.ParentRelation) {
 		return nil
 	}
+	if requested.ParentSessionID != nil &&
+		equalOptionalUUID(existing.ParentSessionID, requested.ParentSessionID) &&
+		equalOptionalParentRelation(existing.ParentRelation, requested.ParentRelation) {
+		// Same parent, different root: the root is derived from the parent's
+		// current row, so the stored one predates the parent's own adoption.
+		if err := db.gorm.WithContext(ctx).Model(&sessionRecord{}).
+			Where("id = ? AND parent_session_id = ?", existing.ID, *requested.ParentSessionID).
+			Update("root_session_id", requested.RootSessionID).Error; err != nil {
+			return fmt.Errorf("re-derive Captain session root: %w", err)
+		}
+		existing.RootSessionID = requested.RootSessionID
+		return nil
+	}
 	if existing.ParentSessionID != nil || existing.RootSessionID != nil {
 		return fmt.Errorf("%w: existing session has a different hierarchy", ErrSessionConflict)
 	}

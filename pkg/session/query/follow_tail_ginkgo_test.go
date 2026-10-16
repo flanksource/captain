@@ -9,6 +9,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/session/transcript"
 	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
@@ -29,7 +30,7 @@ var _ = Describe("Follow before the transcript is ingested", Ordered, func() {
 		DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 	})
 
-	It("finds a transcript row booked after it started and tails its log until the database carries messages", func(ctx SpecContext) {
+	It("keeps following the authoritative transcript after database ingestion starts", func(ctx SpecContext) {
 		home := GinkgoT().TempDir()
 		GinkgoT().Setenv("HOME", home)
 		const cwd = "/work/follow_tail"
@@ -58,14 +59,60 @@ var _ = Describe("Follow before the transcript is ingested", Ordered, func() {
 		Expect(bodies(nextMessages(events, 1))).To(Equal([]string{"written before ingest"}))
 
 		Expect(db.PutChatMessage(ctx, database.PutChatMessageInput{
-			SessionID: transcript.ID, ProviderMessageID: "db-1", Role: "assistant",
-			Parts: json.RawMessage(`[{"type":"text","text":"ingested"}]`),
+			SessionID: transcript.ID, ProviderMessageID: "a1", Role: "assistant",
+			Parts: json.RawMessage(`[{"type":"text","text":"written before ingest"}]`),
 		})).To(Succeed())
-		Expect(bodies(nextMessages(events, 1))).To(Equal([]string{"ingested"}))
-
-		appendClaudeEntry(logPath, providerID, cwd, "a2", "the log is no longer followed")
 		expectNoMessage(events)
+
+		appendClaudeEntry(logPath, providerID, cwd, "a2", "written after ingest")
+		Expect(bodies(nextMessages(events, 1))).To(Equal([]string{"written after ingest"}))
+
+		childPath := filepath.Join(filepath.Dir(logPath), providerID, "subagents", "agent-new-child.jsonl")
+		appendClaudeEntry(childPath, providerID, cwd, "child-1", "new sub-agent")
+		Expect(bodies(nextMessages(events, 1))).To(Equal([]string{"new sub-agent"}))
+		appendClaudeEntry(childPath, providerID, cwd, "child-2", "sub-agent continued")
+		Expect(bodies(nextMessages(events, 1))).To(Equal([]string{"sub-agent continued"}))
 	})
+
+	DescribeTable("resumes after a sub-agent cursor and follows sub-agent writes",
+		func(ctx SpecContext, ingested bool) {
+			home := GinkgoT().TempDir()
+			GinkgoT().Setenv("HOME", home)
+			const cwd = "/work/follow_subagent"
+			providerID := uuid.NewString()
+			root, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+				ProviderSessionID: providerID, Source: "claude", Provider: "anthropic", HostID: "follow-tail", CWD: cwd,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			logPath := filepath.Join(home, ".claude", "projects", claude.NormalizePath(cwd), providerID+".jsonl")
+			childPath := filepath.Join(filepath.Dir(logPath), providerID, "subagents", "agent-child.jsonl")
+			appendClaudeEntry(logPath, providerID, cwd, "root-1", "root message")
+			appendClaudeEntry(childPath, providerID, cwd, "child-1", "sub-agent cursor")
+			if ingested {
+				Expect(db.PutChatMessage(ctx, database.PutChatMessageInput{
+					SessionID: root.ID, ProviderMessageID: "root-1", Role: "assistant",
+					Parts: json.RawMessage(`[{"type":"text","text":"root message"}]`),
+				})).To(Succeed())
+			}
+			parsed, err := transcript.Parse(transcript.Candidate{ID: providerID, Source: "claude", Path: logPath})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parsed.Messages).To(ContainElement(HaveField("ID", "child-1")))
+
+			followCtx, cancel := context.WithCancel(ctx)
+			events, err := Follow(followCtx, db, root.ID.String(), FollowOptions{Replay: true, After: "child-1"})
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() {
+				cancel()
+				Eventually(events, followWait).Should(BeClosed())
+			})
+			nextState(events)
+			appendClaudeEntry(childPath, providerID, cwd, "child-2", "sub-agent update")
+			Expect(bodies(nextMessages(events, 1))).To(Equal([]string{"sub-agent update"}))
+			expectNoMessage(events)
+		},
+		Entry("before ingestion", false),
+		Entry("with partially ingested parent messages", true),
+	)
 
 	// Claude Code writes ai-title lines without a uuid; streamed as-is they
 	// became id-less entry frames the session inspector rejects.

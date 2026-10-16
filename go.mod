@@ -9,11 +9,12 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.13.1
-	github.com/flanksource/clicky v1.21.77-0.20261012060459-14e4772f3f3e
-	github.com/flanksource/clicky/aichat v1.21.68
+	github.com/flanksource/clicky v1.21.80
+	github.com/flanksource/clicky/aichat v1.21.80
 	github.com/flanksource/commons v1.60.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/google/cel-go v0.31.0
 	github.com/google/dotprompt/go v0.0.0-20260708220100-73beb993ac95
 	github.com/google/uuid v1.6.0
 	github.com/invopop/jsonschema v0.14.0
@@ -39,7 +40,7 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.50
+	github.com/flanksource/commons-db v0.1.58
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/pelletier/go-toml/v2 v2.4.3
@@ -222,7 +223,6 @@ require (
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/google/cel-go v0.31.0 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect

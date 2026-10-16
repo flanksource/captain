@@ -361,10 +361,17 @@ func runApprovalFlow(
 	if approved {
 		body["updatedInput"] = map[string]any{"id": "acc-1", "name": "Approved Account"}
 	}
-	decision := postLifecycleJSON(ctx, client, http.MethodPost,
-		baseURL+"/api/chat/sessions/"+thread.ID+"/approvals/"+pending.Requests[0].ID, body)
-	Expect(decision.err).NotTo(HaveOccurred())
-	Expect(decision.status).To(Equal(http.StatusOK), string(decision.body))
+	// The request is committed when the provider asks, the run only turns
+	// waiting once its stream suspends; until then the decision is a 409.
+	Eventually(func(g Gomega) {
+		decision := postLifecycleJSON(ctx, client, http.MethodPost,
+			baseURL+"/api/chat/sessions/"+thread.ID+"/approvals/"+pending.Requests[0].ID, body)
+		g.Expect(decision.err).NotTo(HaveOccurred())
+		if decision.status == http.StatusConflict {
+			Expect(string(decision.body)).To(ContainSubstring("before its prompt run is waiting"))
+		}
+		g.Expect(decision.status).To(Equal(http.StatusOK), string(decision.body))
+	}).WithTimeout(30 * time.Second).Should(Succeed())
 	var completed session.Session
 	Eventually(func(g Gomega) {
 		completed = getLifecycleSession(ctx, client, baseURL, thread.ID)

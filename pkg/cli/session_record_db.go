@@ -48,6 +48,7 @@ func dbSessionRecords(ctx context.Context, db sessionListStore, q sessionRecordQ
 		ActivityBefore: q.ActivityBefore,
 		Limit:          q.Limit,
 		Cursor:         q.Cursor,
+		IncludeTotal:   true,
 	}
 	if q.Source != "" && q.Source != "all" {
 		filter.Source = q.Source

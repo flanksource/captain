@@ -73,14 +73,19 @@ var _ = Describe("PromptRun", func() {
 		}))
 	})
 
-	It("synthesises the prompt and result messages when nothing else supplied any", func() {
+	It("synthesises the prompt and result as placeholder messages when nothing else supplied any", func() {
 		result, _ := load.Load(context.Background(), load.PromptRun(run))
 
-		Expect(result.Session.Messages).To(HaveLen(2))
-		Expect(result.Session.Messages[0].Role).To(Equal("user"))
-		Expect(result.Session.Messages[0].Parts[0].Text).To(Equal("review the diff"))
-		Expect(result.Session.Messages[1].Role).To(Equal("assistant"))
-		Expect(result.Session.Messages[1].Parts[0].Text).To(Equal(`{"verdict":"pass"}`))
+		Expect(result.Session.Messages).To(Equal([]session.Message{
+			{
+				ID: run.RunID + "-user", Role: "user", Placeholder: true,
+				Parts: []session.Part{{Type: session.PartText, Text: "review the diff"}},
+			},
+			{
+				ID: run.RunID + "-assistant", Role: "assistant", Placeholder: true,
+				Parts: []session.Part{{Type: session.PartText, Text: `{"verdict":"pass"}`}},
+			},
+		}))
 		Expect(result.Provenance.Of(load.FacetMessages)).To(Equal(load.SourcePromptRun))
 	})
 

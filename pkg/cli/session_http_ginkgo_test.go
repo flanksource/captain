@@ -171,6 +171,23 @@ var _ = Describe("SessionHandler", Ordered, func() {
 		Expect(state).To(Equal(sessionquery.FollowState{Revision: 0, LifecycleStatus: "created", ActivityState: "idle"}))
 	})
 
+	It("reports a rejected follow to an EventSource as an SSE error frame", func(ctx SpecContext) {
+		const unknownCursor = "never-emitted"
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		// Every browser EventSource request carries this Accept header.
+		response := getSession(streamCtx, server.URL+"/api/captain/sessions/"+followed.ID.String()+"?follow=1&after="+unknownCursor, "text/event-stream")
+		defer response.Body.Close()
+
+		Expect(response.StatusCode).To(Equal(http.StatusOK))
+		Expect(response.Header.Get("Content-Type")).To(Equal("text/event-stream"))
+		frames := readSSEFrames(response, 1)
+		Expect(frames[0].event).To(Equal("error"))
+		var reported map[string]string
+		Expect(json.Unmarshal([]byte(frames[0].data), &reported)).To(Succeed())
+		Expect(reported["error"]).To(ContainSubstring(`no message "` + unknownCursor + `" in the session`))
+	})
+
 	It("streams with Accept: text/event-stream", func(ctx SpecContext) {
 		streamCtx, cancel := context.WithCancel(ctx)
 		defer cancel()

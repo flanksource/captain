@@ -44,6 +44,7 @@ import type {
   Query,
 } from "@anthropic-ai/claude-agent-sdk";
 import { createInterface } from "readline";
+import { preToolUseGuards } from "./bash_guard.js";
 import { elicitHost } from "./elicitation.js";
 import { handleMessage } from "./messages.js";
 import {
@@ -103,6 +104,9 @@ interface InitializeParams {
   // loads every ambient server: .mcp.json, user settings, plugins.
   strictMcpConfig?: boolean;
   callerToolUseIDKey?: string;
+  // guardGitCommits blocks the agent's own git add/commit; captain sets it only
+  // when it (or its host) owns the run's commits.
+  guardGitCommits?: boolean;
 }
 
 // HostDecision is the can_use_tool reply shape from the Go host. interrupt
@@ -174,24 +178,7 @@ function buildOptions(params: InitializeParams): Options {
     strictMcpConfig: params.strictMcpConfig || undefined,
     stderr: (data: string) => process.stderr.write(data),
     hooks: {
-      PreToolUse: [
-        {
-          matcher: "Bash",
-          hooks: [
-            async (input) => {
-              const cmd = (input as { tool_input?: { command?: string } })
-                .tool_input?.command || "";
-              if (/\bgit\s+(add|commit)\b/.test(cmd)) {
-                return {
-                  decision: "block" as const,
-                  reason: "git add/commit is managed by captain, not the agent",
-                };
-              }
-              return { decision: "approve" as const };
-            },
-          ],
-        },
-      ],
+      PreToolUse: preToolUseGuards(params.guardGitCommits === true),
     },
   };
 
@@ -306,7 +293,7 @@ function buildOptions(params: InitializeParams): Options {
 
   // When the host brokers approvals, forward each tool-permission check to it
   // over can_use_tool and map the decision onto the SDK PermissionResult. The
-  // PreToolUse git add/commit block above still applies first.
+  // PreToolUse git add/commit block (guardGitCommits) still applies first.
   if (brokered) {
     options.canUseTool = async (toolName, input, opts) => {
       if (

@@ -182,14 +182,21 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 	}
 }
 
+// setRunMetadata records the run's session id and model, and republishes the
+// run frame when the session id changes so a live follower learns which
+// session to subscribe to without waiting for the terminal summary.
 func (s *runStream) setRunMetadata(sessionID, model string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	changed := sessionID != "" && sessionID != s.run.SessionID
 	if sessionID != "" {
 		s.run.SessionID = sessionID
 	}
 	if model != "" {
 		s.run.Model = model
+	}
+	if changed && !s.done {
+		s.publishEventLocked(runStreamEvent{name: "run", data: s.run})
 	}
 }
 
