@@ -3,7 +3,7 @@ packages:
 
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
-  - '@flanksource/clicky-ui'
+  - '@flanksource/*'
 trustPolicy: no-downgrade
 trustPolicyExclude:
   # semver 6.3.1 has no provenance attestation, but earlier-published 7.5.4 does, so pnpm flags a trust downgrade.
