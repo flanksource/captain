@@ -328,6 +328,14 @@ CREATE INDEX IF NOT EXISTS captain_session_overview_rows_cwd_idx
 CREATE INDEX IF NOT EXISTS captain_session_overview_rows_live_idx
   ON public.captain_session_overview_rows (activity_at DESC, id DESC)
   WHERE process_active;
+-- Identity and thread lookups read the overview rows, not captain_sessions, so
+-- they need the same provider-id and parent indexes the base table carries.
+CREATE INDEX IF NOT EXISTS captain_session_overview_rows_provider_session_id_idx
+  ON public.captain_session_overview_rows (provider_session_id text_pattern_ops)
+  WHERE provider_session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS captain_session_overview_rows_parent_session_id_idx
+  ON public.captain_session_overview_rows (parent_session_id, parent_relation)
+  WHERE parent_session_id IS NOT NULL;
 
 -- Captain never installs extensions. The list's substring search uses a
 -- trigram index only where an operator already installed pg_trgm.

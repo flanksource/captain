@@ -93,12 +93,9 @@ var _ = Describe("Session overview rows", func() {
 			FROM captain_sessions ORDER BY id LIMIT ?`, liveSessions).Error).To(Succeed())
 		Expect(db.Gorm().Exec("ANALYZE captain_session_overview_rows").Error).To(Succeed())
 
-		explain := func(filter SessionListFilter) string {
+		explainSQL := func(query string, args ...any) string {
 			GinkgoHelper()
-			limit, err := sessionListLimit(filter.Limit)
-			Expect(err).NotTo(HaveOccurred())
-			rows, err := db.Gorm().Raw("EXPLAIN (ANALYZE, BUFFERS) "+sessionListQuery(filter.IncludeTotal),
-				sessionListArgs(filter, nil, limit)...).Rows()
+			rows, err := db.Gorm().Raw("EXPLAIN (ANALYZE, BUFFERS) "+query, args...).Rows()
 			Expect(err).NotTo(HaveOccurred())
 			defer rows.Close()
 			var plan []string
@@ -109,6 +106,12 @@ var _ = Describe("Session overview rows", func() {
 			}
 			Expect(rows.Err()).NotTo(HaveOccurred())
 			return strings.Join(plan, "\n")
+		}
+		explain := func(filter SessionListFilter) string {
+			GinkgoHelper()
+			limit, err := sessionListLimit(filter.Limit)
+			Expect(err).NotTo(HaveOccurred())
+			return explainSQL(sessionListQuery(filter.IncludeTotal), sessionListArgs(filter, nil, limit)...)
 		}
 		for name, filter := range map[string]SessionListFilter{
 			"sessions tab":    {ExcludeSubagents: true, ExcludeInactiveEmpty: true, Limit: 200},
@@ -122,6 +125,35 @@ var _ = Describe("Session overview rows", func() {
 				Expect(plan).NotTo(ContainSubstring("Seq Scan"), name)
 				Expect(plan).To(ContainSubstring("captain_session_overview_rows_"), name)
 			}
+		}
+
+		// A todo's session tab resolves each attempt by provider session id
+		// (ListSessionOverviewsByProviderSessionID) and its launcher's transcript
+		// child (ListTranscriptChildOverviews). Both read the overview rows, which
+		// unlike captain_sessions carried no index for either predicate.
+		var parentID uuid.UUID
+		Expect(db.Gorm().Raw(`SELECT id FROM captain_sessions WHERE provider_session_id = 'seed-1'`).Row().Scan(&parentID)).To(Succeed())
+		Expect(db.Gorm().Exec(`UPDATE captain_sessions SET parent_session_id = ?, root_session_id = ?, parent_relation = ?
+			WHERE provider_session_id = 'seed-2'`, parentID, parentID, SessionParentRelationTranscript).Error).To(Succeed())
+		Expect(db.Gorm().Exec("ANALYZE captain_session_overview_rows").Error).To(Succeed())
+		for name, lookup := range map[string]struct {
+			query string
+			args  []any
+			index string
+		}{
+			"provider session id": {
+				query: `SELECT id FROM captain_session_overview WHERE provider_session_id = ?`,
+				args:  []any{"seed-1999"}, index: "captain_session_overview_rows_provider_session_id_idx",
+			},
+			"transcript children": {
+				query: `SELECT id FROM captain_session_overview WHERE parent_session_id IN ? AND parent_relation = ?`,
+				args:  []any{[]uuid.UUID{parentID}, SessionParentRelationTranscript}, index: "captain_session_overview_rows_parent_session_id_idx",
+			},
+		} {
+			plan := explainSQL(lookup.query, lookup.args...)
+			fmt.Fprintf(GinkgoWriter, "--- %s ---\n%s\n", name, plan)
+			Expect(plan).NotTo(ContainSubstring("Seq Scan"), name)
+			Expect(plan).To(ContainSubstring(lookup.index), name)
 		}
 
 		session, run := measureOverviewCommits(ctx, db)

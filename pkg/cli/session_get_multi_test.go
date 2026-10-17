@@ -398,6 +398,9 @@ type sessionGetOverviewStore struct {
 	threadRoots []uuid.UUID
 	listCalls   int
 	promptRuns  map[uuid.UUID][]database.PromptRun
+	// promptRunSessions records each session whose prompt runs were read: one
+	// per hydrated item.
+	promptRunSessions []uuid.UUID
 }
 
 func (s *sessionGetOverviewStore) ListSessionSummaries(_ context.Context, filter database.SessionListFilter) (database.SessionListPage, error) {
@@ -443,6 +446,7 @@ func (s *sessionGetOverviewStore) ListPromptRuns(_ context.Context, filter datab
 	if filter.SessionID == nil {
 		return nil, nil
 	}
+	s.promptRunSessions = append(s.promptRunSessions, *filter.SessionID)
 	return s.promptRuns[*filter.SessionID], nil
 }
 

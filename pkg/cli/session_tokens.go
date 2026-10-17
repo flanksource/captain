@@ -24,14 +24,11 @@ func RunSessionTokens(ctx context.Context, opts SessionTokensOptions) (sessionto
 }
 
 func sizeSessionTokens(ctx context.Context, id string, opts sessiontokens.Options) (sessiontokens.Result, error) {
-	result, err := RunSessionGet(ctx, SessionGetOptions{ID: id, Limit: 0})
+	result, err := RunSessionGet(ctx, SessionGetOptions{ID: id, Limit: 0, Primary: true})
 	if err != nil {
 		return sessiontokens.Result{}, err
 	}
-	item, _, err := primarySessionItem(id, result)
-	if err != nil {
-		return sessiontokens.Result{}, err
-	}
+	item := result.Sessions[0]
 	if !item.DetailAvailable {
 		return sessiontokens.Result{}, fmt.Errorf("%w: session has no transcript", database.ErrSessionNotFound)
 	}
