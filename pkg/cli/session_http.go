@@ -74,16 +74,13 @@ func handleSessionRead(w http.ResponseWriter, r *http.Request) {
 		writeSessionError(w, http.StatusBadRequest, err.Error(), nil)
 		return
 	}
+	opts.Primary = true
 	result, err := RunSessionGet(r.Context(), opts)
 	if err != nil {
 		writeSessionError(w, sessionErrorStatus(err), err.Error(), nil)
 		return
 	}
-	item, status, err := primarySessionItem(id, result)
-	if err != nil {
-		writeSessionError(w, status, err.Error(), nil)
-		return
-	}
+	item := result.Sessions[0]
 	if item.Detail == nil {
 		writeSessionError(w, http.StatusInternalServerError,
 			fmt.Sprintf("session %s has no composed aggregate", item.CaptainID), nil)
@@ -115,24 +112,6 @@ func sessionWindowFromQuery(id string, r *http.Request) (SessionGetOptions, erro
 	}
 	opts.Before = strings.TrimSpace(r.URL.Query().Get("before"))
 	return opts, nil
-}
-
-// primarySessionItem is the item the identity names: the only one, or the
-// root of the thread a root id expanded to.
-func primarySessionItem(id string, result SessionGetResult) (SessionGetItem, int, error) {
-	switch {
-	case result.Total == 0:
-		return SessionGetItem{}, http.StatusNotFound, fmt.Errorf("session %s not found", id)
-	case len(result.Sessions) == 1:
-		return result.Sessions[0], 0, nil
-	}
-	for _, item := range result.Sessions {
-		if result.RootSessionID != "" && item.CaptainID == result.RootSessionID {
-			return item, 0, nil
-		}
-	}
-	return SessionGetItem{}, http.StatusConflict,
-		fmt.Errorf("session id %s is ambiguous: it names %d unrelated sessions", id, len(result.Sessions))
 }
 
 func sessionErrorStatus(err error) int {

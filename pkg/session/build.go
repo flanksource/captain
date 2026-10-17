@@ -25,6 +25,17 @@ func Build(currentDir string, searchAll bool, filter claude.Filter) ([]*Session,
 	return out, nil
 }
 
+// BuildClaudeFile builds the unified model for one Claude transcript file and
+// the sub-agent transcripts recorded beside it, without scanning the rest of
+// the projects directory.
+func BuildClaudeFile(path string) (*Session, error) {
+	parsed, err := claude.ParseSessionFile(path, claude.ReadOptions{KeepRaw: true})
+	if err != nil {
+		return nil, err
+	}
+	return buildSession(parsed), nil
+}
+
 // buildSession assembles one Session from a parsed root+sub-agent group.
 func buildSession(ps claude.ParsedSession) *Session {
 	var allEntries []claude.HistoryEntry

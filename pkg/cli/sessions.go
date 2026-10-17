@@ -31,6 +31,10 @@ type SessionGetOptions struct {
 	Tail       int      `flag:"tail" help:"Return only the last N transcript rows (overrides offset/limit)"`
 	Before     string   `flag:"before" help:"Return the messages before this message id; with --limit, only the last N of them (events are omitted)"`
 	Follow     bool     `flag:"follow" help:"Print the whole transcript, then each message as it arrives, until the session ends"`
+	// Primary returns only the session the id names — the only match, or the
+	// root of the thread a root id expands to — hydrating nothing else and
+	// skipping browser discovery. Readers that serialize one session set it.
+	Primary bool
 }
 
 func (SessionGetOptions) GetName() string { return "get <id>" }

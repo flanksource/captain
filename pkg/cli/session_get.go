@@ -101,6 +101,19 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 	if err != nil {
 		return SessionGetResult{}, err
 	}
+	if opts.Primary {
+		primary, err := primaryFoldedSession(id, sessions)
+		if err != nil {
+			return SessionGetResult{}, err
+		}
+		stopHydrate := rpchttp.Track(ctx, "hydrate")
+		item, err := buildSessionGetItem(ctx, db, primary, opts)
+		stopHydrate()
+		if err != nil {
+			return SessionGetResult{}, err
+		}
+		return SessionGetResult{Sessions: []SessionGetItem{item}, Total: 1}, nil
+	}
 
 	items := make([]SessionGetItem, 0, len(sessions))
 	for i := range sessions {
@@ -121,6 +134,19 @@ func runSessionGet(ctx context.Context, db sessionGetStore, opts SessionGetOptio
 		rootID = items[0].CaptainID
 	}
 	return SessionGetResult{RootSessionID: rootID, Sessions: items, Total: len(items)}, nil
+}
+
+// primaryFoldedSession is the session an identity names: the only match, or
+// the root of the thread a root id expanded to (listed first, with no parent).
+func primaryFoldedSession(id string, sessions []sessionquery.FoldedOverview) (sessionquery.FoldedOverview, error) {
+	switch {
+	case len(sessions) == 0:
+		return sessionquery.FoldedOverview{}, fmt.Errorf("%w: session %s not found", database.ErrSessionNotFound, id)
+	case len(sessions) == 1, sessions[0].Session.ParentSessionID == nil:
+		return sessions[0], nil
+	}
+	return sessionquery.FoldedOverview{}, fmt.Errorf("%w: session id %s is ambiguous: it names %d unrelated sessions",
+		database.ErrSessionConflict, id, len(sessions))
 }
 
 func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded sessionquery.FoldedOverview, opts SessionGetOptions) (SessionGetItem, error) {
