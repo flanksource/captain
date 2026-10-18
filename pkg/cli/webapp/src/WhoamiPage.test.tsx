@@ -15,7 +15,7 @@ const WHOAMI_RESULT = {
   defaultProvider: "openai",
   axes: {
     modes: ["api", "cli", "agent", "cmux"],
-    providers: ["anthropic", "openai", "google", "deepseek"],
+    providers: ["anthropic", "openai", "google", "deepseek", "jev"],
     efforts: ["low", "medium", "high"],
   },
   disabled: NOTHING_DISABLED,
@@ -52,6 +52,12 @@ const WHOAMI_RESULT = {
       family: "deepseek",
       provider: "deepseek",
       catalogPrefix: "deepseek",
+      modes: [{ mode: "api", kind: "api", keyless: false }],
+    },
+    {
+      family: "jev",
+      provider: "jev",
+      catalogPrefix: "jev",
       modes: [{ mode: "api", kind: "api", keyless: false }],
     },
   ],
@@ -108,6 +114,14 @@ const WHOAMI_RESULT = {
       modelCount: 0,
       modelError: "set DEEPSEEK_API_KEY to list models",
     },
+    {
+      type: "api",
+      provider: "jev",
+      mode: "api",
+      authenticated: false,
+      modelCount: 0,
+      modelError: "set TYPESAFE_API_KEY to list models",
+    },
   ],
 };
 
@@ -138,6 +152,8 @@ describe("WhoamiPage", () => {
     expect(screen.queryByText("codex-cli")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Expand DeepSeek provider" }));
     expect(runtimeTreeItem("DeepSeek", "API")).toHaveTextContent("No token");
+    fireEvent.click(screen.getByRole("button", { name: "Expand Jev provider" }));
+    expect(runtimeTreeItem("Jev", "API")).toHaveTextContent("No token");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/whoami?models=true&limit=0&disabled=true",
       expect.objectContaining({ method: "POST", body: "{}" }),

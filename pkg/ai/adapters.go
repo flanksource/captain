@@ -20,7 +20,7 @@ import (
 // server's model menu) without importing pkg/cli.
 type WhoamiOptions struct {
 	Mode            string `flag:"mode" help:"Show only this runtime mode: api|agent|cli|cmux"`
-	Provider        string `flag:"provider" help:"Show only this provider: anthropic|openai|google|deepseek" short:"p"`
+	Provider        string `flag:"provider" help:"Show only this provider: anthropic|openai|google|deepseek|jev" short:"p"`
 	Models          bool   `flag:"models" help:"List models from provider APIs or installed CLI catalogs" default:"true" short:"m"`
 	Limit           int    `flag:"limit" help:"Max sample model IDs to show per adapter in pretty output after per-prefix filtering (0 = all)" default:"0" short:"l"`
 	IncludeDisabled bool   `flag:"disabled" help:"Include disabled models" default:"false"`

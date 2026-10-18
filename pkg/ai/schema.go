@@ -138,6 +138,9 @@ func SchemaToJSON(schema *JSONSchema) (string, error) {
 // text-mode request. It is the single entry point every provider uses so the two
 // schema mechanisms behave identically across backends.
 func SchemaJSONFor(p api.Prompt) (json.RawMessage, error) {
+	if p.OutputSchemaType == api.SchemaTypeTypeSafe {
+		return nil, fmt.Errorf("TypeSafe questions are not JSON Schema")
+	}
 	if len(p.SchemaJSON) > 0 {
 		return p.SchemaJSON, nil
 	}

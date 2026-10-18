@@ -150,6 +150,11 @@ var _ = Describe("Runtime argument mappings", func() {
 		Expect(func() { runtimeSchemaProperty(schema, "permissions", "mode") }).To(Panic())
 	})
 
+	It("omits unsupported generation knobs from the Jev API schema", func() {
+		schema := api.RuntimeSchemaFor(api.Jev, api.ModeAPI)
+		Expect(schema["properties"]).To(And(HaveKey("model"), HaveKey("prompt"), Not(HaveKey("temperature")), Not(HaveKey("effort"))))
+	})
+
 	It("publishes only native fields each provider can translate", func() {
 		claude := api.RuntimeSchemaFor(api.Anthropic, api.ModeCLI)
 		Expect(func() {

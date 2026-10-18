@@ -77,7 +77,7 @@ func SizeTokens(ctx context.Context, opts TokenSizeOptions) (api.TokenSize, erro
 }
 
 func countTokenRequest(ctx context.Context, opts TokenSizeOptions, model api.Model) (api.TokenCount, error) {
-	if model.Provider == DeepSeek {
+	if model.Provider == DeepSeek || model.Provider == Jev {
 		return api.TokenCount{}, fmt.Errorf("%w for %s", api.ErrTokenCountingUnsupported, model.Provider.Name)
 	}
 	cfg := api.Config{Model: api.Model{Name: model.Name, Mode: ModeAPI}, APIKey: opts.Config.APIKey, APIURL: opts.Config.APIURL, Tools: opts.Config.Tools}

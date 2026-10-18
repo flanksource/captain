@@ -174,7 +174,7 @@ func (o VerifyOptions) judgeProvider() (ai.Provider, api.Model, error) {
 	if err != nil {
 		return nil, api.Model{}, err
 	}
-	wrapped, err := middleware.Wrap(provider, middleware.WithLogging())
+	wrapped, err := middleware.Wrap(provider, middleware.WithLogging(), middleware.WithJevConversion())
 	if err != nil {
 		return nil, api.Model{}, err
 	}

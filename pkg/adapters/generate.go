@@ -9,3 +9,4 @@ package adapters
 //go:generate go tool go-jsonschema --only-models --struct-name-from-title --extra-imports --package adapters --tags json --output zz_generated_google_api.go google/api.schema.json
 //go:generate go tool go-jsonschema --only-models --struct-name-from-title --extra-imports --package adapters --tags json --output zz_generated_google_cli.go google/cli.schema.json
 //go:generate go tool go-jsonschema --only-models --struct-name-from-title --extra-imports --package adapters --tags json --output zz_generated_deepseek_api.go deepseek/api.schema.json
+//go:generate go tool go-jsonschema --only-models --struct-name-from-title --extra-imports --package adapters --tags json --output zz_generated_jev_api.go jev/api.schema.json

@@ -3,6 +3,7 @@ import {
   parseSchemaEditorValue,
   readPromptSchemas,
   updatePromptSchemaSource,
+  updatePromptSchemaTypeSource,
 } from "./promptSchemaSource";
 
 const SOURCE = `---
@@ -110,11 +111,21 @@ describe("readPromptSchemas", () => {
   it("reads both schemas from the current prompt source", () => {
     expect(readPromptSchemas(SOURCE)).toEqual({
       input: { topic: "string" },
+      inputType: "json-schema",
       output: {
         type: "object",
         properties: { title: { type: "string" } },
       },
+      outputType: "json-schema",
     });
+  });
+
+  it("preserves native TypeSafe questions and their declared output type", () => {
+    const source = updatePromptSchemaTypeSource(SOURCE, "output", "typesafe-schema");
+    expect(readPromptSchemas(source).outputType).toBe("typesafe-schema");
+    expect(source).toContain("schemaType: typesafe-schema");
+    expect(source).toContain("# keep this comment");
+    expect(source).toContain("Write about {{topic}}.");
   });
 });
 

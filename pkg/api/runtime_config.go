@@ -79,7 +79,7 @@ type Config struct {
 	Budget Budget // Cost (USD ceiling, 0 = unlimited), MaxTokens
 	APIKey string // empty = env lookup
 	// APIURL overrides the backend's endpoint (empty = the provider default).
-	// Anthropic/OpenAI/DeepSeek honour it; Gemini rejects it, because genkit's
+	// Anthropic/OpenAI/DeepSeek/Jev honour it; Gemini rejects it, because genkit's
 	// googlegenai plugin exposes no override and silently calling the real API
 	// would be worse. Claude Agent passes it through to the SDK child; Codex CLI
 	// and Codex Agent declare a model_providers entry because stored account auth

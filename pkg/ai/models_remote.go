@@ -58,12 +58,10 @@ var defaultModelListEndpoints = map[string]string{
 	OpenAI.Name:    "https://api.openai.com/v1/models",
 	Google.Name:    "https://generativelanguage.googleapis.com/v1beta/models",
 	DeepSeek.Name:  "https://api.deepseek.com/models",
+	Jev.Name:       "https://api.typesafe.ai/v1/models",
 }
 
-// modelsListResponse covers the wire shape used by OpenAI, Anthropic, and
-// Google's Generative Language API (with the field aliases each provider
-// returns). Decoding into this permissive shape lets a single helper handle
-// all three.
+// modelsListResponse covers the wire shape used by provider model-list APIs.
 type modelsListResponse struct {
 	Data   []modelEntry `json:"data"`
 	Models []modelEntry `json:"models"`
@@ -75,6 +73,7 @@ type modelEntry struct {
 	Name        string `json:"name"` // gemini surfaces "models/<id>" here
 	Created     int64  `json:"created"`
 	CreatedAt   string `json:"created_at"`
+	ReleaseDate string `json:"release_date"`
 }
 
 type ModelHTTPError struct {
@@ -131,6 +130,11 @@ func FetchDeepSeekModels(ctx context.Context, apiKey string) ([]ModelDef, error)
 	return fetchModelsAtEndpoint(ctx, DeepSeek, apiKey, defaultModelListEndpoints[DeepSeek.Name])
 }
 
+// FetchJevModels lists TypeSafe models available to the authenticated account.
+func FetchJevModels(ctx context.Context, apiKey string) ([]ModelDef, error) {
+	return fetchModelsAtEndpoint(ctx, Jev, apiKey, defaultModelListEndpoints[Jev.Name])
+}
+
 // modelListEndpoint resolves a provider base URL to the exact URL used by the
 // model-list request. APIURL follows Config.APIURL's base-URL convention; a URL
 // already ending in /models is also accepted. Gemini deliberately retains its
@@ -155,7 +159,7 @@ func modelListEndpoint(p *ModelProvider, apiURL string) (string, error) {
 	path := strings.TrimRight(u.Path, "/")
 	if !strings.HasSuffix(path, "/models") {
 		switch p {
-		case Anthropic:
+		case Anthropic, Jev:
 			if strings.HasSuffix(path, "/v1") {
 				path += "/models"
 			} else {
@@ -179,6 +183,8 @@ func modelAPIURLEnvVars(p *ModelProvider) []string {
 		return []string{"OPENAI_BASE_URL"}
 	case DeepSeek:
 		return []string{"DEEPSEEK_BASE_URL"}
+	case Jev:
+		return []string{"TYPESAFE_BASE_URL"}
 	default:
 		return nil
 	}
@@ -202,7 +208,7 @@ func fetchModelsAtEndpoint(ctx context.Context, p *ModelProvider, apiKey, endpoi
 		req.Header.Set("anthropic-version", "2023-06-01")
 	case Google:
 		req.Header.Set("x-goog-api-key", apiKey)
-	case OpenAI, DeepSeek:
+	case OpenAI, DeepSeek, Jev:
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	default:
 		return nil, fmt.Errorf("provider %s has no live model listing", p.Name)
@@ -281,6 +287,9 @@ func doModelsRequest(req *http.Request, p *ModelProvider) ([]ModelDef, error) {
 }
 
 func (m modelEntry) releaseDate() string {
+	if m.ReleaseDate != "" {
+		return normalizeReleaseDate(m.ReleaseDate)
+	}
 	if m.Created > 0 {
 		return time.Unix(m.Created, 0).UTC().Format("2006-01-02")
 	}

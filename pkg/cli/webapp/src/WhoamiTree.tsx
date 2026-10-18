@@ -3,6 +3,7 @@ import { AGENT_RUNTIME_ICONS, SESSION_TONES, type AgentRuntime } from "@flanksou
 import { providerIcon, providerIconColor } from "@flanksource/clicky-ui/chat";
 import { Button } from "@flanksource/clicky-ui/components";
 import { Badge } from "@flanksource/clicky-ui/data";
+import { UiRobotAi } from "@flanksource/clicky-ui/icons";
 import { cn } from "@flanksource/clicky-ui/utils";
 import { adapterReady, providerLabel, runtimeModelKey, type RuntimeAdapter, type RuntimeFamily, type RuntimeMode, type WhoamiModel } from "./WhoamiModel";
 import type { AvailabilityPolicy } from "./WhoamiPolicy";
@@ -154,7 +155,7 @@ function AvailabilityCheckbox({
 }
 
 export function ProviderGlyph({ provider }: { provider: string }) {
-  const Glyph = providerIcon(provider);
+  const Glyph = provider === "jev" ? UiRobotAi : providerIcon(provider);
   if (!Glyph) throw new Error(`No provider icon is registered for ${provider}`);
   return <Glyph className={cn("size-4 shrink-0", providerIconColor(provider))} aria-hidden="true" />;
 }

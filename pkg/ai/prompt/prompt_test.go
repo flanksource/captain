@@ -211,6 +211,7 @@ func TestRender_RuntimeFixtureExamples(t *testing.T) {
 		"testdata/fixtures/codex-agent.prompt":             {runtime: api.RuntimeOf(api.OpenAI, api.ModeAgent), model: "gpt-5-codex"},
 		"testdata/fixtures/codex-cmux.prompt":              {runtime: api.RuntimeOf(api.OpenAI, api.ModeCmux), model: "gpt-5-codex"},
 		"testdata/fixtures/deepseek.prompt":                {runtime: api.RuntimeOf(api.DeepSeek, api.ModeAPI), model: "deepseek-reasoner"},
+		"testdata/fixtures/jev.prompt":                     {runtime: api.RuntimeOf(api.Jev, api.ModeAPI), model: "jev-latest"},
 		"testdata/fixtures/codex-cli.prompt":               {runtime: api.RuntimeOf(api.OpenAI, api.ModeCLI), model: "gpt-5-codex"},
 		"testdata/fixtures/gemini-api.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeAPI), model: "gemini-2.5-pro"},
 		"testdata/fixtures/gemini-cli.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeCLI), model: "gemini-2.5-pro"},
@@ -240,12 +241,22 @@ func TestRender_RuntimeFixtureExamples(t *testing.T) {
 
 		tmpl, err := LoadFS(library, path)
 		require.NoError(t, err)
-		req, cfg, err := tmpl.Render(RenderOptions{Data: map[string]any{"task": "summarize the change and propose next steps"}})
+		data := map[string]any{"task": "summarize the change and propose next steps"}
+		if path == "testdata/fixtures/jev.prompt" {
+			data = map[string]any{
+				"targetScope": "provider integrations",
+				"message":     "feat(jev): add enum output",
+				"patch":       "+registerJev()",
+			}
+		}
+		req, cfg, err := tmpl.Render(RenderOptions{Data: data})
 		require.NoError(t, err)
 		require.NoError(t, req.Validate())
 
 		assert.Equal(t, path, req.Prompt.Source)
-		assert.Contains(t, req.Prompt.User, "summarize the change")
+		if path != "testdata/fixtures/jev.prompt" {
+			assert.Contains(t, req.Prompt.User, "summarize the change")
+		}
 		assert.Equal(t, want.model, req.Model.Name)
 		assert.Equal(t, want.model, cfg.Model.Name)
 		assert.Equal(t, want.runtime, api.RuntimeOf(req.Model.Provider, req.Model.Mode))

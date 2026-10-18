@@ -197,6 +197,7 @@ func TestListModels_ErrorsOnMissingKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("TYPESAFE_API_KEY", "")
 
 	for _, p := range registry.Providers() {
 		_, err := ListModels(context.Background(), p)

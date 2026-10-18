@@ -21,6 +21,7 @@ var (
 	OpenAI    = api.OpenAI
 	Google    = api.Google
 	DeepSeek  = api.DeepSeek
+	Jev       = api.Jev
 )
 
 const (

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JevAPIOptions",
+  "description": "Native TypeSafe SystemOne evaluation request sent by Captain's Jev API runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "x-captain-adapter": {
+    "provider": "jev",
+    "mode": "api",
+    "sources": [
+      {"kind": "official-docs", "reference": "https://docs.typesafe.ai/api", "version": "retrieved 2026-10-18"},
+      {"kind": "implementation", "reference": "pkg/ai/provider/jev/provider.go and pkg/ai/middleware/jev_schema.go", "version": "working tree 2026-10-18 based on d95de3ed8c57a6dadd3978206615e1ec20c96e4e"}
+    ]
+  },
+  "required": ["model", "state", "questions"],
+  "properties": {
+    "model": {
+      "title": "Model", "description": "TypeSafe model that evaluates the questions.",
+      "type": "string", "minLength": 1, "x-clicky-section": "model", "x-clicky-order": 10,
+      "x-captain-option": {"nativeName": "model", "support": "mapped", "specPath": "model.name"}
+    },
+    "state": {
+      "title": "State", "description": "Text or structured data to evaluate against every question.",
+      "oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}],
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-clicky-section": "prompt", "x-clicky-order": 20,
+      "x-captain-option": {"nativeName": "state", "support": "mapped", "specPath": "prompt.user"}
+    },
+    "questions": {
+      "title": "Questions", "description": "Named Noul, Choice, or Score questions evaluated against the state.",
+      "type": "object", "minProperties": 1, "additionalProperties": {"oneOf": [
+        {"$ref": "#/$defs/JevAPINoulQuestion"},
+        {"$ref": "#/$defs/JevAPIChoiceQuestion"},
+        {"$ref": "#/$defs/JevAPIScoreQuestion"}
+      ]},
+      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
+      "x-clicky-section": "prompt", "x-clicky-order": 30,
+      "x-captain-option": {"nativeName": "questions", "support": "mapped", "specPath": ["prompt.typeSafeQuestions", "prompt.schema", "prompt.schemaJSON"]}
+    }
+  },
+  "$defs": {
+    "JevAPINoulQuestion": {
+      "type": "object", "additionalProperties": false, "required": ["type", "instructions"],
+      "properties": {
+        "type": {"const": "noul"},
+        "instructions": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
+        "criteria": {"type": "object", "additionalProperties": false, "properties": {
+          "true": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
+          "false": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]}
+        }}
+      }
+    },
+    "JevAPIChoiceQuestion": {
+      "type": "object", "additionalProperties": false, "required": ["type", "instructions", "criteria"],
+      "properties": {
+        "type": {"const": "choice"},
+        "instructions": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
+        "criteria": {"type": "object", "minProperties": 1, "maxProperties": 255,
+          "additionalProperties": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}, {"type": "null"}]}}
+      }
+    },
+    "JevAPIScoreQuestion": {
+      "type": "object", "additionalProperties": false, "required": ["type", "instructions", "criteria"],
+      "properties": {
+        "type": {"const": "score"},
+        "instructions": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
+        "criteria": {"type": "array", "minItems": 2, "maxItems": 10,
+          "items": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]}}
+      }
+    }
+  }
+}

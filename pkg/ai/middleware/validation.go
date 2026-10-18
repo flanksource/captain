@@ -43,8 +43,11 @@ func WithSchemaValidation(cfg ...ai.Config) Option {
 }
 
 func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	resp, err := v.provider.Execute(ctx, req)
 	strictness := v.effectiveStrictness(req)
+	if v.provider.GetRuntime().Provider == "jev" && strictness == api.SchemaStrictnessRetry {
+		return nil, fmt.Errorf("jev does not support schema repair retries")
+	}
+	resp, err := v.provider.Execute(ctx, req)
 	if err != nil {
 		// A provider that validates the model's structured output during generation
 		// (e.g. genkit's constrained output) rejects it itself, returning the
@@ -67,7 +70,7 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 		return resp, err
 	}
 
-	verrs, err := validateResponse(schema, resp)
+	verrs, err := v.validateResponse(schema, resp)
 	if err != nil {
 		return resp, err
 	}
@@ -94,6 +97,9 @@ func (v *validatingProvider) effectiveStrictness(req ai.Request) api.SchemaStric
 		return api.SchemaStrictnessNone
 	case api.SchemaStrictnessNone:
 		runtime := v.provider.GetRuntime()
+		if runtime.Provider == "jev" && (req.Prompt.Schema != nil || len(req.Prompt.SchemaJSON) > 0) {
+			return api.SchemaStrictnessError
+		}
 		provider, _ := runtime.ModelProvider()
 		if req.Prompt.HasSchema() && ai.UsesAnthropicSchemaSubset(provider, runtime.Mode) {
 			return api.SchemaStrictnessRetry
@@ -124,7 +130,7 @@ func (v *validatingProvider) retryWithFeedback(ctx context.Context, req ai.Reque
 			return resp, err
 		}
 
-		verrs, err = validateResponse(schema, resp)
+		verrs, err = v.validateResponse(schema, resp)
 		if err != nil {
 			return resp, err
 		}
@@ -158,4 +164,17 @@ func responseJSON(resp *ai.Response) string {
 // plus a hard error only when the schema or document could not be loaded/parsed.
 func validateResponse(schema json.RawMessage, resp *ai.Response) (string, error) {
 	return ai.ValidateStructuredJSON(schema, responseJSON(resp))
+}
+
+func (v *validatingProvider) validateResponse(schema json.RawMessage, resp *ai.Response) (string, error) {
+	if v.provider.GetRuntime().Provider != "jev" {
+		return validateResponse(schema, resp)
+	}
+	var envelope struct {
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal([]byte(responseJSON(resp)), &envelope); err != nil || len(envelope.Value) == 0 {
+		return "", fmt.Errorf("jev response is missing a valid value envelope")
+	}
+	return ai.ValidateStructuredJSON(schema, string(envelope.Value))
 }

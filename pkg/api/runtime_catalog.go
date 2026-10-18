@@ -11,14 +11,14 @@ import "github.com/flanksource/captain/pkg/api/registry"
 // aiProviderOrder — and they disagreed: cmux was unreachable in two of them and
 // DeepSeek in a third.
 //
-// It carries ids, not labels. claude|codex|gemini|deepseek and api|cli|agent|cmux
+// It carries ids, not labels. claude|codex|gemini|deepseek|jev and api|cli|agent|cmux
 // are enough for a client to render its own text and icons, and a label field
 // here would be a second place for presentation to drift.
 type RuntimeFamily struct {
-	// Family is the coding-agent name users speak in: claude, codex, gemini,
-	// deepseek. Provider is the canonical key (google, not gemini).
+	// Family is the provider name users speak in: claude, codex, gemini,
+	// deepseek, jev. Provider is the canonical key (google, not gemini).
 	Family string `json:"family"`
-	// Provider is the canonical provider key: anthropic | openai | google | deepseek.
+	// Provider is the canonical provider key: anthropic | openai | google | deepseek | jev.
 	Provider string `json:"provider"`
 	// CatalogPrefix namespaces this provider's API model ids. Google's is
 	// "googleai" and is deliberately not its Provider or PricingPrefix; serving

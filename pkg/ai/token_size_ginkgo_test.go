@@ -52,4 +52,9 @@ var _ = Describe("Token sizing", func() {
 		_, err := ai.SizeTokens(context.Background(), ai.TokenSizeOptions{Method: "provider", Request: api.Spec{Model: api.Model{Name: "deepseek-chat", Mode: api.ModeAPI}, Prompt: api.Prompt{User: "test"}}})
 		Expect(errors.Is(err, api.ErrTokenCountingUnsupported)).To(BeTrue())
 	})
+
+	It("refuses Jev provider counting without resolving credentials", func() {
+		_, err := ai.SizeTokens(context.Background(), ai.TokenSizeOptions{Method: "provider", Request: api.Spec{Model: api.Model{Name: "jev-latest", Mode: api.ModeAPI}, Prompt: api.Prompt{User: "test"}}})
+		Expect(errors.Is(err, api.ErrTokenCountingUnsupported)).To(BeTrue())
+	})
 })

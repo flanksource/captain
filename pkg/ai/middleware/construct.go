@@ -10,14 +10,20 @@ import (
 // it (a cache TTL or DB path, with NoCache unset). This lives in middleware, not
 // ai.NewProvider, because middleware imports ai (wrapping ai.Provider) and the
 // reverse import would be a cycle.
-func DefaultOptions(cfg ai.Config) []Option {
-	opts := []Option{WithLogging(), WithSchemaValidation(cfg)}
+func DefaultOptions(cfg ai.Config, runtime ai.Runtime) []Option {
+	opts := []Option{WithLogging()}
+	if runtime.Provider != "jev" {
+		opts = append(opts, WithSchemaValidation(cfg))
+	}
 	if !cfg.NoCache && (cfg.CacheTTL > 0 || cfg.CacheDBPath != "") {
 		opts = append(opts, WithCache(cache.Config{
 			DBPath:  cfg.CacheDBPath,
 			TTL:     cfg.CacheTTL,
 			NoCache: cfg.NoCache,
 		}))
+	}
+	if runtime.Provider == "jev" {
+		opts = append(opts, WithJevConversion(), WithSchemaValidation(cfg))
 	}
 	return opts
 }
@@ -32,7 +38,7 @@ func NewProvider(cfg ai.Config) (ai.Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Wrap(p, DefaultOptions(cfg)...)
+	return Wrap(p, DefaultOptions(cfg, p.GetRuntime())...)
 }
 
 // NewAgent builds an ai.Agent whose provider carries the default middleware.

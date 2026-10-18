@@ -83,6 +83,9 @@ func (v *validatingProvider) ExecuteStream(ctx context.Context, req ai.Request) 
 	}
 
 	strictness := v.effectiveStrictness(req)
+	if v.provider.GetRuntime().Provider == "jev" && strictness == api.SchemaStrictnessRetry {
+		return nil, fmt.Errorf("jev does not support schema repair retries")
+	}
 	schema, serr := ai.SchemaJSONFor(req.Prompt)
 	if strictness == api.SchemaStrictnessNone || serr != nil || len(schema) == 0 {
 		return streamer.ExecuteStream(ctx, req) // nothing to validate; forward as-is
@@ -134,7 +137,7 @@ func (v *validatingProvider) validateStream(ctx context.Context, req ai.Request,
 			out <- failure
 			return
 		}
-		verrs, err := validateResponse(schema, turn.response())
+		verrs, err := v.validateResponse(schema, turn.response())
 		if err != nil {
 			out <- ai.Event{Kind: ai.EventError, Error: err.Error()}
 			return

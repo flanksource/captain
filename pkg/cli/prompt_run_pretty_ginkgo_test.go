@@ -81,3 +81,41 @@ var _ = Describe("multi-model prompt output", func() {
 		Expect(strings.Index(output, "first full response")).To(BeNumerically("<", strings.Index(output, "second full response")))
 	})
 })
+
+var _ = Describe("Jev prompt response", func() {
+	const response = `{"value":{"input_valid":0.8,"in_scope":"yes","confidence":1.25},"typesafe":{"model":"jev-1.14.0","answers":{"input_valid":{"type":"noul","noul":0.8},"in_scope":{"type":"choice","choice":"yes","confidence":0.9,"probabilities":{"yes":0.9,"no":0.1}},"confidence":{"type":"score","score":1.25,"confidence":0.7,"legend":{"0":"Low","1":"Medium","2":"High"},"probabilities":{"0":0,"1":0.75,"2":0.25}}},"usage":{"input_tokens":12,"output_tokens":3}}}`
+
+	It("shows typed answers and confidence as a readable table", func() {
+		pretty := (PromptRunResult{Provider: "jev", Text: response}).Pretty()
+		Expect(pretty.String()).To(And(
+			ContainSubstring("Model: jev-1.14.0"),
+			ContainSubstring("Tokens: 12 in / 3 out"),
+			ContainSubstring("Input Valid"),
+			ContainSubstring("80% yes"),
+			ContainSubstring("In Scope"),
+			ContainSubstring("90%"),
+			ContainSubstring("1.25 / 2"),
+			ContainSubstring("70%"),
+			Not(ContainSubstring(`"typesafe"`)),
+		))
+		Expect(pretty.ANSI()).To(And(ContainSubstring("Input Valid"), ContainSubstring("1.25 / 2")))
+		Expect(pretty.Markdown()).To(And(
+			ContainSubstring("Input Valid"),
+			ContainSubstring("In Scope"),
+			ContainSubstring("Low 0%, Medium 75%, High 25%"),
+			ContainSubstring("no 10%, yes 90%"),
+		))
+		Expect(pretty.HTML()).To(And(ContainSubstring("new gridjs.Grid"), ContainSubstring("1.25 / 2")))
+	})
+
+	It("uses the same answer presentation in a multi-model run", func() {
+		pretty := (PromptRunResult{Runs: []PromptRunItem{{Provider: "jev", Selector: "api:jev-latest", Text: response}}}).Pretty()
+		Expect(pretty.String()).To(And(ContainSubstring("api:jev-latest"), ContainSubstring("80% yes")))
+	})
+
+	It("renders a scalar zero probability without dropping the answer", func() {
+		response := `{"value":0,"typesafe":{"model":"jev-1.14.0","answers":{"value":{"type":"noul","noul":0}},"usage":{"input_tokens":1,"output_tokens":1}}}`
+		pretty := (PromptRunResult{Provider: "jev", Text: response}).Pretty()
+		Expect(pretty.String()).To(And(ContainSubstring("Value"), ContainSubstring("0% yes")))
+	})
+})

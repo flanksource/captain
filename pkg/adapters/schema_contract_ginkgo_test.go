@@ -127,6 +127,12 @@ var _ = ginkgo.Describe("Adapter schema contract", func() {
 		assertJSONRoundTrip[GoogleAPIOptions](map[string]any{"model": "gemini-3.5-pro", "contents": []any{map[string]any{"role": "user"}}, "temperature": 0.3, "candidateCount": 1})
 		assertJSONRoundTrip[GoogleCLIOptions](map[string]any{"model": "gemini-3.5-pro", "outputFormat": "stream-json", "debug": true})
 		assertJSONRoundTrip[DeepSeekAPIOptions](map[string]any{"model": "deepseek-chat", "messages": []any{map[string]any{"role": "user"}}, "stream": true, "frequency_penalty": 0.5})
+		assertJSONRoundTrip[JevAPIOptions](map[string]any{
+			"model": "jev-latest", "state": "feat: example", "questions": map[string]any{
+				"valid": map[string]any{"type": "noul", "instructions": "Is the input valid?"},
+				"risk":  map[string]any{"type": "score", "instructions": "How risky?", "criteria": []any{"Low", "Medium", "High"}},
+			},
+		})
 	})
 
 	ginkgo.It("aligns OpenAI agent mappings with the published runtime schema", func() {

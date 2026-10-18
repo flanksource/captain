@@ -1,0 +1,94 @@
+---
+model: jev-latest
+mode: api
+input:
+  schemaType: json-schema
+  schema:
+    type: object
+    additionalProperties: false
+    required: [targetScope, message, patch]
+    properties:
+      targetScope:
+        type: string
+        description: Criteria that define which Git changes belong in this review.
+      message:
+        type: string
+        description: Git commit subject and body.
+      patch:
+        type: string
+        description: Git patch for the commit.
+output:
+  schemaType: typesafe-schema
+  schema:
+    input_valid:
+      type: noul
+      instructions: How likely is it that the scope, message, and patch contain usable evidence for one Git commit? Treat missing, malformed, or mismatched inputs as invalid. Validity is independent of scope.
+      criteria:
+        "true": The inputs are usable evidence for one Git commit.
+        "false": An input is missing, malformed, or mismatched.
+    in_scope:
+      type: choice
+      instructions: Does every substantive change in the patch match the target scope? Choose unclear when the evidence cannot decide.
+      criteria:
+        "yes": All substantive changes are in scope.
+        "no": At least one substantive change is outside scope.
+        unclear: The evidence cannot decide.
+    commit_type:
+      type: choice
+      instructions: Choose the primary Conventional Commit type from the patch purpose, or unknown when the evidence cannot support a type.
+      criteria:
+        feat: New user visible behavior.
+        fix: A bug fix.
+        perf: Performance improvement.
+        refactor: Internal restructure without behavior change.
+        test: Test changes.
+        docs: Documentation changes.
+        build: Build system or dependency changes.
+        ci: Continuous integration changes.
+        chore: Maintenance work.
+        revert: Reversion of a prior change.
+        unknown: Insufficient evidence.
+    change_type:
+      type: choice
+      instructions: Classify the patch form. Choose mixed when it combines forms, or unknown when the patch cannot establish the form.
+      criteria:
+        addition: New content only.
+        modification: Edits to existing content only.
+        removal: Deletions only.
+        mixed: A combination of addition, modification, and removal.
+        unknown: Insufficient evidence.
+    risk:
+      type: choice
+      instructions: Estimate merge risk from the patch. Choose unknown when the evidence cannot support an estimate.
+      criteria:
+        low: Isolated change.
+        medium: Localized behavior change.
+        high: Shared contract or several areas affected.
+        critical: Risk of data loss, security breach, or outage.
+        unknown: Insufficient evidence.
+    breaking_change:
+      type: choice
+      instructions: Does the patch change a public API, CLI, configuration, or data contract incompatibly? Choose unclear when the patch is insufficient.
+      criteria:
+        "yes": Incompatible contract change.
+        "no": Contracts remain compatible.
+        unclear: Insufficient evidence.
+    confidence:
+      type: score
+      instructions: Rate confidence in the classifications based on how complete and consistent the message and patch are.
+      criteria:
+        - Low confidence because key evidence is missing, conflicting, or invalid.
+        - Medium confidence because some evidence is ambiguous.
+        - High confidence because the message and patch agree and evidence is complete.
+---
+{{role "system"}}
+Classify the Git commit using the message and patch. Treat the patch as the source of truth when the message disagrees with it. Evaluate risk and compatibility even when the commit is outside the target scope. For invalid or insufficient input, lower confidence and choose unknown or unclear where the evidence cannot support a classification.
+{{role "user"}}
+Target scope:
+{{targetScope}}
+
+Commit message:
+{{message}}
+
+Patch:
+{{patch}}

@@ -4,7 +4,9 @@ import {
   parseSchemaEditorValue,
   readPromptSchemas,
   updatePromptSchemaSource,
+  updatePromptSchemaTypeSource,
   type PromptSchemaKind,
+  type PromptSchemaType,
 } from "./promptSchemaSource";
 
 const MonacoEditor = lazy(() =>
@@ -31,7 +33,7 @@ export function PromptSchemaEditor({
       return { schemas: readPromptSchemas(source), error: "" };
     } catch (cause) {
       return {
-        schemas: { input: undefined, output: undefined },
+        schemas: { input: undefined, inputType: "json-schema" as const, output: undefined, outputType: "json-schema" as const },
         error: cause instanceof Error ? cause.message : String(cause),
       };
     }
@@ -47,20 +49,24 @@ export function PromptSchemaEditor({
   return (
     <div className="grid min-h-full gap-density-4 xl:grid-cols-2">
       <SchemaPanelEditor
+        key={`input:${parsed.schemas.inputType}`}
         title="Input schema"
         kind="input"
         promptId={promptId}
         source={source}
         schema={parsed.schemas.input}
+        schemaType={parsed.schemas.inputType}
         onSourceChange={onSourceChange}
         onValidityChange={onValidityChange}
       />
       <SchemaPanelEditor
+        key={`output:${parsed.schemas.outputType}`}
         title="Output schema"
         kind="output"
         promptId={promptId}
         source={source}
         schema={parsed.schemas.output}
+        schemaType={parsed.schemas.outputType}
         onSourceChange={onSourceChange}
         onValidityChange={onValidityChange}
       />
@@ -74,6 +80,7 @@ function SchemaPanelEditor({
   promptId,
   source,
   schema,
+  schemaType,
   onSourceChange,
   onValidityChange,
 }: {
@@ -82,10 +89,11 @@ function SchemaPanelEditor({
   promptId: string;
   source: string;
   schema?: Record<string, unknown>;
+  schemaType: PromptSchemaType;
   onSourceChange: (source: string) => void;
   onValidityChange: (kind: PromptSchemaKind, valid: boolean) => void;
 }) {
-  const [value, setValue] = useState(() => formatSchema(schema));
+  const [value, setValue] = useState(() => formatSchema(schema, schemaType));
   const [present, setPresent] = useState(Boolean(schema));
   const [error, setError] = useState("");
   const modelRef = useRef<{ dispose: () => void } | null>(null);
@@ -116,8 +124,19 @@ function SchemaPanelEditor({
   function remove() {
     try {
       onSourceChange(updatePromptSchemaSource(source, kind, undefined));
-      setValue(formatSchema(undefined));
+      setValue(formatSchema(undefined, "json-schema"));
       setPresent(false);
+      setError("");
+      onValidityChange(kind, true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      onValidityChange(kind, false);
+    }
+  }
+
+  function changeSchemaType(next: PromptSchemaType) {
+    try {
+      onSourceChange(updatePromptSchemaTypeSource(source, kind, next));
       setError("");
       onValidityChange(kind, true);
     } catch (cause) {
@@ -136,6 +155,22 @@ function SchemaPanelEditor({
           </Button>
         )}
       </div>
+      <label className="block space-y-density-1 text-xs text-muted-foreground">
+        <span>Schema type</span>
+        <select
+          value={schemaType}
+          onChange={(event) => changeSchemaType(event.target.value as PromptSchemaType)}
+          className="h-control-h w-full rounded-md border border-border bg-background px-density-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="json-schema">JSON Schema</option>
+          {kind === "output" && <option value="typesafe-schema">TypeSafe questions</option>}
+        </select>
+      </label>
+      {schemaType === "typesafe-schema" && (
+        <p className="text-xs text-muted-foreground">
+          Use a map of named Noul, Choice, or Score questions with instructions and criteria.
+        </p>
+      )}
       <Suspense
         fallback={
           <div className="h-80 rounded-md border border-input p-density-3 text-sm text-muted-foreground">
@@ -168,9 +203,11 @@ function SchemaPanelEditor({
   );
 }
 
-function formatSchema(schema: Record<string, unknown> | undefined) {
+function formatSchema(schema: Record<string, unknown> | undefined, schemaType: PromptSchemaType) {
   return JSON.stringify(
-    schema ?? { type: "object", properties: {} },
+    schema ?? (schemaType === "typesafe-schema"
+      ? { decision: { type: "noul", instructions: "Is the condition met?" } }
+      : { type: "object", properties: {} }),
     null,
     2,
   );

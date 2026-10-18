@@ -21,6 +21,12 @@ var _ = Describe("final model saved defaults", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(view.Model).To(Equal("claude-sonnet-5-5"))
 	})
+	It("proposes Jev Latest for an unconfigured Jev provider", func() {
+		view, err := EffectiveDefaults(captainconfig.AIDefaults{}, registry.Jev)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(view.Model).To(Equal("jev-latest"))
+		Expect(view.Mode).To(Equal("api"))
+	})
 
 	DescribeTable("keeps unknown authored candidates repairable only for partial composition", func(allow bool) {
 		input := registry.Model{Name: "unknown-primary-example", Fallbacks: registry.ModelList{{Name: "unknown-fallback-example"}}}

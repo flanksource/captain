@@ -18,7 +18,7 @@ import (
 )
 
 type ConfigureOptions struct {
-	Provider string               `flag:"provider" args:"true" help:"API provider to configure: anthropic|openai|gemini|deepseek"`
+	Provider string               `flag:"provider" args:"true" help:"API provider to configure: anthropic|openai|gemini|deepseek|jev"`
 	Token    text.SensitiveString `flag:"token" hidden:"true" help:"Provider API token (prefer the secure interactive prompt)"`
 	Test     bool                 `flag:"test" help:"Test the current or supplied token without saving it"`
 	Mode     string               `flag:"mode" help:"Default runtime mode for this provider: api|agent|cli|cmux"`
