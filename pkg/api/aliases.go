@@ -21,12 +21,13 @@ type (
 )
 
 var (
-	// Anthropic, OpenAI, Google and DeepSeek are the provider descriptors. A
+	// Anthropic, OpenAI, Google, DeepSeek and Jev are the provider descriptors. A
 	// provider is derived from a model name, never selected alongside one.
 	Anthropic = registry.Anthropic
 	OpenAI    = registry.OpenAI
 	Google    = registry.Google
 	DeepSeek  = registry.DeepSeek
+	Jev       = registry.Jev
 )
 
 const (

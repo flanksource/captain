@@ -182,12 +182,12 @@ var _ = Describe("PermissionCapabilities", func() {
 				To(Equal(api.SupportUnsupported))
 		})
 
-		It("enforces deny on an agent built-in but not a caller tool, on claude-cli", func() {
+		It("enforces deny on both an agent built-in and a caller tool, on claude-cli", func() {
 			caps := api.PermissionCapabilitiesFor(api.Runtime{Provider: "anthropic", Mode: api.ModeCLI})
 			Expect(caps.ToolPolicySupport(api.ProvenanceAgent, api.ToolPolicyDeny).Kind).
 				To(Equal(api.SupportNative))
 			Expect(caps.ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyDeny).Kind).
-				To(Equal(api.SupportUnsupported))
+				To(Equal(api.SupportNative))
 		})
 
 		It("declares caller-tool policy exactly where the registry declares caller tools", func() {
@@ -229,9 +229,7 @@ var _ = Describe("PermissionCapabilities", func() {
 		It("silences MCP only where a provider actually sends the empty server set", func() {
 			for _, runtime := range api.AllRuntimes() {
 				want := api.SupportUnsupported
-				if runtime == (api.Runtime{Provider: "anthropic", Mode: api.ModeCLI}) ||
-					runtime == (api.Runtime{Provider: "anthropic", Mode: api.ModeAgent}) ||
-					runtime == (api.Runtime{Provider: "openai", Mode: api.ModeAgent}) {
+				if runtime.Mode != api.ModeAPI && runtime != (api.Runtime{Provider: "google", Mode: api.ModeCLI}) {
 					want = api.SupportNative
 				}
 				Expect(api.PermissionCapabilitiesFor(runtime).

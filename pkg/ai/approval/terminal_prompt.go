@@ -49,8 +49,8 @@ func buildTerminalPrompt(req api.ApprovalRequest) (terminalPrompt, error) {
 	var payload any
 	rememberable := true
 	switch req.Kind {
-	case api.ApprovalKindQuestion, api.ApprovalKindElicitation:
-		return terminalPrompt{}, fmt.Errorf("approval: the terminal broker cannot answer a %s request from %q: it only allows or denies", req.Kind, req.Tool)
+	case api.ApprovalKindElicitation:
+		return terminalPrompt{}, fmt.Errorf("approval: the terminal broker cannot answer a %s request from %q: it only allows, denies or answers questions", req.Kind, req.Tool)
 	case api.ApprovalKindTool:
 		if len(req.Input) > 0 {
 			payload = req.Input
@@ -145,6 +145,77 @@ func huhPrompter(in, out *os.File) func(context.Context, terminalPrompt) (termin
 		}
 		return choice, nil
 	}
+}
+
+// otherAnswer is the select option that switches to a typed answer, for a
+// question whose suggested options do not fit.
+const otherAnswer = "\x00other"
+
+// huhQuestioner draws one question on out and reads its answer from in: a
+// select over the suggested options (with a typed "Other"), a multi-select when
+// the question takes several, or a text input when it suggests none.
+func huhQuestioner(in, out *os.File) func(context.Context, api.TerminalQuestion) (any, error) {
+	run := func(ctx context.Context, field huh.Field) error {
+		return huh.NewForm(huh.NewGroup(field)).WithInput(in).WithOutput(out).RunWithContext(ctx)
+	}
+	typed := func(ctx context.Context, question api.TerminalQuestion) (any, error) {
+		var text string
+		input := huh.NewInput().Title(question.Text).Value(&text).Validate(func(value string) error {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("an answer is required")
+			}
+			return nil
+		})
+		if question.Secret {
+			input = input.EchoMode(huh.EchoModePassword)
+		}
+		return text, run(ctx, input)
+	}
+	return func(ctx context.Context, question api.TerminalQuestion) (any, error) {
+		if err := writeQuestionHeader(out, question); err != nil {
+			return nil, err
+		}
+		if len(question.Options) == 0 {
+			return typed(ctx, question)
+		}
+		options := make([]huh.Option[string], 0, len(question.Options)+1)
+		for _, option := range question.Options {
+			options = append(options, huh.NewOption(option, option))
+		}
+		if question.MultiSelect {
+			var picked []string
+			return picked, run(ctx, huh.NewMultiSelect[string]().Title(question.Text).Options(options...).Value(&picked).Validate(func(values []string) error {
+				if len(values) == 0 {
+					return fmt.Errorf("pick at least one")
+				}
+				return nil
+			}))
+		}
+		var picked string
+		options = append(options, huh.NewOption("Other (type an answer)", otherAnswer))
+		if err := run(ctx, huh.NewSelect[string]().Title(question.Text).Options(options...).Value(&picked)); err != nil {
+			return nil, err
+		}
+		if picked == otherAnswer {
+			return typed(ctx, question)
+		}
+		return picked, nil
+	}
+}
+
+func writeQuestionHeader(out io.Writer, question api.TerminalQuestion) error {
+	var b strings.Builder
+	b.WriteString("\nQuestion from the agent\n")
+	if question.Context != "" {
+		b.WriteString(clipDetail(question.Context) + "\n")
+	}
+	for _, option := range question.Options {
+		if description := question.OptionDescriptions[option]; description != "" {
+			fmt.Fprintf(&b, "  %s: %s\n", option, description)
+		}
+	}
+	_, err := io.WriteString(out, b.String())
+	return err
 }
 
 func writePromptHeader(out io.Writer, prompt terminalPrompt) error {

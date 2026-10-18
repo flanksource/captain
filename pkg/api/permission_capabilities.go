@@ -419,11 +419,16 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
 	},
+	RuntimeOf(Jev, ModeAPI): {
+		Modes:        unsupportedModes(),
+		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
+		Resources:    resources(false, false),
+	},
 
 	// --- claude transports: the enum's native home.
 	RuntimeOf(Anthropic, ModeCLI): {
 		Modes:        claudeModes("--permission-mode ", false),
-		ToolPolicies: toolPolicies(claudeAgentTools(), noToolFilter(), noToolFilter()),
+		ToolPolicies: toolPolicies(claudeAgentTools(), callerTools(), noToolFilter()),
 		// --mcp-config {} --strict-mcp-config genuinely disables ambient MCP;
 		// --plugin-dir carries permissions.skills. This is the only runtime that
 		// loads skills.
@@ -441,17 +446,21 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 	},
 	RuntimeOf(Anthropic, ModeCmux): {
 		Modes:        claudeModes("--permission-mode ", true),
-		ToolPolicies: toolPolicies(claudeAgentTools(), noToolFilter(), noToolFilter()),
-		Resources:    resources(false, false),
-		Tools:        claudeBuiltinTools,
+		ToolPolicies: toolPolicies(claudeAgentTools(), callerTools(), noToolFilter()),
+		// Like claude-cli: --strict-mcp-config keeps only captain's caller-tool
+		// server, or an empty --mcp-config when there are no caller tools.
+		Resources: resources(true, false),
+		Tools:     claudeBuiltinTools,
 	},
 
 	// --- codex transports: posture is a sandbox/approval pair, never a mode.
 	RuntimeOf(OpenAI, ModeCLI): {
 		Modes:        codexModes(false),
-		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
-		Resources:    resources(false, false),
-		Tools:        codexBuiltinTools,
+		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
+		// mcp.disabled overrides mcp_servers with only captain's caller-tool
+		// server, or with an empty table when there are no caller tools.
+		Resources: resources(true, false),
+		Tools:     codexBuiltinTools,
 	},
 	RuntimeOf(OpenAI, ModeAgent): {
 		Modes: codexModes(true),
@@ -466,9 +475,10 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 	},
 	RuntimeOf(OpenAI, ModeCmux): {
 		Modes:        codexModes(false),
-		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
-		Resources:    resources(false, false),
-		Tools:        codexBuiltinTools,
+		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
+		// Same mcp_servers override as codex-cli.
+		Resources: resources(true, false),
+		Tools:     codexBuiltinTools,
 	},
 
 	// --- gemini CLI: an approval-mode flag and nothing else. The provider

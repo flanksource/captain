@@ -17,12 +17,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/callertools"
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons/logger"
@@ -80,6 +82,12 @@ func providerLabel(p *api.ModelProvider) string {
 }
 
 func (p *Provider) GetModel() string { return p.model }
+
+// SupportsCallerTools reports that Config.Tools reach the agent through a
+// run-scoped caller-tool MCP server.
+func (p *Provider) SupportsCallerTools() bool { return true }
+
+var _ api.ToolCapableProvider = (*Provider)(nil)
 
 // GetRuntime reports the (provider, cmux) pair this adapter serves.
 func (p *Provider) GetRuntime() ai.Runtime { return ai.RuntimeOf(p.provider, ai.ModeCmux) }
@@ -337,29 +345,44 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		r.emit(ai.Event{Kind: ai.EventSystem, SessionID: sessionID})
 	}
 
+	callerTools, err := callertools.StartCLI(ctx, p.cfg, req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("cmux: %w", err)
+	}
+	// The run ends when the session does, so its caller tools end with it.
+	defer func() {
+		if err := callerTools.Close(); err != nil {
+			log.Warnf("cmux: close caller tools: %v", err)
+		}
+	}()
 	extra, err := cmuxExtraArgs(agent, req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("cmux: invalid cliArgs: %w", err)
+	}
+	launch, err := prepareCallerTools(extra, req, callerTools)
+	if err != nil {
+		return nil, 0, err
 	}
 	permissions, ignored := req.Permissions.ForRuntime(p.provider, api.ModeCmux)
 	for _, warning := range ignored {
 		log.Warnf("cmux: %s", warning)
 	}
 	tools := permissions.Tools
-	agentCommand := withEnv(AgentCommand(AgentCommandOpts{
+	agentCommand := launch.launchCommand(withEnv(AgentCommand(AgentCommandOpts{
 		Agent:           agent,
 		Model:           model,
 		SessionID:       sessionID,
 		Resume:          resume,
 		Plan:            approval == api.PermissionPlan,
 		PermissionMode:  approval,
-		AllowedTools:    tools.AllowList(),
+		AllowedTools:    slices.Concat(tools.AllowList(), launch.allowedTools),
 		DisallowedTools: tools.DenyList(),
 		Directories:     req.Permissions.CleanDirectories(),
 		Effort:          req.Effort,
+		ConfigOverrides: launch.configOverrides,
 		Memory:          req.Memory,
 		Extra:           extra,
-	}), req.EnvMap())
+	}), req.EnvMap()))
 
 	timeout := r.timeout()
 	// ctxLog routes internal step-by-step narration to the run's clicky task

@@ -152,6 +152,9 @@ func execute(ctx context.Context, in Input, rec *recorder) (Result, bool, error)
 		return Result{}, false, err
 	}
 	announceApprovals(&in)
+	if err := bindToolApprovals(&in); err != nil {
+		return Result{}, false, err
+	}
 	provider, release, err := buildProvider(in)
 	if err != nil {
 		return Result{}, false, err
