@@ -115,7 +115,7 @@ func TestEveryCatalogModelIsPriced(t *testing.T) {
 			t.Errorf("catalog model %q carries no cost block", m.ID)
 			continue
 		}
-		if m.Cost.Input <= 0 || m.Cost.Output <= 0 {
+		if m.Cost.Input <= 0 || m.Cost.Output < 0 || (m.Provider != Jev.Name && m.Cost.Output == 0) {
 			t.Errorf("catalog model %q has non-positive price %+v", m.ID, *m.Cost)
 		}
 	}

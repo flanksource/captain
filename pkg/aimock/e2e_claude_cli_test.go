@@ -37,7 +37,7 @@ func TestE2EClaudeCLI(t *testing.T) {
 	requireBinary(t, "claude")
 	srv := startAnthropic(t, "text-only.yaml")
 
-	events, err := provider.NewClaudeCLI("sonnet").
+	events, err := provider.NewClaudeCLI(api.Config{Model: api.Model{Name: "sonnet"}}).
 		ExecuteStream(context.Background(), hermetic(capitalPrompt, srv.Env()))
 	require.NoError(t, err)
 
@@ -61,7 +61,7 @@ func TestE2EClaudeCLIReportsAScenarioMiss(t *testing.T) {
 	requireBinary(t, "claude")
 	srv := startAnthropic(t, "text-only.yaml")
 
-	events, err := provider.NewClaudeCLI("sonnet").
+	events, err := provider.NewClaudeCLI(api.Config{Model: api.Model{Name: "sonnet"}}).
 		ExecuteStream(context.Background(), hermetic("Name a river in Peru.", srv.Env()))
 	require.NoError(t, err)
 

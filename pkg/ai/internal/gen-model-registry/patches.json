@@ -116,11 +116,13 @@
   "gpt-5.5": {
     "preferred": false
   },
-  "gemini-3.6-flash": {
-    "preferred": true
+  "gemini-3.8-flash": {
+    "preferred": true,
+    "priority": 1
   },
-  "gemini-3.5-flash": {
-    "preferred": true
+  "gemini-4-argon": {
+    "preferred": true,
+    "priority": 2
   },
   "gemini-2.5-pro": {
     "preferred": false
@@ -140,6 +142,18 @@
   },
   "deepseek-reasoner": null,
   "deepseek-chat": null,
+  "jev-latest": {
+    "provider": "jev",
+    "family": "jev",
+    "version": "latest",
+    "label": "Jev Latest",
+    "releaseDate": "2026-09-15",
+    "cost": {
+      "input": 0.042
+    },
+    "preferred": true,
+    "priority": 1
+  },
   "claude-sonnet-4-5": {
     "supersededBy": "claude-sonnet-4-6"
   },

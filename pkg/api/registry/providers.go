@@ -22,10 +22,10 @@ var (
 		DefaultMode:   ModeAgent,
 		modes: map[RuntimeMode]ModeCapabilities{
 			ModeAPI:   {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}, SchemaDialect: SchemaDialectAnthropic},
-			ModeCLI:   {Streaming: true, Resume: true, ToolPolicy: true, RequiredBinary: "claude", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
+			ModeCLI:   {Streaming: true, Resume: true, CallerTools: true, ToolPolicy: true, RequiredBinary: "claude", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
 			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, Steer: true, SetPermissionMode: true, CallerTools: true, ToolPolicy: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}, RequiredBinary: "tsx", SchemaDialect: SchemaDialectAnthropic, RunsThroughClaudeCode: true},
 			// cmux submits no response format, so it is in neither schema subset.
-			ModeCmux: {Streaming: true, Resume: true, Keyless: true, ToolPolicy: true, RequiredBinary: "claude"},
+			ModeCmux: {Streaming: true, Resume: true, Keyless: true, CallerTools: true, ToolPolicy: true, RequiredBinary: "claude"},
 		},
 		claimPrefixes: []string{"claude", "opus", "sonnet", "haiku", "fable"},
 		identityTrim:  []string{"claude-"},
@@ -44,10 +44,10 @@ var (
 		DefaultMode:   ModeAgent,
 		modes: map[RuntimeMode]ModeCapabilities{
 			ModeAPI:   {Streaming: true, CallerTools: true, MediaTypes: []string{"image/*"}, SchemaDialect: SchemaDialectOpenAI},
-			ModeCLI:   {Streaming: true, Resume: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
+			ModeCLI:   {Streaming: true, Resume: true, CallerTools: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
 			ModeAgent: {Streaming: true, Resume: true, Interrupt: true, SetPermissionMode: true, CallerTools: true, MediaTypes: []string{"image/*"}, RequiredBinary: "codex", SchemaDialect: SchemaDialectOpenAI},
 			// Prompt-only cmux sessions submit no response format to OpenAI.
-			ModeCmux: {Streaming: true, Resume: true, Keyless: true, RequiredBinary: "codex"},
+			ModeCmux: {Streaming: true, Resume: true, Keyless: true, CallerTools: true, RequiredBinary: "codex"},
 		},
 		// "codex" claims the FAMILY (OpenAI's coding model), not a mode. It used
 		// to reach OpenAI through a mode token that also forced the CLI.
@@ -98,6 +98,22 @@ var (
 		claimPrefixes: []string{"deepseek"},
 		families:      []string{"deepseek"},
 	}
+
+	Jev = &Provider{
+		Name:          "jev",
+		AgentName:     "jev",
+		CatalogPrefix: "jev",
+		PricingPrefix: "jev",
+		EnvVars:       []string{"TYPESAFE_API_KEY"},
+		DefaultMode:   ModeAPI,
+		modes: map[RuntimeMode]ModeCapabilities{
+			ModeAPI: {Streaming: true},
+		},
+		claimPrefixes: []string{"jev"},
+		families:      []string{"jev"},
+		emptyTokens:   []string{"jev"},
+		emptyFamily:   "jev",
+	}
 )
 
 // Providers returns the provider families in canonical claim order. Parse walks
@@ -105,7 +121,7 @@ var (
 // contract, not an accident. The claim prefixes are disjoint today; the order
 // also fixes AllRuntimes ordering.
 func Providers() []*Provider {
-	return []*Provider{Anthropic, OpenAI, Google, DeepSeek}
+	return []*Provider{Anthropic, OpenAI, Google, DeepSeek, Jev}
 }
 
 // ProviderByName resolves a provider by Name, AgentName, CatalogPrefix, or

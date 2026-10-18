@@ -58,7 +58,7 @@ var surfaces = []surface{
 		name:   "cli",
 		binary: "claude",
 		run: func(t *testing.T, srv *anthropicmock.Server) string {
-			events, err := provider.NewClaudeCLI("sonnet").
+			events, err := provider.NewClaudeCLI(api.Config{Model: api.Model{Name: "sonnet"}}).
 				ExecuteStream(context.Background(), hermetic(capitalPrompt, srv.Env()))
 			require.NoError(t, err)
 			return report(events)
