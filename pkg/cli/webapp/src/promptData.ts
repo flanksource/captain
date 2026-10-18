@@ -61,8 +61,10 @@ export type PromptPreviewResult = {
   input?: unknown;
   config?: unknown;
   inputSchema?: Record<string, unknown>;
+  inputSchemaType?: "json-schema";
   inputDefault?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  outputSchemaType?: "json-schema" | "typesafe-schema";
   validationError?: string;
   /** The spec the server resolved through presets, profile, frontmatter and request, with its layer trace. */
   resolution?: ResolvedRuntimeSpec;
@@ -71,8 +73,10 @@ export type PromptPreviewResult = {
 export type PromptDetail = PromptSummary & {
   content: string;
   inputSchema?: Record<string, unknown>;
+  inputSchemaType?: "json-schema";
   inputDefault?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  outputSchemaType?: "json-schema" | "typesafe-schema";
   metadata?: Record<string, unknown>;
   run: AIPromptRunValue;
 };

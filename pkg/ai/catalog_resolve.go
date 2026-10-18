@@ -68,7 +68,7 @@ var liveModelFetcher = func(ctx context.Context, p *ModelProvider, token, endpoi
 }
 
 // apiProviders are the providers the resolver can list live over HTTP.
-var apiProviders = []*ModelProvider{Anthropic, OpenAI, Google, DeepSeek}
+var apiProviders = []*ModelProvider{Anthropic, OpenAI, Google, DeepSeek, Jev}
 
 // ResolveModels returns the merged catalog ∪ live-API view for opts, joined to
 // merged OpenRouter/static pricing and persisted in an auth-scoped cache entry.
@@ -292,7 +292,8 @@ func filterResolved(rows []ResolvedModel, filter string) []ResolvedModel {
 //   - v4: live-only rows (non-preferred registry models such as claude-opus-5)
 //     keep the reasoning, temperature, effort and priority the live fetcher
 //     resolved; v3 rows cached them stripped.
-const resolveSchemaVersion = "v4"
+//   - v5: Jev joins the catalog and live API provider set.
+const resolveSchemaVersion = "v5"
 
 type resolveCacheSource struct {
 	// Provider names the family whose endpoint was listed. A live listing is an

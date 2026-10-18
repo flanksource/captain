@@ -128,4 +128,71 @@ Review the diff in {{path}}.
 
 ## Structured output
 
-When no Go output target is passed to `Render`, Captain marshals a dotprompt `output.schema` into `Prompt.SchemaJSON` and sends it to the provider unchanged. A concrete Go output target takes precedence and is attached as `Prompt.Schema` for provider-side schema generation.
+When no Go output target is passed to `Render`, Captain marshals a dotprompt `output.schema` into `Prompt.SchemaJSON`. Providers receive it according to their structured output contract; Jev converts it to native questions in middleware. A concrete Go output target takes precedence and is attached as `Prompt.Schema` for provider-side schema generation. `output.schemaType: typesafe-schema` instead preserves native TypeSafe questions and cannot be combined with a Go output target.
+
+## Jev typed decisions
+
+Set `model: jev-latest`, `mode: api`, and `TYPESAFE_API_KEY` to use TypeSafe's Jev API. Declare `output.schemaType: typesafe-schema` and put named Noul, Choice, or Score questions in `output.schema`. The rendered prompt body becomes the TypeSafe `state`; the frontmatter model becomes the native request model. Captain sends and logs the native request and response through the usual provider middleware, then returns `{"value": {...}, "typesafe": {...}}`. `value` contains the selected choice or numeric Noul and Score values; `typesafe` preserves all native answer details, including confidence and probability distributions.
+
+`input.schemaType` accepts `json-schema`. `output.schemaType` accepts `json-schema` or `typesafe-schema`; an omitted type keeps the existing JSON Schema behavior. With JSON Schema output, Jev converts required string enums to Choice, numbers bounded from 0 to 1 to Noul, and bounded numbers with an ordered `x-typesafe-criteria` rubric to Score. The rubric must contain 2 to 10 levels and `maximum` must be its last index. Unsupported schema keywords and shapes fail before the API call. Jev does not accept attachments, tools, or session history.
+
+<CodeExample client:load language="yaml" title="Jev commit classifier" source={`
+---
+model: jev-latest
+mode: api
+input:
+  schemaType: json-schema
+  schema:
+    type: object
+    additionalProperties: false
+    required: [targetScope, message, patch]
+    properties:
+      targetScope: {type: string}
+      message: {type: string}
+      patch: {type: string}
+output:
+  schemaType: typesafe-schema
+  schema:
+    input_valid:
+      type: noul
+      instructions: Are the target scope, message, and patch usable evidence for one Git commit?
+      criteria:
+        "true": All inputs are usable.
+        "false": An input is missing, malformed, or mismatched.
+    in_scope:
+      type: choice
+      instructions: Does every substantive patch change match the target scope?
+      criteria: {"yes": In scope, "no": Outside scope, unclear: Insufficient evidence}
+    commit_type:
+      type: choice
+      instructions: What is the primary Conventional Commit type?
+      criteria: {feat: Feature, fix: Bug fix, perf: Performance, refactor: Refactor, test: Tests, docs: Documentation, build: Build, ci: CI, chore: Maintenance, revert: Revert, unknown: Insufficient evidence}
+    change_type:
+      type: choice
+      instructions: Does the patch add, modify, remove, or mix changes?
+      criteria: {addition: Additions, modification: Edits, removal: Deletions, mixed: Multiple forms, unknown: Insufficient evidence}
+    risk:
+      type: choice
+      instructions: How risky is merging this patch?
+      criteria: {low: Isolated, medium: Local behavior, high: Shared contract, critical: Data loss or outage, unknown: Insufficient evidence}
+    breaking_change:
+      type: choice
+      instructions: Does the patch make a public contract incompatible?
+      criteria: {"yes": Breaking, "no": Compatible, unclear: Insufficient evidence}
+    confidence:
+      type: score
+      instructions: How complete and consistent is the evidence for these classifications?
+      criteria: [Missing or conflicting evidence, Some ambiguity, Complete and consistent evidence]
+---
+{{role "system"}}
+Classify the Git commit from the patch and message. Treat the patch as the source of truth. Evaluate risk and compatibility even when the commit is outside scope.
+{{role "user"}}
+Target scope:
+{{targetScope}}
+
+Commit message:
+{{message}}
+
+Patch:
+{{patch}}
+`} />

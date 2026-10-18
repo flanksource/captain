@@ -155,6 +155,8 @@ func DefaultModelFor(p *registry.Provider, mode registry.RuntimeMode) string {
 		// the previous generation's id and is no longer in the catalog, so it
 		// seeded a picker with a model the provider cannot run.
 		return "deepseek-v4-pro"
+	case registry.Jev.Name:
+		return "jev-latest"
 	}
 	return ""
 }

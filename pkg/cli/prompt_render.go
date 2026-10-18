@@ -173,7 +173,8 @@ func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
 	return PromptRenderResult{
 		ID: detail.ID, Name: detail.Name, Model: cfg.Model.Name, Provider: providerName(cfg.Model.Provider), Mode: string(cfg.Model.Mode),
 		User: req.Prompt.User, System: req.Prompt.System, Input: req, Config: cfg,
-		InputSchema: detail.InputSchema, InputDefault: detail.InputDefault, OutputSchema: detail.OutputSchema,
+		InputSchema: detail.InputSchema, InputSchemaType: detail.InputSchemaType, InputDefault: detail.InputDefault,
+		OutputSchema: detail.OutputSchema, OutputSchemaType: detail.OutputSchemaType,
 		Runtimes: runtimes, variants: variants, Resolution: result.Resolution, ValidationError: renderValidationError(req, cfg, runtimes),
 	}, nil
 }

@@ -22,7 +22,7 @@ var ErrUnknownModel = errors.New("unable to infer a provider from the model name
 // always two fields, and Provider is always derived from the model rather than
 // selected alongside it.
 type Runtime struct {
-	// Provider is the canonical provider key: anthropic | openai | google | deepseek.
+	// Provider is the canonical provider key: anthropic | openai | google | deepseek | jev.
 	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
 	// Mode is the mechanism: api | agent | cli | cmux.
 	Mode RuntimeMode `json:"mode,omitempty" yaml:"mode,omitempty"`

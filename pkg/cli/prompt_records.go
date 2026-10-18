@@ -264,12 +264,14 @@ func parsedPromptDetail(record promptRecord, content string) (PromptDetail, erro
 		Mode: api.RuntimeMode(summary.Mode),
 	}}
 	return PromptDetail{
-		PromptSummary: summary,
-		Content:       content,
-		InputSchema:   inspection.InputSchema,
-		InputDefault:  inspection.InputDefault,
-		OutputSchema:  inspection.OutputSchema,
-		Metadata:      inspection.Metadata,
+		PromptSummary:    summary,
+		Content:          content,
+		InputSchemaType:  inspection.InputSchemaType,
+		InputSchema:      inspection.InputSchema,
+		InputDefault:     inspection.InputDefault,
+		OutputSchemaType: inspection.OutputSchemaType,
+		OutputSchema:     inspection.OutputSchema,
+		Metadata:         inspection.Metadata,
 		Run: PromptRenderRequest{
 			Variables:      maps.Clone(inspection.InputDefault),
 			Presets:        append([]string(nil), summary.Presets...),
@@ -366,7 +368,11 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 	if data == nil {
 		data = map[string]any{}
 	}
-	rendered, err := dp.NewDotprompt(nil).Render(content, &dp.DataArgument{Input: data}, nil)
+	prepared, declarations, err := promptlib.PrepareSchemaSource(content)
+	if err != nil {
+		return promptInspection{}, err
+	}
+	rendered, err := dp.NewDotprompt(nil).Render(prepared, &dp.DataArgument{Input: data}, nil)
 	if err != nil {
 		return promptInspection{}, err
 	}
@@ -394,15 +400,23 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 	for k, v := range rendered.Input.Default {
 		inputDefault[k] = v
 	}
+	outputSchema := anyToMap(rendered.Output.Schema)
+	if declarations.OutputType == api.SchemaTypeTypeSafe {
+		if err := json.Unmarshal(declarations.TypeSafeQuestions, &outputSchema); err != nil {
+			return promptInspection{}, fmt.Errorf("decode TypeSafe questions: %w", err)
+		}
+	}
 	return promptInspection{
-		Metadata:       metadata,
-		InputSchema:    inputSchema,
-		InputDefault:   inputDefault,
-		OutputSchema:   anyToMap(rendered.Output.Schema),
-		Runtimes:       doc.Runtimes,
-		Presets:        append([]string(nil), doc.Presets...),
-		RuntimeProfile: doc.RuntimeProfile,
-		Variables:      variablesFromSchema(inputSchema),
+		Metadata:         metadata,
+		InputSchemaType:  declarations.InputType,
+		InputSchema:      inputSchema,
+		InputDefault:     inputDefault,
+		OutputSchemaType: declarations.OutputType,
+		OutputSchema:     outputSchema,
+		Runtimes:         doc.Runtimes,
+		Presets:          append([]string(nil), doc.Presets...),
+		RuntimeProfile:   doc.RuntimeProfile,
+		Variables:        variablesFromSchema(inputSchema),
 	}, nil
 }
 

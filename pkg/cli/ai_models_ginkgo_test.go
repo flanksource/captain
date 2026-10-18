@@ -17,6 +17,7 @@ var _ = Describe("ai models credential resolution", Serial, func() {
 		response map[string]any,
 	) {
 		GinkgoT().Setenv(envVar, "")
+		GinkgoT().Setenv("TYPESAFE_BASE_URL", "")
 		credentials.SetPathForTesting(filepath.Join(GinkgoT().TempDir(), "vault"))
 		DeferCleanup(func() { credentials.SetPathForTesting("") })
 
@@ -54,5 +55,36 @@ var _ = Describe("ai models credential resolution", Serial, func() {
 			map[string]any{"models": []map[string]any{{"name": "models/model-vault-test"}}}),
 		Entry("for DeepSeek", "deepseek", "deepseek", "DEEPSEEK_API_KEY", "/models", "Authorization", "Bearer vault-token",
 			map[string]any{"data": []map[string]any{{"id": "model-vault-test"}}}),
+		Entry("for Jev", "jev", "jev", "TYPESAFE_API_KEY", "/v1/models", "Authorization", "Bearer vault-token",
+			map[string]any{"models": []map[string]any{{"name": "model-vault-test", "description": "Decision model", "release_date": "2026-09-15"}}}),
 	)
+
+	It("shows the catalog's free Jev output rate as free", func() {
+		GinkgoT().Setenv("TYPESAFE_API_KEY", "test-key")
+		GinkgoT().Setenv("TYPESAFE_BASE_URL", "")
+		mux := http.NewServeMux()
+		mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+			Expect(r.URL.Path).To(Equal("/v1/models"))
+			Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-key"))
+			Expect(json.NewEncoder(w).Encode(map[string]any{
+				"models": []map[string]any{{"name": "jev-latest", "description": "Decision model", "release_date": "2026-09-15"}},
+			})).To(Succeed())
+		})
+		server := httptest.NewServer(mux)
+		DeferCleanup(server.Close)
+		originalTransport := http.DefaultClient.Transport
+		http.DefaultClient.Transport = aiModelsRewriteTransport{base: server.URL, inner: server.Client().Transport}
+		DeferCleanup(func() { http.DefaultClient.Transport = originalTransport })
+
+		result, err := RunAIModels(AIModelsOptions{Provider: "jev", Limit: 10})
+		Expect(err).NotTo(HaveOccurred())
+		rows := result.(AIModelsResult).Rows
+		Expect(rows).To(HaveLen(1))
+		Expect(rows[0].Input).NotTo(Equal("-"))
+		Expect(rows[0].Output).To(Equal("Free"))
+	})
+
+	It("keeps a zero rate without free pricing semantics unknown", func() {
+		Expect(formatPrice(0)).To(Equal("-"))
+	})
 })

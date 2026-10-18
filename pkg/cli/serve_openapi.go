@@ -71,7 +71,7 @@ func addCaptainProviderTokenPaths(spec *rpc.OpenAPISpec) {
 	}
 	provider := rpc.OpenAPIParameter{
 		Name: "provider", In: "path", Required: true,
-		Schema: &rpc.OpenAPISchema{Type: "string", Enum: []any{"anthropic", "openai", "gemini", "deepseek"}},
+		Schema: &rpc.OpenAPISchema{Type: "string", Enum: []any{"anthropic", "openai", "gemini", "deepseek", "jev"}},
 	}
 	tokenSchema := &rpc.OpenAPISchema{Type: "string", Format: "password", Extensions: map[string]any{"writeOnly": true}}
 	request := func(required bool) *rpc.OpenAPIRequestBody {
@@ -116,7 +116,7 @@ func addCaptainProviderDefaultsPaths(spec *rpc.OpenAPISpec) {
 	}
 	provider := rpc.OpenAPIParameter{
 		Name: "provider", In: "path", Required: true,
-		Schema: &rpc.OpenAPISchema{Type: "string", Enum: []any{"anthropic", "openai", "gemini", "deepseek"}},
+		Schema: &rpc.OpenAPISchema{Type: "string", Enum: []any{"anthropic", "openai", "gemini", "deepseek", "jev"}},
 	}
 	stringField := func() *rpc.OpenAPISchema { return &rpc.OpenAPISchema{Type: "string"} }
 	defaultsRequest := &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{

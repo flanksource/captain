@@ -83,12 +83,14 @@ func (p PromptSummary) Row() map[string]any {
 
 type PromptDetail struct {
 	PromptSummary
-	Content      string              `json:"content"`
-	InputSchema  map[string]any      `json:"inputSchema,omitempty"`
-	InputDefault map[string]any      `json:"inputDefault,omitempty"`
-	OutputSchema map[string]any      `json:"outputSchema,omitempty"`
-	Metadata     map[string]any      `json:"metadata,omitempty"`
-	Run          PromptRenderRequest `json:"run"`
+	Content          string              `json:"content"`
+	InputSchemaType  api.SchemaType      `json:"inputSchemaType,omitempty"`
+	InputSchema      map[string]any      `json:"inputSchema,omitempty"`
+	InputDefault     map[string]any      `json:"inputDefault,omitempty"`
+	OutputSchemaType api.SchemaType      `json:"outputSchemaType,omitempty"`
+	OutputSchema     map[string]any      `json:"outputSchema,omitempty"`
+	Metadata         map[string]any      `json:"metadata,omitempty"`
+	Run              PromptRenderRequest `json:"run"`
 }
 
 type PromptWriteRequest struct {
@@ -121,20 +123,22 @@ type PromptRenderRequest struct {
 }
 
 type PromptRenderResult struct {
-	ID           string         `json:"id"`
-	Name         string         `json:"name"`
-	Model        string         `json:"model,omitempty"`
-	Provider     string         `json:"provider,omitempty"`
-	Mode         string         `json:"mode,omitempty"`
-	User         string         `json:"user,omitempty"`
-	System       string         `json:"system,omitempty"`
-	Input        ai.Request     `json:"input"`
-	Config       ai.Config      `json:"config"`
-	InputSchema  map[string]any `json:"inputSchema,omitempty"`
-	InputDefault map[string]any `json:"inputDefault,omitempty"`
-	OutputSchema map[string]any `json:"outputSchema,omitempty"`
-	Runtimes     []api.Model    `json:"runtimes,omitempty"`
-	variants     []AIRuntimeResolved
+	ID               string         `json:"id"`
+	Name             string         `json:"name"`
+	Model            string         `json:"model,omitempty"`
+	Provider         string         `json:"provider,omitempty"`
+	Mode             string         `json:"mode,omitempty"`
+	User             string         `json:"user,omitempty"`
+	System           string         `json:"system,omitempty"`
+	Input            ai.Request     `json:"input"`
+	Config           ai.Config      `json:"config"`
+	InputSchema      map[string]any `json:"inputSchema,omitempty"`
+	InputSchemaType  api.SchemaType `json:"inputSchemaType,omitempty"`
+	InputDefault     map[string]any `json:"inputDefault,omitempty"`
+	OutputSchema     map[string]any `json:"outputSchema,omitempty"`
+	OutputSchemaType api.SchemaType `json:"outputSchemaType,omitempty"`
+	Runtimes         []api.Model    `json:"runtimes,omitempty"`
+	variants         []AIRuntimeResolved
 	// Resolution is the layer trace the render resolved through; its Spec is
 	// the final request after saved defaults, so the trace explains Input.
 	Resolution      api.ResolvedSpec `json:"resolution"`
@@ -191,14 +195,16 @@ type promptRef struct {
 }
 
 type promptInspection struct {
-	Metadata       map[string]any
-	InputSchema    map[string]any
-	InputDefault   map[string]any
-	OutputSchema   map[string]any
-	Runtimes       []api.Model
-	Presets        []string
-	RuntimeProfile string
-	Variables      []PromptVariable
+	Metadata         map[string]any
+	InputSchemaType  api.SchemaType
+	InputSchema      map[string]any
+	InputDefault     map[string]any
+	OutputSchemaType api.SchemaType
+	OutputSchema     map[string]any
+	Runtimes         []api.Model
+	Presets          []string
+	RuntimeProfile   string
+	Variables        []PromptVariable
 }
 
 func RegisterPromptEntity() {

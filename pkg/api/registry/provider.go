@@ -81,7 +81,7 @@ type ModeCapabilities struct {
 // AuthEnvVars, AgentsForProvider, PricingIDs, orPrefix, pricingModelID,
 // adapterInputMediaTypes) which disagreed with each other.
 type Provider struct {
-	// Name is the canonical provider key: anthropic | openai | google | deepseek.
+	// Name is the canonical provider key: anthropic | openai | google | deepseek | jev.
 	Name string
 	// AgentName is the coding-agent sentinel: a bare "claude"/"codex" on a
 	// non-API mode means "this provider's current model".
@@ -101,8 +101,8 @@ type Provider struct {
 	// not a consequence of map iteration.
 	//
 	// A local agent run is captain's normal shape, so providers that serve an
-	// agent mode default to it; the API mode is what a caller asks for. Google
-	// and DeepSeek have no agent cell and default to api.
+	// agent mode default to it; the API mode is what a caller asks for. Google,
+	// DeepSeek and Jev have no agent cell and default to api.
 	DefaultMode RuntimeMode
 
 	// modes is the per-mode capability table. A missing mode means this provider

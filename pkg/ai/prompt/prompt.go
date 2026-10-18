@@ -124,6 +124,10 @@ func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) 
 	if err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("render prompt %s frontmatter: %w", t.name, err)
 	}
+	src, declarations, err := PrepareSchemaSource(src)
+	if err != nil {
+		return ai.Request{}, ai.Config{}, fmt.Errorf("prepare prompt %s schemas: %w", t.name, err)
+	}
 	rendered, err := t.dp.Render(src, &dp.DataArgument{Input: data}, nil)
 	if err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("render prompt %s: %w", t.name, err)
@@ -154,6 +158,14 @@ func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) 
 		req.Prompt.User = u
 	}
 	req.Prompt.Source = t.name
+	req.Prompt.InputSchemaType = declarations.InputType
+	req.Prompt.OutputSchemaType = declarations.OutputType
+	if rendered.Input.Schema != nil {
+		req.Prompt.InputSchemaJSON, err = json.Marshal(rendered.Input.Schema)
+		if err != nil {
+			return ai.Request{}, ai.Config{}, fmt.Errorf("marshal prompt %s input schema: %w", t.name, err)
+		}
+	}
 
 	cfg := ai.Config{Model: req.Model}
 	if cfg.Model.Name == "" {
@@ -182,8 +194,13 @@ func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) 
 	applyModelConfig(rendered.Config, &req)
 	cfg.Model = req.Model
 	cfg.Budget = req.Budget
+	if out != nil && declarations.OutputType == api.SchemaTypeTypeSafe {
+		return ai.Request{}, ai.Config{}, fmt.Errorf("prompt %s cannot combine Go output target with TypeSafe questions", t.name)
+	}
 	if out != nil {
 		req.Prompt.Schema = out
+	} else if declarations.OutputType == api.SchemaTypeTypeSafe {
+		req.Prompt.TypeSafeQuestions = declarations.TypeSafeQuestions
 	} else if rendered.Output.Schema != nil {
 		// A frontmatter `output.schema` block (resolved by the dotprompt library
 		// from picoschema or a raw JSON Schema) becomes the verbatim SchemaJSON.

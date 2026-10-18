@@ -1,6 +1,7 @@
 import { isMap, parseDocument } from "yaml";
 
 export type PromptSchemaKind = "input" | "output";
+export type PromptSchemaType = "json-schema" | "typesafe-schema";
 
 type PromptSourceParts = {
   prefix: string;
@@ -31,10 +32,25 @@ export function updatePromptSchemaSource(
     document.setIn([kind, "schema"], schema);
   } else {
     document.deleteIn([kind, "schema"]);
+    document.deleteIn([kind, "schemaType"]);
     const section = document.get(kind, true);
     if (isMap(section) && section.items.length === 0) document.delete(kind);
   }
 
+  return `${prefix}---\n${document.toString()}---\n${body}`;
+}
+
+export function updatePromptSchemaTypeSource(
+  source: string,
+  kind: PromptSchemaKind,
+  schemaType: PromptSchemaType,
+): string {
+  if (kind === "input" && schemaType !== "json-schema") {
+    throw new Error("Input schemas must use json-schema.");
+  }
+  const { prefix, frontmatter, body } = splitPromptSource(source);
+  const document = parsePromptFrontmatter(frontmatter);
+  document.setIn([kind, "schemaType"], schemaType);
   return `${prefix}---\n${document.toString()}---\n${body}`;
 }
 
@@ -43,8 +59,24 @@ export function readPromptSchemas(source: string) {
   const frontmatter = document.toJS() as Record<string, unknown>;
   return {
     input: readSchema(frontmatter, "input"),
+    inputType: readSchemaType(frontmatter, "input"),
     output: readSchema(frontmatter, "output"),
+    outputType: readSchemaType(frontmatter, "output"),
   };
+}
+
+function readSchemaType(
+  frontmatter: Record<string, unknown>,
+  kind: PromptSchemaKind,
+): PromptSchemaType {
+  const section = frontmatter[kind];
+  if (!section || typeof section !== "object" || Array.isArray(section)) {
+    return "json-schema";
+  }
+  const value = (section as Record<string, unknown>).schemaType;
+  if (value === undefined || value === "json-schema") return "json-schema";
+  if (kind === "output" && value === "typesafe-schema") return value;
+  throw new Error(`Unsupported ${kind} schema type: ${String(value)}`);
 }
 
 function splitPromptSource(source: string): PromptSourceParts {

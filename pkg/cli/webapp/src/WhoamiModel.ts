@@ -73,6 +73,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   google: "Google Gemini",
   deepseek: "DeepSeek",
+  jev: "Jev",
 };
 
 export function runtimeKey(provider: string, mode: RuntimeMode): string {

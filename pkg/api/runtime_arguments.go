@@ -226,8 +226,11 @@ func runtimeArgumentBindings(p *ModelProvider, mode RuntimeMode) []runtimeArgume
 
 func runtimeCommonPaths(p *ModelProvider, mode RuntimeMode) []string {
 	paths := []string{
-		"model", "mode", "temperature", "noCache", "fallbacks",
+		"model", "mode", "noCache", "fallbacks",
 		"budget.maxTokens", "budget.timeout", "prompt.user", "setup.envVars",
+	}
+	if p != Jev {
+		paths = append(paths, "temperature")
 	}
 	if p != nil {
 		if caps, found := p.Caps(mode); found {
@@ -240,7 +243,7 @@ func runtimeCommonPaths(p *ModelProvider, mode RuntimeMode) []string {
 		}
 		if mode == registry.ModeAPI {
 			paths = append(paths, "prompt.system", "prompt.appendSystem", "setup.cwd")
-			if p != DeepSeek {
+			if p != DeepSeek && p != Jev {
 				paths = append(paths, "effort")
 			}
 		}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -154,7 +155,7 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 	if remote, err := remoteExecProviderFor(req, cfg); err != nil {
 		return nil, cleanup, err
 	} else if remote != nil {
-		wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithSchemaValidation(cfg))
+		wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
 		if err != nil {
 			closeProvider(remote)
 			return nil, cleanup, err
@@ -173,7 +174,7 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 		cleanup()
 		return nil, func() {}, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithSchemaValidation(cfg)); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg)); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}
@@ -372,8 +373,13 @@ func RunAITest(opts AITestOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging()); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithJevConversion()); err != nil {
 		return nil, err
+	}
+	if p.GetRuntime().Provider == "jev" {
+		resolved.Request.Prompt.User = "This is a connectivity test."
+		resolved.Request.Prompt.OutputSchemaType = api.SchemaTypeTypeSafe
+		resolved.Request.Prompt.TypeSafeQuestions = json.RawMessage(`{"reachable":{"type":"noul","instructions":"Is this a connectivity test?"}}`)
 	}
 	timeout, _ := time.ParseDuration(opts.Timeout)
 	if timeout <= 0 {

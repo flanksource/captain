@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -17,6 +18,14 @@ type cachingProvider struct {
 func (c *cachingProvider) GetModel() string       { return c.provider.GetModel() }
 func (c *cachingProvider) GetRuntime() ai.Runtime { return c.provider.GetRuntime() }
 func (c *cachingProvider) Unwrap() ai.Provider    { return c.provider }
+
+func (c *cachingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	streamer, ok := c.provider.(ai.StreamingProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s/%s does not support streaming", c.provider.GetRuntime(), c.provider.GetModel())
+	}
+	return streamer.ExecuteStream(ctx, req)
+}
 
 func (c *cachingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	if ShouldBypassCache(ctx) {

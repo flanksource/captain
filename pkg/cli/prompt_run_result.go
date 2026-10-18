@@ -62,7 +62,7 @@ type PromptRunItem struct {
 func (r PromptRunResult) Pretty() clickyapi.Text {
 	if len(r.Runs) == 0 {
 		if r.Text != "" {
-			return clickyapi.Text{}.Add(promptResponseMarkdown(r.Text))
+			return clickyapi.Text{}.Add(promptResponsePretty(r.Text, r.Provider))
 		}
 		return clickyapi.Text{}.Append(r.Status)
 	}
@@ -79,9 +79,16 @@ func (r PromptRunResult) Pretty() clickyapi.Text {
 			Append("Response — ", "text-gray-500").
 			Append(runColumnHeader(run), "font-bold").
 			NewLine().
-			Add(promptResponseMarkdown(run.Text))
+			Add(promptResponsePretty(run.Text, run.Provider))
 	}
 	return t
+}
+
+func promptResponsePretty(source, provider string) clickyapi.Textable {
+	if provider == "jev" {
+		return jevResponsePretty(source)
+	}
+	return promptResponseMarkdown(source)
 }
 
 func promptResponseMarkdown(source string) clickyapi.Textable {

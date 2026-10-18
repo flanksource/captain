@@ -110,6 +110,18 @@ func legacyMergePrompt(p, o Prompt) Prompt {
 	if len(o.SchemaJSON) > 0 {
 		p.SchemaJSON = o.SchemaJSON
 	}
+	if o.InputSchemaType != "" {
+		p.InputSchemaType = o.InputSchemaType
+	}
+	if len(o.InputSchemaJSON) > 0 {
+		p.InputSchemaJSON = o.InputSchemaJSON
+	}
+	if o.OutputSchemaType != "" {
+		p.OutputSchemaType = o.OutputSchemaType
+	}
+	if len(o.TypeSafeQuestions) > 0 {
+		p.TypeSafeQuestions = o.TypeSafeQuestions
+	}
 	if o.SchemaStrictness != "" {
 		p.SchemaStrictness = o.SchemaStrictness
 	}

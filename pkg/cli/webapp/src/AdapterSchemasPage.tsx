@@ -23,6 +23,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   google: "Google",
   deepseek: "DeepSeek",
+  jev: "Jev",
 };
 
 export function AdapterSchemasPage({

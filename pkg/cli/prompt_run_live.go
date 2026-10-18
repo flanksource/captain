@@ -141,7 +141,7 @@ func remoteWorkflowProvider(req *ai.Request, cfg ai.Config) (ai.Provider, error)
 	if err != nil || remote == nil {
 		return nil, err
 	}
-	wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithSchemaValidation(cfg))
+	wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
 	if err != nil {
 		closeProvider(remote)
 		return nil, err

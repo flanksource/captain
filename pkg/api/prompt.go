@@ -24,12 +24,16 @@ type Prompt struct {
 	Schema any `json:"-" yaml:"-" pretty:"-"`
 	// SchemaJSON is a pre-built JSON Schema (e.g. from a .prompt frontmatter
 	// output block or a caller-generated schema) that the response must conform
-	// to. Unlike Schema it is sent to the model verbatim — never reflected from a
-	// Go type and never round-tripped through JSONSchema — so it preserves the
+	// to. Unlike Schema it is never reflected from a Go type or round-tripped
+	// through JSONSchema. Providers receive it according to their native contract, preserving the
 	// full JSON Schema vocabulary (minItems, maxLength, …). When set, the raw JSON
 	// reply is also left on Response.Text for tolerant callers. Schema and
 	// SchemaJSON are mutually exclusive.
-	SchemaJSON json.RawMessage `json:"schemaJSON,omitempty" yaml:"schemaJSON,omitempty" pretty:"-"`
+	SchemaJSON        json.RawMessage `json:"schemaJSON,omitempty" yaml:"schemaJSON,omitempty" pretty:"-"`
+	InputSchemaType   SchemaType      `json:"inputSchemaType,omitempty" yaml:"inputSchemaType,omitempty" pretty:"-"`
+	InputSchemaJSON   json.RawMessage `json:"inputSchemaJSON,omitempty" yaml:"inputSchemaJSON,omitempty" pretty:"-"`
+	OutputSchemaType  SchemaType      `json:"outputSchemaType,omitempty" yaml:"outputSchemaType,omitempty" pretty:"-"`
+	TypeSafeQuestions json.RawMessage `json:"typeSafeQuestions,omitempty" yaml:"typeSafeQuestions,omitempty" pretty:"-"`
 	// SchemaStrictness governs how a response that fails JSON-schema validation is
 	// handled: "" uses the runtime default (Anthropic structured output retries,
 	// others skip post-validation); "none" always skips; "warning" logs and
@@ -56,9 +60,10 @@ func (p Prompt) CacheIdentity() string {
 	return identity.String()
 }
 
-// HasSchema reports whether the prompt requests structured output by either
-// mechanism (a reflected Go struct or a pre-built JSON schema).
-func (p Prompt) HasSchema() bool { return p.Schema != nil || len(p.SchemaJSON) > 0 }
+// HasSchema reports whether the prompt requests structured output.
+func (p Prompt) HasSchema() bool {
+	return p.Schema != nil || len(p.SchemaJSON) > 0 || len(p.TypeSafeQuestions) > 0
+}
 
 // Validate requires prompt text or at least one attachment.
 func (p Prompt) Validate() error {
@@ -69,6 +74,19 @@ func (p Prompt) Validate() error {
 		if err := attachment.Validate(); err != nil {
 			return fmt.Errorf("attachment %d: %w", i+1, err)
 		}
+	}
+	if err := p.InputSchemaType.ValidateInput(); err != nil {
+		return err
+	}
+	if err := p.OutputSchemaType.ValidateOutput(); err != nil {
+		return err
+	}
+	if p.OutputSchemaType == SchemaTypeTypeSafe {
+		if len(p.TypeSafeQuestions) == 0 || p.Schema != nil || len(p.SchemaJSON) > 0 {
+			return fmt.Errorf("typesafe-schema requires TypeSafe questions and excludes JSON Schema output")
+		}
+	} else if len(p.TypeSafeQuestions) > 0 {
+		return fmt.Errorf("TypeSafe questions require outputSchemaType typesafe-schema")
 	}
 	if err := p.SchemaStrictness.Validate(); err != nil {
 		return err

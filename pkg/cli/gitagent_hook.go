@@ -113,7 +113,7 @@ func hookJudgeProvider(runtime gitagent.HookRuntime) (ai.Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create hook judge: %w", err)
 	}
-	wrapped, err := middleware.Wrap(provider, middleware.WithLogging(), middleware.WithSchemaValidation(cfg))
+	wrapped, err := middleware.Wrap(provider, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
 	if err != nil {
 		closeProvider(provider)
 		return nil, fmt.Errorf("wrap hook judge: %w", err)

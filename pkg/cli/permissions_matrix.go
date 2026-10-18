@@ -23,7 +23,7 @@ import (
 type PermissionsMatrixOptions struct {
 	// Provider takes no shorthand: -p is provenance's here, and this command's
 	// axis of interest is the policy source rather than the family.
-	Provider   string `flag:"provider" help:"Restrict the matrix to one provider: anthropic|openai|google|deepseek"`
+	Provider   string `flag:"provider" help:"Restrict the matrix to one provider: anthropic|openai|google|deepseek|jev"`
 	Mode       string `flag:"mode" help:"Restrict the matrix to one runtime mode: api|agent|cli|cmux"`
 	Provenance string `flag:"provenance" help:"Tool-policy source to show: agent, caller, or mcp" default:"agent" short:"p"`
 	Notes      bool   `flag:"notes" help:"Print the caveat attached to each approximated or unsupported cell" short:"n"`
