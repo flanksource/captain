@@ -269,6 +269,8 @@ type AgentCommandOpts struct {
 	Directories []string
 	// Effort maps onto claude --effort or Codex's model_reasoning_effort config.
 	Effort api.Effort
+	// ConfigOverrides are codex `-c` values, one flag each. claude ignores them.
+	ConfigOverrides []string
 	// Memory drives claude --bare / --disable-slash-commands / --setting-sources
 	// (from Spec.Memory). codex ignores it.
 	Memory api.Memory
@@ -306,6 +308,9 @@ func AgentCommand(opts AgentCommandOpts) string {
 		}
 		if opts.Effort != api.EffortNone {
 			tokens = append(tokens, "-c", fmt.Sprintf("model_reasoning_effort=%q", opts.Effort))
+		}
+		for _, override := range opts.ConfigOverrides {
+			tokens = append(tokens, "-c", override)
 		}
 		if extra, ok := opts.Extra.(*api.CodexCmuxOptions); ok && extra != nil {
 			merged := *extra

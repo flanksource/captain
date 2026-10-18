@@ -1,6 +1,10 @@
 package approval
 
-import "context"
+import (
+	"context"
+
+	"github.com/flanksource/captain/pkg/api"
+)
 
 type (
 	TerminalPrompt = terminalPrompt
@@ -19,4 +23,9 @@ const (
 // form, so specs can answer without a TTY.
 func NewTestTerminal(suspend func() func(), ask func(context.Context, TerminalPrompt) (TerminalChoice, error)) *Terminal {
 	return newTerminal(suspend, ask)
+}
+
+// SetTestAnswerer replaces the terminal's question form with answer.
+func SetTestAnswerer(t *Terminal, answer func(context.Context, api.TerminalQuestion) (any, error)) {
+	t.answer = answer
 }

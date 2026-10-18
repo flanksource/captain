@@ -56,6 +56,31 @@ func announceApprovals(in *Input) {
 	})
 }
 
+// bindToolApprovals gives every caller-tool handler the run's final approval
+// callback through its context (api.ApprovalFuncFrom), so a tool can ask the
+// run's broker a question of its own. It runs after the callback is bound and
+// decorated; a run without one leaves the handlers untouched.
+func bindToolApprovals(in *Input) error {
+	binding, err := in.Config.Approvals()
+	if err != nil {
+		return fmt.Errorf("promptrun: %w", err)
+	}
+	if binding.Func == nil || len(in.Config.Tools) == 0 {
+		return nil
+	}
+	tools := make([]api.ToolDefinition, len(in.Config.Tools))
+	for i, tool := range in.Config.Tools {
+		if handler := tool.Handler; handler != nil {
+			tool.Handler = func(ctx context.Context, input map[string]any) (any, error) {
+				return handler(api.WithApprovalFunc(ctx, binding.Func), input)
+			}
+		}
+		tools[i] = tool
+	}
+	in.Config.Tools = tools
+	return nil
+}
+
 func bindApprovals(ctx context.Context, in *Input, rec *recorder) error {
 	if in.Approvals == nil {
 		return nil

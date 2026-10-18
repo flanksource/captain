@@ -17,6 +17,22 @@ import (
 // A request the run's permission policy denies never reaches the callback.
 type ApprovalFunc func(ctx context.Context, req ApprovalRequest) (ApprovalDecision, error)
 
+type approvalFuncKey struct{}
+
+// WithApprovalFunc hands a run's approval callback to the caller-tool handlers
+// it dispatches, so a tool can put its own request — a question, typically — to
+// the same person or broker the run's tool approvals go to.
+func WithApprovalFunc(ctx context.Context, fn ApprovalFunc) context.Context {
+	return context.WithValue(ctx, approvalFuncKey{}, fn)
+}
+
+// ApprovalFuncFrom is the run's approval callback, when the caller-tool call
+// was dispatched by a run that has one.
+func ApprovalFuncFrom(ctx context.Context) (ApprovalFunc, bool) {
+	fn, ok := ctx.Value(approvalFuncKey{}).(ApprovalFunc)
+	return fn, ok && fn != nil
+}
+
 // ApprovalKind discriminates the payload an ApprovalRequest carries.
 type ApprovalKind string
 

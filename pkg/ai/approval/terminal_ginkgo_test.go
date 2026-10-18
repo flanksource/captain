@@ -146,16 +146,61 @@ var _ = Describe("Terminal approval broker", func() {
 		Expect(prompter.prompts()[0].Choices).To(Equal([]approval.TerminalChoice{approval.ChoiceAllowOnce, approval.ChoiceDeny}))
 	})
 
-	It("refuses a question it cannot answer, naming the kind", func(ctx SpecContext) {
-		prompter := &scriptedPrompter{}
-		terminal := approval.NewTestTerminal(nil, prompter.ask)
+	Describe("questions", func() {
+		questions := []api.TerminalQuestion{
+			{Text: "Which fixture?", Options: []string{"policy.yaml", "rules.yaml"}},
+			{Text: "Which labels?", Options: []string{"api", "ui"}, MultiSelect: true},
+		}
+		request := api.ApprovalRequest{Kind: api.ApprovalKindQuestion, Tool: "todo_ask", Questions: questions}
 
-		_, err := terminal.OnApproval(ctx, api.ApprovalRequest{
-			Kind: api.ApprovalKindQuestion, Tool: "AskUserQuestion",
-			Questions: []api.TerminalQuestion{{Text: "Which fixture?"}},
+		It("approves with every answer keyed by its 1-based index, suspending output around the form", func(ctx SpecContext) {
+			var events []string
+			terminal := approval.NewTestTerminal(func() func() {
+				events = append(events, "suspend")
+				return func() { events = append(events, "resume") }
+			}, (&scriptedPrompter{}).ask)
+			replies := []any{"rules.yaml", []string{"api", "ui"}}
+			approval.SetTestAnswerer(terminal, func(_ context.Context, question api.TerminalQuestion) (any, error) {
+				events = append(events, "ask "+question.Text)
+				reply := replies[0]
+				replies = replies[1:]
+				return reply, nil
+			})
+
+			decision, err := terminal.OnApproval(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(decision).To(Equal(api.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{
+				"answers": map[string]any{"1": "rules.yaml", "2": []string{"api", "ui"}},
+			}}))
+			Expect(events).To(Equal([]string{"suspend", "ask Which fixture?", "ask Which labels?", "resume"}))
 		})
-		Expect(err).To(MatchError(ContainSubstring("question")))
-		Expect(prompter.prompts()).To(BeEmpty())
+
+		It("fails the request when a question is left unanswered", func(ctx SpecContext) {
+			terminal := approval.NewTestTerminal(nil, (&scriptedPrompter{}).ask)
+			approval.SetTestAnswerer(terminal, func(context.Context, api.TerminalQuestion) (any, error) {
+				return nil, errors.New("operator aborted the form")
+			})
+
+			_, err := terminal.OnApproval(ctx, request)
+			Expect(err).To(MatchError(ContainSubstring(`asking "Which fixture?": operator aborted the form`)))
+		})
+
+		It("refuses a list answer to a single-choice question rather than approving it", func(ctx SpecContext) {
+			terminal := approval.NewTestTerminal(nil, (&scriptedPrompter{}).ask)
+			approval.SetTestAnswerer(terminal, func(context.Context, api.TerminalQuestion) (any, error) {
+				return []string{"policy.yaml", "rules.yaml"}, nil
+			})
+
+			_, err := terminal.OnApproval(ctx, request)
+			Expect(err).To(MatchError(ContainSubstring("takes one answer")))
+		})
+
+		It("refuses questions when it was built without a question form", func(ctx SpecContext) {
+			terminal := approval.NewTestTerminal(nil, (&scriptedPrompter{}).ask)
+
+			_, err := terminal.OnApproval(ctx, request)
+			Expect(err).To(MatchError(ContainSubstring("no question form")))
+		})
 	})
 
 	It("suspends live output around the prompt", func(ctx SpecContext) {

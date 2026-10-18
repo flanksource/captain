@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/flanksource/captain/pkg/api"
 	"golang.org/x/term"
@@ -36,6 +37,9 @@ type Terminal struct {
 	// allowed holds the tools the operator allowed for the rest of the run.
 	// It is only touched while holding turn.
 	allowed map[string]bool
+	// answer asks the operator one question and returns their answer: a string,
+	// or a []string for a multi-select question.
+	answer func(context.Context, api.TerminalQuestion) (any, error)
 }
 
 // NewTerminal builds a Terminal over opts. It fails when In is not a terminal:
@@ -47,7 +51,48 @@ func NewTerminal(opts TerminalOptions) (*Terminal, error) {
 	if opts.Out == nil {
 		return nil, errors.New("approval: terminal broker needs an output to draw on")
 	}
-	return newTerminal(opts.Suspend, huhPrompter(opts.In, opts.Out)), nil
+	terminal := newTerminal(opts.Suspend, huhPrompter(opts.In, opts.Out))
+	terminal.answer = huhQuestioner(opts.In, opts.Out)
+	return terminal, nil
+}
+
+// answerQuestions asks each question in order and approves the request with
+// the answers keyed by 1-based index, the identity every question has. A
+// question the operator leaves unanswered fails the request rather than
+// approving it with a gap.
+func (t *Terminal) answerQuestions(ctx context.Context, req api.ApprovalRequest) (api.ApprovalDecision, error) {
+	if t.answer == nil {
+		return api.ApprovalDecision{}, fmt.Errorf("approval: the terminal broker has no question form for %q", req.Tool)
+	}
+	select {
+	case t.turn <- struct{}{}:
+	case <-ctx.Done():
+		return api.ApprovalDecision{}, fmt.Errorf("approval: waiting to ask %q's questions: %w", req.Tool, ctx.Err())
+	}
+	defer func() { <-t.turn }()
+	if t.suspend != nil {
+		resume := t.suspend()
+		if resume == nil {
+			return api.ApprovalDecision{}, errors.New("approval: terminal suspend returned no resume")
+		}
+		defer resume()
+	}
+	answers := make(map[string]any, len(req.Questions))
+	for i, question := range req.Questions {
+		value, err := t.answer(ctx, question)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return api.ApprovalDecision{}, fmt.Errorf("approval: asking %q: %w", question.Text, ctxErr)
+		}
+		if err != nil {
+			return api.ApprovalDecision{}, fmt.Errorf("approval: asking %q: %w", question.Text, err)
+		}
+		answers[strconv.Itoa(i+1)] = value
+	}
+	decision := api.ApprovalDecision{Allow: true, UpdatedInput: map[string]any{"answers": answers}}
+	if err := decision.Validate(req); err != nil {
+		return api.ApprovalDecision{}, fmt.Errorf("approval: %w", err)
+	}
+	return decision, nil
 }
 
 func newTerminal(suspend func() func(), ask func(context.Context, terminalPrompt) (terminalChoice, error)) *Terminal {
@@ -58,6 +103,9 @@ func newTerminal(suspend func() func(), ask func(context.Context, terminalPrompt
 func (t *Terminal) OnApproval(ctx context.Context, req api.ApprovalRequest) (api.ApprovalDecision, error) {
 	if err := req.Validate(); err != nil {
 		return api.ApprovalDecision{}, fmt.Errorf("approval: %w", err)
+	}
+	if req.Kind == api.ApprovalKindQuestion {
+		return t.answerQuestions(ctx, req)
 	}
 	prompt, err := buildTerminalPrompt(req)
 	if err != nil {

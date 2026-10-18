@@ -48,7 +48,7 @@ var _ = Describe("RuntimeCatalog", func() {
 		for i, f := range families {
 			names[i] = f.Family
 		}
-		Expect(names).To(ConsistOf("claude", "codex", "gemini", "deepseek"))
+		Expect(names).To(ConsistOf("claude", "codex", "gemini", "deepseek", "jev"))
 
 		// Runtime.Provider is the provider key ("google"), which is what the
 		// catalog buckets on and what runtimesOf reads. The family label ("gemini")
@@ -105,6 +105,9 @@ var _ = Describe("RuntimeCatalog", func() {
 
 		deepseek := familyNamed(api.RuntimeCatalog(), "deepseek")
 		Expect(modeNamed(deepseek, "api").CatalogProvider).To(Equal("deepseek"))
+
+		jev := familyNamed(api.RuntimeCatalog(), "jev")
+		Expect(modeNamed(jev, "api").CatalogProvider).To(Equal("jev"))
 	})
 
 	It("marks only cmux modes keyless", func() {

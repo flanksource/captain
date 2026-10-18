@@ -117,16 +117,29 @@ var _ = Describe("promptrun.Preflight caller tools", func() {
 		Entry("openai agent", "gpt-5.4"),
 	)
 
+	DescribeTable("admits caller tools on the cli and cmux runtimes, which serve them over a run-scoped MCP server",
+		func(model string, mode api.RuntimeMode) {
+			in.Config.OnApproval = broker
+			in.Resolved.Spec.Model = api.Model{Name: model, Mode: mode}
+			_, err := promptrun.Preflight(in)
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("anthropic cli", "sonnet", api.ModeCLI),
+		Entry("anthropic cmux", "sonnet", api.ModeCmux),
+		Entry("openai cli", "gpt-5.4", api.ModeCLI),
+		Entry("openai cmux", "gpt-5.4", api.ModeCmux),
+	)
+
 	It("refuses caller tools on a runtime that cannot expose them, naming it", func() {
 		in.Config.OnApproval = broker
-		in.Resolved.Spec.Mode = api.ModeCLI
-		expectRefused(`runtime "anthropic cli" cannot expose caller tools`)
+		in.Resolved.Spec.Model = api.Model{Name: "gemini-2.5-pro", Mode: api.ModeCLI}
+		expectRefused(`runtime "google cli" cannot expose caller tools`)
 	})
 
 	It("checks every fallback candidate, not only the primary model", func() {
 		in.Config.OnApproval = broker
-		in.Resolved.Spec.Fallbacks = []api.Model{{Name: "sonnet", Mode: api.ModeCLI}}
-		expectRefused(`runtime "anthropic cli" cannot expose caller tools`)
+		in.Resolved.Spec.Fallbacks = []api.Model{{Name: "gemini-2.5-pro", Mode: api.ModeCLI}}
+		expectRefused(`runtime "google cli" cannot expose caller tools`)
 	})
 
 	It("fires none of the caller-tool checks for a run with no caller tools", func() {
