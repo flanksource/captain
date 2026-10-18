@@ -21,6 +21,8 @@ var _ = Describe("current preferred models", func() {
 		Entry("Claude Opus", Anthropic, ModeAPI, "opus", "claude-opus-5-5"),
 		Entry("Claude Sonnet", Anthropic, ModeAPI, "sonnet", "claude-sonnet-5-5"),
 		Entry("DeepSeek", DeepSeek, ModeAPI, "deepseek", "deepseek-flash"),
+		Entry("Gemini API", Google, ModeAPI, "gemini", "gemini-3.8-flash"),
+		Entry("Gemini CLI", Google, ModeCLI, "gemini", "gemini-3.8-flash"),
 	)
 
 	DescribeTable("publishes preferred models with current list prices", func(provider *Provider, id string, priority int, cost ModelCost) {
@@ -36,10 +38,13 @@ var _ = Describe("current preferred models", func() {
 		Entry("Opus", Anthropic, "claude-opus-5-5", 1, ModelCost{Input: 4, Output: 20, CacheRead: 0.2, CacheWrite: 5}),
 		Entry("Sonnet", Anthropic, "claude-sonnet-5-5", 0, ModelCost{Input: 2, Output: 10, CacheRead: 0.1, CacheWrite: 2.5}),
 		Entry("Flash", DeepSeek, "deepseek-flash", 1, ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.003}),
+		Entry("DeepSeek V4 Pro", DeepSeek, "deepseek-v4-pro", 0, ModelCost{Input: 0.66, Output: 1.98, CacheRead: 0.022}),
+		Entry("Gemini 3.8 Flash", Google, "gemini-3.8-flash", 1, ModelCost{Input: 0.75, Output: 3.75, CacheRead: 0.075}),
+		Entry("Gemini 4 Argon", Google, "gemini-4-argon", 2, ModelCost{Input: 2, Output: 10, CacheRead: 0.1}),
 	)
 
 	It("keeps older generations available without preferring them", func() {
-		for _, id := range []string{"gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8"} {
+		for _, id := range []string{"gpt-6-sol", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"} {
 			provider, err := ProviderFor(id)
 			Expect(err).NotTo(HaveOccurred())
 			model, ok := provider.Lookup(id)

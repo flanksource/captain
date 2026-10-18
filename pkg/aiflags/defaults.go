@@ -149,7 +149,7 @@ func DefaultModelFor(p *registry.Provider, mode registry.RuntimeMode) string {
 		}
 		return "gpt-5.6"
 	case registry.Google.Name:
-		return "gemini-3.5-flash"
+		return "gemini-3.8-flash"
 	case registry.DeepSeek.Name:
 		// The reasoning-tuned member of the current line. "deepseek-reasoner" was
 		// the previous generation's id and is no longer in the catalog, so it
