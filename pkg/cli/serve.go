@@ -215,6 +215,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	// /tasks/runs/stream run-list SSE the clicky-ui useTaskRuns hook subscribes to.
 	task.RegisterHandlers(route.NewRouter(mux), "/api/captain")
 	// Live session history and controls for a prompt run.
+	mux.HandleFunc("GET /api/captain/prompt/names", handleNamedPrompts)
 	mux.Handle("/api/captain/prompt/runs/", http.StripPrefix("/api/captain/prompt/runs", PromptRunHandler()))
 	mux.Handle("/api/captain/sessions/", http.StripPrefix("/api/captain/sessions", SessionHandler()))
 	chatHandler := chat.Handler()

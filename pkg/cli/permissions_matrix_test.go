@@ -91,13 +91,15 @@ func TestPermissionsMatrixCells(t *testing.T) {
 		{"openai agent cannot deny a built-in", agent, "tool deny", "openai agent", "✗"},
 		{"openai agent can deny a caller tool", caller, "tool deny", "openai agent", "✓"},
 		{"anthropic cli can deny a built-in", agent, "tool deny", "anthropic cli", "✓"},
-		{"anthropic cli serves no caller tools", caller, "tool deny", "anthropic cli", "✗"},
+		{"anthropic cli can deny a caller tool", caller, "tool deny", "anthropic cli", "✓"},
+		{"google cli serves no caller tools", caller, "tool deny", "google cli", "✗"},
 		{"ask needs a broker where caller tools exist", caller, "tool ask", "anthropic agent", "?"},
 
 		// The resource axis is asymmetric in both directions.
 		{"anthropic cli silences MCP", agent, "mcp disabled", "anthropic cli", "✓"},
 		{"anthropic agent silences MCP but keeps caller tools", agent, "mcp disabled", "anthropic agent", "✓"},
-		{"anthropic cmux does not", agent, "mcp disabled", "anthropic cmux", "✗"},
+		{"anthropic cmux silences MCP but keeps caller tools", agent, "mcp disabled", "anthropic cmux", "✓"},
+		{"google cli does not", agent, "mcp disabled", "google cli", "✗"},
 		{"no runtime enables MCP per server", agent, "mcp enabled", "openai agent", "✗"},
 		{"only anthropic cli loads skills", agent, "skills enabled", "anthropic cli", "✓"},
 		{"captain omits a disabled skill before dispatch", agent, "skills disabled", "anthropic cli", "✓"},

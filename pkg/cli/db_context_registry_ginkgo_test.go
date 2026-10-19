@@ -2,6 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"time"
@@ -97,6 +100,41 @@ var _ = Describe("Database context registry", Serial, func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(sessionProviderIDs(result)).To(ConsistOf("secondary-session"))
+	})
+
+	It("lists named prompts only from the selected database context", func(ctx SpecContext) {
+		for _, item := range []struct {
+			db   *database.DB
+			name string
+		}{
+			{defaultDB, "default-prompt"},
+			{secondaryDB, "consumer-prompt"},
+		} {
+			session, err := item.db.CreateOrGetSession(ctx, database.CreateSessionInput{Source: "gavel", ProviderSessionID: item.name})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = item.db.CreatePromptRun(ctx, database.CreatePromptRunInput{SessionID: session.ID, Origin: "gavel.todos", SpecProfile: item.name})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		for _, item := range []struct {
+			context string
+			want    string
+		}{
+			{"", "default-prompt"},
+			{secondaryContext, "consumer-prompt"},
+		} {
+			req := httptest.NewRequest(http.MethodGet, "/api/captain/prompt/names", nil)
+			if item.context != "" {
+				req.AddCookie(&http.Cookie{Name: databaseContextCookie, Value: item.context})
+			}
+			response := httptest.NewRecorder()
+			DatabaseContextMiddleware(http.HandlerFunc(handleNamedPrompts)).ServeHTTP(response, req)
+			Expect(response.Code).To(Equal(http.StatusOK))
+			var names []database.NamedPrompt
+			Expect(json.Unmarshal(response.Body.Bytes(), &names)).To(Succeed())
+			Expect(names).To(HaveLen(1))
+			Expect(names[0].Name).To(Equal(item.want))
+		}
 	})
 
 	It("reports the active context's database identity, not the default's", func(ctx SpecContext) {

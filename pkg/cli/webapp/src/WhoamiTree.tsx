@@ -155,8 +155,7 @@ function AvailabilityCheckbox({
 }
 
 export function ProviderGlyph({ provider }: { provider: string }) {
-  const Glyph = provider === "jev" ? UiRobotAi : providerIcon(provider);
-  if (!Glyph) throw new Error(`No provider icon is registered for ${provider}`);
+  const Glyph = providerIcon(provider) ?? UiRobotAi;
   return <Glyph className={cn("size-4 shrink-0", providerIconColor(provider))} aria-hidden="true" />;
 }
 

@@ -15,7 +15,7 @@ import (
 
 var geminiCLICommand = "gemini"
 
-const geminiCLIDefaultModel = "gemini-3.5-flash"
+const geminiCLIDefaultModel = "gemini-3.8-flash"
 
 type GeminiCLI struct {
 	model   string

@@ -7,14 +7,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/callertools"
 	history "github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/commons-db/shell"
+	"github.com/flanksource/commons-db/types"
 )
 
 var codexCLICommand = "codex"
@@ -23,6 +27,7 @@ type CodexCLI struct {
 	model   string
 	apiURL  string
 	sandbox *api.SandboxConfig
+	cfg     ai.Config
 }
 
 func NewCodexCLI(cfg ai.Config) *CodexCLI {
@@ -34,11 +39,15 @@ func NewCodexCLI(cfg ai.Config) *CodexCLI {
 		model:   model,
 		apiURL:  strings.TrimSpace(cfg.APIURL),
 		sandbox: cfg.ResolvedSandbox(),
+		cfg:     cfg,
 	}
 }
 
-func (c *CodexCLI) GetModel() string       { return c.model }
-func (c *CodexCLI) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI) }
+func (c *CodexCLI) GetModel() string          { return c.model }
+func (c *CodexCLI) GetRuntime() ai.Runtime    { return ai.RuntimeOf(ai.OpenAI, ai.ModeCLI) }
+func (c *CodexCLI) SupportsCallerTools() bool { return true }
+
+var _ api.ToolCapableProvider = (*CodexCLI)(nil)
 
 func (c *CodexCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
@@ -65,9 +74,23 @@ func (c *CodexCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 }
 
 func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
-	args, cleanup, err := buildCodexCLIArgs(codexCLIConfig{Model: c.model, APIURL: c.apiURL}, req)
+	callerTools, err := callertools.StartCLI(ctx, c.cfg, req)
 	if err != nil {
+		return nil, fmt.Errorf("codex-cli: %w", err)
+	}
+	args, removeArgFiles, err := buildCodexCLIArgs(codexCLIConfig{Model: c.model, APIURL: c.apiURL, CallerTools: callerTools}, req)
+	cleanup := func() {
+		removeArgFiles()
+		if err := callerTools.Close(); err != nil {
+			log.Warnf("codex-cli: close caller tools: %v", err)
+		}
+	}
+	if err != nil {
+		cleanup()
 		return nil, err
+	}
+	if callerTools != nil {
+		req.Setup = setupWithEnv(req.Setup, callerTools.CodexEnv())
 	}
 	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, codexCLICommand, args, []byte(composePrompt(req)), &req, c.sandbox)
 	if err != nil {
@@ -104,6 +127,41 @@ func (c *CodexCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 type codexCLIConfig struct {
 	Model  string
 	APIURL string
+	// CallerTools is the caller-tool server the process connects to; its
+	// credential reaches codex through the environment (CodexEnv), not argv.
+	CallerTools *callertools.CLIRun
+}
+
+// codexMCPOverrides registers the caller-tool server, and under mcp.disabled
+// replaces every configured server with it — or with none.
+func codexMCPOverrides(req ai.Request, callerTools *callertools.CLIRun) ([]string, error) {
+	if callerTools == nil {
+		if req.Permissions.MCP.Disabled {
+			return []string{"-c", "mcp_servers={}"}, nil
+		}
+		return nil, nil
+	}
+	override, err := callerTools.CodexConfig(req.Permissions.MCP.Disabled)
+	if err != nil {
+		return nil, err
+	}
+	return []string{"-c", override}, nil
+}
+
+// setupWithEnv returns a copy of setup whose resolved and declared
+// environment also carry env, leaving the caller's setup untouched.
+func setupWithEnv(setup *shell.Setup, env []string) *shell.Setup {
+	out := shell.Setup{}
+	if setup != nil {
+		out = *setup
+	}
+	out.Env = append(slices.Clone(out.Env), env...)
+	out.EnvVars = slices.Clone(out.EnvVars)
+	for _, item := range env {
+		name, _, _ := strings.Cut(item, "=")
+		out.EnvVars = append(out.EnvVars, types.EnvVar{Name: name})
+	}
+	return &out
 }
 
 // codexOverrideProvider names the ad-hoc model provider captain declares when a
@@ -173,6 +231,11 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	for _, config := range translation.ConfigArgs() {
 		args = append(args, "-c", config)
 	}
+	mcpOverrides, err := codexMCPOverrides(req, cfg.CallerTools)
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("codex-cli: %w", err)
+	}
+	args = append(args, mcpOverrides...)
 	if req.Memory.SkipMemory || req.Memory.Bare || req.Permissions.HasPreset(api.PresetBare) {
 		args = append(args, "--ephemeral")
 	}

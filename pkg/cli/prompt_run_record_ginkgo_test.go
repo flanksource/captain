@@ -61,6 +61,7 @@ var _ = Describe("recording a captain prompt run", func() {
 	})
 
 	It("files a fresh run on a captain session of its own with the plain spec and its resolution", func(ctx SpecContext) {
+		rendered.ID = encodePromptID("local", "test-source", "fix-bug.prompt")
 		providerSessionID := uuid.NewString()
 		Expect(recordCompletedRun(ctx, promptRecordingInput{Rendered: rendered, RunID: "run-1"},
 			answeredRun(rendered, agentRun, providerSessionID, "done"))).To(Succeed())
@@ -79,6 +80,7 @@ var _ = Describe("recording a captain prompt run", func() {
 		Expect(run.State).To(Equal(database.PromptRunStateSucceeded))
 		Expect(run.ResultText).To(Equal("done"))
 		Expect(run.Origin).To(Equal("captain"))
+		Expect(run.SpecProfile).To(Equal("fix-bug"))
 		Expect(run.AdmissionKey).To(Equal("run-1"))
 		Expect(run.PromptMarkdown).To(Equal("fix the failing test"))
 		Expect(run.ExecutionSessionID).To(Equal(&transcript.ID))
@@ -113,6 +115,7 @@ var _ = Describe("recording a captain prompt run", func() {
 		runs := runsOn(db, resumed.ID)
 		Expect(runs).To(HaveLen(1))
 		Expect(runs[0].ExecutionSessionID).To(Equal(&resumed.ID), "the continuation ran in the transcript it was admitted on")
+		Expect(runs[0].SpecProfile).To(BeEmpty(), "an unnamed continuation is not a saved prompt")
 	})
 
 	It("files every iteration and a cancelled state for a stopped run", func(ctx SpecContext) {

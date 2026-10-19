@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/callertools"
 	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
@@ -18,17 +20,22 @@ var claudeCLICommand = "claude"
 type ClaudeCLI struct {
 	model   string
 	sandbox *api.SandboxConfig
+	cfg     ai.Config
 }
 
-func NewClaudeCLI(model string) *ClaudeCLI {
+func NewClaudeCLI(cfg ai.Config) *ClaudeCLI {
+	model := cfg.Model.Name
 	if strings.TrimSpace(model) == "" {
 		model = "opus"
 	}
-	return &ClaudeCLI{model: model}
+	return &ClaudeCLI{model: model, sandbox: cfg.ResolvedSandbox(), cfg: cfg}
 }
 
-func (c *ClaudeCLI) GetModel() string       { return c.model }
-func (c *ClaudeCLI) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeCLI) }
+func (c *ClaudeCLI) GetModel() string          { return c.model }
+func (c *ClaudeCLI) GetRuntime() ai.Runtime    { return ai.RuntimeOf(ai.Anthropic, ai.ModeCLI) }
+func (c *ClaudeCLI) SupportsCallerTools() bool { return true }
+
+var _ api.ToolCapableProvider = (*ClaudeCLI)(nil)
 
 func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
@@ -56,8 +63,19 @@ func (c *ClaudeCLI) Execute(ctx context.Context, req ai.Request) (*ai.Response, 
 
 func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
 	capture := observation.RuntimeCaptureFromContext(ctx)
-	args, cleanup, err := buildClaudeCLIArgsWithMCP(c.model, req, capture.MCPConfigs)
+	callerTools, err := callertools.StartCLI(ctx, c.cfg, req)
 	if err != nil {
+		return nil, fmt.Errorf("claude-cli: %w", err)
+	}
+	args, removeArgFiles, err := buildClaudeCLIArgsWithMCP(c.model, req, capture.MCPConfigs, callerTools)
+	cleanup := func() {
+		removeArgFiles()
+		if err := callerTools.Close(); err != nil {
+			log.Warnf("claude-cli: close caller tools: %v", err)
+		}
+	}
+	if err != nil {
+		cleanup()
 		return nil, err
 	}
 	cmd, stdout, stderrBuf, closeSandbox, err := startCLIStream(ctx, claudeCLICommand, args, []byte(composePrompt(req)), &req, c.sandbox)
@@ -88,10 +106,14 @@ func (c *ClaudeCLI) ExecuteStream(ctx context.Context, req ai.Request) (<-chan a
 }
 
 func buildClaudeCLIArgs(model string, req ai.Request) ([]string, func(), error) {
-	return buildClaudeCLIArgsWithMCP(model, req, nil)
+	return buildClaudeCLIArgsWithMCP(model, req, nil, nil)
 }
 
-func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string) ([]string, func(), error) {
+// buildClaudeCLIArgsWithMCP renders argv. callerTools, when non-nil, is the
+// caller-tool server the process connects to: its config file joins
+// --mcp-config and its tools are pre-approved, since ask tools are gated by
+// the server's own approval broker.
+func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string, callerTools *callertools.CLIRun) ([]string, func(), error) {
 	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
 	cleanup := func() {}
 	// claude-cli advertises tool-policy support, but only for allow/deny: the
@@ -128,7 +150,11 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 		log.Warnf("%s", warning)
 	}
 	tools := permissions.Tools
-	if allow := tools.AllowList(); len(allow) > 0 {
+	allow := tools.AllowList()
+	if callerTools != nil {
+		allow = append(allow, callerTools.ClaudeAllowedTools()...)
+	}
+	if len(allow) > 0 {
 		args = append(args, "--allowedTools", strings.Join(allow, ","))
 	}
 	if deny := tools.DenyList(); len(deny) > 0 {
@@ -151,12 +177,25 @@ func buildClaudeCLIArgsWithMCP(model string, req ai.Request, mcpConfigs []string
 	if req.Permissions.MCP.Disabled && len(mcpConfigs) > 0 {
 		return nil, cleanup, fmt.Errorf("claude-cli: explicit MCP configs conflict with disabled MCP")
 	}
-	if len(mcpConfigs) > 0 {
-		args = append(args, "--mcp-config")
-		args = append(args, mcpConfigs...)
+	configs := slices.Clone(mcpConfigs)
+	if callerTools != nil {
+		path, err := callerTools.ClaudeMCPConfigFile()
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("claude-cli: %w", err)
+		}
+		configs = append(configs, path)
+	}
+	// Explicit configs and mcp.disabled are strict; captain's own caller-tool
+	// server alone joins the ambient servers.
+	strict := len(mcpConfigs) > 0 || req.Permissions.MCP.Disabled
+	switch {
+	case len(configs) > 0:
+		args = append(append(args, "--mcp-config"), configs...)
+	case strict:
+		args = append(args, "--mcp-config", `{"mcpServers":{}}`)
+	}
+	if strict {
 		args = append(args, "--strict-mcp-config")
-	} else if req.Permissions.MCP.Disabled {
-		args = append(args, "--mcp-config", `{"mcpServers":{}}`, "--strict-mcp-config")
 	}
 	monitorBinary := ""
 	if binary, ok := captainBinary(); ok && api.MonitorHooksEnabled(req) {
