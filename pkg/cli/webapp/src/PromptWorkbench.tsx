@@ -36,6 +36,13 @@ import { PromptWorkbenchActions } from "./PromptWorkbenchActions";
 import { PromptHeader, PromptSidebar } from "./PromptSidebar";
 import { PromptDetailPane, type DetailTab } from "./PromptDetailPane";
 import { PromptCatalogView } from "./PromptCatalogView";
+import { ExecutedPromptView } from "./ExecutedPromptView";
+import {
+  executedPromptName,
+  fetchNamedPrompts,
+  namedPromptSummary,
+  type NamedPrompt,
+} from "./promptNames";
 import {
   SCRATCH_PROMPT,
   anyPromptDirty,
@@ -71,6 +78,7 @@ type PromptWorkbenchProps = {
 };
 
 const EMPTY_PROMPTS: PromptSummary[] = [];
+const EMPTY_NAMED_PROMPTS: NamedPrompt[] = [];
 const EMPTY_MODELS: ChatModel[] = [];
 const NO_DETAIL_STATES: PromptDetailStates = {};
 
@@ -109,12 +117,14 @@ function usePromptWorkbenchView({
       source,
       query,
     ],
-    queryFn: () =>
-      fetchPromptList(requiredOperation(promptOps.list, "list"), {
-        source,
-        query,
-      }),
-    enabled: Boolean(promptOps.list),
+    queryFn: () => source === "executed"
+      ? Promise.resolve([])
+      : fetchPromptList(requiredOperation(promptOps.list, "list"), { source, query }),
+    enabled: source === "executed" || Boolean(promptOps.list),
+  });
+  const namedQuery = useQuery({
+    queryKey: ["named-prompts"],
+    queryFn: fetchNamedPrompts,
   });
   const promptSchemaQuery = useQuery({
     queryKey: ["prompt-schema"],
@@ -123,16 +133,31 @@ function usePromptWorkbenchView({
   const whoamiCatalogQuery = useWhoamiCatalog();
   const runtimeProfiles = usePromptRuntimeProfiles();
   const prompts = listQuery.data ?? EMPTY_PROMPTS;
+  const namedPrompts = namedQuery.data ?? EMPTY_NAMED_PROMPTS;
+  const visibleNamedPrompts = useMemo(
+    () => source === "all" || source === "executed"
+      ? namedPrompts.filter((item) => item.name.toLowerCase().includes(query.trim().toLowerCase()))
+      : EMPTY_NAMED_PROMPTS,
+    [namedPrompts, source, query],
+  );
   const models = whoamiCatalogQuery.data?.models ?? EMPTY_MODELS;
   const runtimeCatalog = whoamiCatalogQuery.data?.runtimes;
   const activePromptId = selectedId;
+  const executedName = executedPromptName(activePromptId);
+  const selectedNamedPrompt = executedName
+    ? namedPrompts.find((item) => item.name === executedName)
+    : undefined;
 
   const selectedSummary = useMemo(
     () =>
-      activePromptId
-        ? prompts.find((prompt) => prompt.id === activePromptId)
-        : SCRATCH_PROMPT,
-    [prompts, activePromptId],
+      executedName
+        ? selectedNamedPrompt
+          ? namedPromptSummary(selectedNamedPrompt)
+          : { id: String(activePromptId), name: executedName, sourceKind: "executed" }
+        : activePromptId
+          ? prompts.find((prompt) => prompt.id === activePromptId)
+          : SCRATCH_PROMPT,
+    [prompts, activePromptId, executedName, selectedNamedPrompt],
   );
 
   const detailQuery = useQuery({
@@ -147,10 +172,10 @@ function usePromptWorkbenchView({
         requiredOperation(promptOps.get, "get"),
         String(activePromptId),
       ),
-    enabled: Boolean(promptOps.get && activePromptId),
+    enabled: Boolean(promptOps.get && activePromptId && !executedName),
   });
 
-  const detail = activePromptId ? detailQuery.data : SCRATCH_PROMPT;
+  const detail = executedName ? undefined : activePromptId ? detailQuery.data : SCRATCH_PROMPT;
   const selected = detail ?? selectedSummary;
   const selectedDetailState = promptDetailStateFor(detailStates, detail);
   const effectiveRuntime = promptRuntimeForDisplay(selectedDetailState.runRequest, selectedDetailState.previewResult);
@@ -218,7 +243,8 @@ function usePromptWorkbenchView({
 
   async function refreshAll() {
     await listQuery.refetch();
-    if (activePromptId) await detailQuery.refetch();
+    await namedQuery.refetch();
+    if (activePromptId && !executedName) await detailQuery.refetch();
   }
 
   function selectRun(id: string | undefined) {
@@ -368,9 +394,10 @@ function usePromptWorkbenchView({
             onSourceChange={setSource}
             onQueryChange={setQuery}
             prompts={prompts}
+            executedPrompts={visibleNamedPrompts}
             selected={selected}
-            loading={listQuery.isLoading || operationsLoading}
-            error={listQuery.error ?? operationsError}
+            loading={listQuery.isLoading || namedQuery.isLoading || operationsLoading}
+            error={listQuery.error ?? namedQuery.error ?? operationsError}
             onSelect={(id) => onNavigate(`/prompts/${encodeURIComponent(id)}`)}
             onRefresh={() => void refreshAll()}
             onCreate={() => setWriteMode("create")}
@@ -379,12 +406,12 @@ function usePromptWorkbenchView({
         bodyHeader={
           <PromptHeader
             prompt={selected}
-            loading={Boolean(activePromptId && detailQuery.isLoading)}
-            ready={operationsReady}
+            loading={Boolean(activePromptId && (executedName ? namedQuery.isLoading : detailQuery.isLoading))}
+            ready={executedName ? true : operationsReady}
             dirty={dirty}
           />
         }
-        bodyActions={
+        bodyActions={executedName ? undefined : (
           <PromptWorkbenchActions
             detail={detail}
             scratch={scratch}
@@ -401,10 +428,18 @@ function usePromptWorkbenchView({
             onSaveAs={() => setWriteMode("save-as")}
             onRefresh={() => void refreshAll()}
           />
-        }
+        )}
         bodySplit={30}
         contentClassName="p-0 overflow-hidden"
       >
+        {executedName ? (
+          <ExecutedPromptView
+            name={executedName}
+            prompt={selectedNamedPrompt}
+            loading={namedQuery.isLoading}
+            error={namedQuery.error}
+          />
+        ) : (
         <PromptDetailPane
           detail={detail}
           hasSelection={hasSelection}
@@ -462,6 +497,7 @@ function usePromptWorkbenchView({
             Boolean(promptOps.run && detail) && !repair && !isReadOnlyDbContext()
           }
         />
+        )}
       </AppShell>
       <PromptWriteModal
         open={writeMode !== undefined}

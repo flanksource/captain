@@ -9,7 +9,7 @@ import type {
 } from "@flanksource/clicky-ui/rpc";
 import { apiClient } from "./api";
 
-export type PromptSourceFilter = "all" | "embedded" | "local";
+export type PromptSourceFilter = "all" | "embedded" | "local" | "executed";
 
 export type PromptVariable = {
   name: string;
@@ -39,6 +39,9 @@ export type PromptSummary = {
   /** Content hash echoed back as `baseVersion` on save so a concurrent edit is reported, not clobbered. */
   version?: string;
 };
+
+export type PromptSelectionSummary = Pick<PromptSummary, "id" | "name" | "sourceKind"> &
+  Partial<PromptSummary>;
 
 /** One discovered prompt source, as served in the prompt schema document. */
 export type PromptSourceInfo = {

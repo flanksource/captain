@@ -45,9 +45,7 @@ func init() {
 	})
 
 	ai.RegisterProvider(ai.RuntimeOf(ai.Anthropic, ai.ModeCLI), func(cfg ai.Config) (ai.Provider, error) {
-		provider := NewClaudeCLI(cfg.Model.Name)
-		provider.sandbox = cfg.ResolvedSandbox()
-		return provider, nil
+		return NewClaudeCLI(cfg), nil
 	})
 	ai.RegisterProvider(ai.RuntimeOf(ai.OpenAI, ai.ModeCLI), func(cfg ai.Config) (ai.Provider, error) {
 		return NewCodexCLI(cfg), nil

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/flanksource/captain/pkg/ai/provider"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/monitor"
 )
@@ -48,7 +49,7 @@ func TestE2EClaudeCLIIngest(t *testing.T) {
 	spec := hermetic(capitalPrompt, srv.Env())
 	spec.SetCwd(cwd)
 
-	events, err := provider.NewClaudeCLI("sonnet").ExecuteStream(context.Background(), spec)
+	events, err := provider.NewClaudeCLI(api.Config{Model: api.Model{Name: "sonnet"}}).ExecuteStream(context.Background(), spec)
 	require.NoError(t, err)
 	text, result := drain(t, events)
 	require.Equal(t, capitalAnswer, text)

@@ -47,7 +47,7 @@ func directoriesRequest() ai.Request {
 }
 
 func TestClaudeCLIEmitsAdditionalDirectories(t *testing.T) {
-	args, cleanup, err := buildClaudeCLIArgsWithMCP("claude-opus-5", directoriesRequest(), nil)
+	args, cleanup, err := buildClaudeCLIArgsWithMCP("claude-opus-5", directoriesRequest(), nil, nil)
 	if err != nil {
 		t.Fatalf("build claude CLI args: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestCodexCLIEmitsAdditionalDirectories(t *testing.T) {
 func TestNoDirectoriesEmitsNoAddDir(t *testing.T) {
 	req := ai.Request{Prompt: api.Prompt{User: "hi"}}
 
-	claudeArgs, cleanup, err := buildClaudeCLIArgsWithMCP("claude-opus-5", req, nil)
+	claudeArgs, cleanup, err := buildClaudeCLIArgsWithMCP("claude-opus-5", req, nil, nil)
 	if err != nil {
 		t.Fatalf("build claude CLI args: %v", err)
 	}

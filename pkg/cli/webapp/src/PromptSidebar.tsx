@@ -5,7 +5,8 @@ import {
   SegmentedControl,
 } from "@flanksource/clicky-ui/components";
 import { Icon, UiAdd, UiRefresh } from "@flanksource/clicky-ui/data";
-import type { PromptSourceFilter, PromptSummary } from "./promptData";
+import type { PromptSelectionSummary, PromptSourceFilter, PromptSummary } from "./promptData";
+import type { NamedPrompt } from "./promptNames";
 import { promptOptions } from "./promptWorkbenchHelpers";
 import { errorMessage } from "./promptWorkbenchApi";
 
@@ -13,6 +14,7 @@ const SOURCE_OPTIONS = [
   { id: "all", label: "All" },
   { id: "embedded", label: "Embedded" },
   { id: "local", label: "Local" },
+  { id: "executed", label: "Executed" },
 ] satisfies Array<{ id: PromptSourceFilter; label: string }>;
 
 export function PromptSidebar({
@@ -20,6 +22,7 @@ export function PromptSidebar({
   onSourceChange,
   onQueryChange,
   prompts,
+  executedPrompts,
   selected,
   loading,
   error,
@@ -31,7 +34,8 @@ export function PromptSidebar({
   onSourceChange: (source: PromptSourceFilter) => void;
   onQueryChange: (query: string) => void;
   prompts: PromptSummary[];
-  selected?: PromptSummary;
+  executedPrompts: NamedPrompt[];
+  selected?: PromptSelectionSummary;
   loading: boolean;
   error: unknown;
   onSelect: (id: string) => void;
@@ -39,8 +43,8 @@ export function PromptSidebar({
   onCreate: () => void;
 }) {
   const options = useMemo(
-    () => promptOptions(prompts, selected),
-    [prompts, selected],
+    () => promptOptions(prompts, selected, executedPrompts),
+    [prompts, selected, executedPrompts],
   );
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -87,7 +91,7 @@ export function PromptSidebar({
           className="w-full"
         />
         <div className="text-xs text-muted-foreground">
-          {loading ? "Loading..." : `${prompts.length} prompts`}
+          {loading ? "Loading..." : `${prompts.length + executedPrompts.length} prompts`}
         </div>
       </div>
 
@@ -110,15 +114,19 @@ export function PromptSidebar({
                 {selected.sourceKind}
               </span>
             </div>
-            <div className="truncate text-xs text-muted-foreground">
-              {selected.model || selected.mode || "no model"}
-              {selected.variables?.length
-                ? ` - ${selected.variables.length} vars`
-                : ""}
-            </div>
-            <div className="truncate text-xs text-muted-foreground">
-              {selected.relPath}
-            </div>
+            {selected.sourceKind !== "executed" && (
+              <div className="truncate text-xs text-muted-foreground">
+                {selected.model || selected.mode || "no model"}
+                {selected.variables?.length
+                  ? ` - ${selected.variables.length} vars`
+                  : ""}
+              </div>
+            )}
+            {selected.relPath && (
+              <div className="truncate text-xs text-muted-foreground">
+                {selected.relPath}
+              </div>
+            )}
             {selected.description && (
               <div className="text-xs text-muted-foreground">
                 {selected.description}
@@ -142,7 +150,7 @@ export function PromptHeader({
   ready,
   dirty,
 }: {
-  prompt?: PromptSummary;
+  prompt?: PromptSelectionSummary;
   loading: boolean;
   ready: boolean;
   dirty: boolean;
@@ -196,7 +204,7 @@ export function PromptHeader({
       <div className="mt-1 flex min-w-0 flex-wrap gap-x-density-3 gap-y-1 text-xs text-muted-foreground">
         {prompt.model && <span>{prompt.model}</span>}
         {prompt.mode && <span>{prompt.mode}</span>}
-        <span className="max-w-full truncate">{prompt.path}</span>
+        {prompt.path && <span className="max-w-full truncate">{prompt.path}</span>}
       </div>
     </div>
   );

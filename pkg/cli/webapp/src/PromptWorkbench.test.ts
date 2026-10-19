@@ -3,6 +3,7 @@ import {
   promptOptions,
   resolveProvider,
 } from "./promptWorkbenchHelpers";
+import { executedPromptId, executedPromptName } from "./promptNames";
 
 function prompt(
   name: string,
@@ -88,6 +89,28 @@ describe("promptOptions", () => {
       "Reviews Go diffs",
       "nested/beta.prompt",
     ]);
+  });
+
+  it("offers each executed name in its own group with a stable route", () => {
+    const name = "plan/review";
+    const option = promptOptions([], undefined, [
+      {
+        name,
+        origin: "gavel.todos",
+        runId: "latest-run",
+        sessionId: "latest-session",
+        queuedAt: "2026-10-18T09:00:00Z",
+      },
+    ])[0];
+
+    expect(option).toMatchObject({
+      value: executedPromptId(name),
+      label: name,
+      group: "executed",
+      title: "Latest run: gavel.todos",
+    });
+    expect(executedPromptName(option?.value)).toBe(name);
+    expect(executedPromptName(prompt("plan", "local").id)).toBeUndefined();
   });
 });
 

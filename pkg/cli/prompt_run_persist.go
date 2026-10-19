@@ -45,6 +45,9 @@ func promptRecording(ctx context.Context, input promptRecordingInput) (*promptru
 			Provider: rendered.Provider, Mode: rendered.Mode, Model: rendered.Model, Effort: string(rendered.Config.Model.Effort),
 		}},
 	}
+	if rendered.ID != "" {
+		rec.SpecProfile = rendered.Name
+	}
 	if input.Binding != nil {
 		rec.BatchID = &input.Binding.BatchID
 	}

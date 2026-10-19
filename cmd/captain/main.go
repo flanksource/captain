@@ -449,8 +449,7 @@ func bindHistoryAtRoot(cmd *cobra.Command) {
 		if err := clicky.Flags.ParseFormatSpec(); err != nil {
 			return err
 		}
-		clicky.PrintAndWriteSinks(result, clicky.Flags.FormatOptions)
-		return nil
+		return clicky.PrintAndWriteSinks(result, clicky.Flags.FormatOptions)
 	}
 }
 

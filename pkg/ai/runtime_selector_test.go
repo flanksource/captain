@@ -260,7 +260,7 @@ func TestResolvedModelCarriesCapabilities(t *testing.T) {
 		wantMedia  []string
 	}{
 		{"agent:sonnet", registry.ModeAgent, true, true, true, true, []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}},
-		{"cli:sonnet", registry.ModeCLI, true, false, false, false, []string{}},
+		{"cli:sonnet", registry.ModeCLI, true, false, false, true, []string{}},
 		{"api:sonnet", registry.ModeAPI, false, false, false, true, []string{"image/*"}},
 		{"agent:sol", registry.ModeAgent, true, true, false, true, []string{"image/*"}},
 	}

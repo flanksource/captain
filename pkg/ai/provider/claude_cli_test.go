@@ -116,7 +116,7 @@ func TestBuildClaudeCLIArgsTranslatesPortableToolNames(t *testing.T) {
 }
 
 func TestBuildClaudeCLIArgsWithObservationMCPConfigs(t *testing.T) {
-	args, cleanup, err := buildClaudeCLIArgsWithMCP("claude-sonnet-5", ai.Request{}, []string{"/tmp/one.json", "/tmp/two.json"})
+	args, cleanup, err := buildClaudeCLIArgsWithMCP("claude-sonnet-5", ai.Request{}, []string{"/tmp/one.json", "/tmp/two.json"}, nil)
 	if err != nil {
 		t.Fatalf("buildClaudeCLIArgsWithMCP: %v", err)
 	}

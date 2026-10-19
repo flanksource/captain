@@ -104,7 +104,7 @@ var _ = Describe("Runtime preset HTTP resolution", func() {
 	// cannot express. That is a fact about the deployment for the UI to show
 	// through permissionSupport, not a defect in the profile being resolved.
 	It("reports caller-tool support gaps instead of rejecting the preset", func() {
-		runtime := api.RuntimeOf(api.Anthropic, api.ModeCLI)
+		runtime := api.RuntimeOf(api.Google, api.ModeCLI)
 		Expect(api.PermissionCapabilitiesFor(runtime).ToolPolicySupport(api.ProvenanceCaller, api.ToolPolicyAsk).Kind).
 			To(Equal(api.SupportUnsupported))
 		service := aichat.NewService(aichat.ServiceOptions{
@@ -124,7 +124,7 @@ var _ = Describe("Runtime preset HTTP resolution", func() {
 			"/api/chat/runtime-presets/resolve",
 			api.RuntimePresetResolveRequest{Selected: []string{"review"}, Presets: []api.RuntimePreset{{
 				ID: "review", Name: "Review", Scope: api.SpecLayerSurface,
-				Spec: api.RuntimePresetSpec(api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeCLI}}),
+				Spec: api.RuntimePresetSpec(api.Spec{Model: api.Model{Name: "gemini-2.5-pro", Mode: api.ModeCLI}}),
 			}}},
 		))
 

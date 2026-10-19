@@ -11,6 +11,21 @@ func addCaptainPromptRunPaths(spec *rpc.OpenAPISpec) {
 	if spec.Paths == nil {
 		spec.Paths = map[string]rpc.OpenAPIPath{}
 	}
+	spec.Paths["/api/captain/prompt/names"] = rpc.OpenAPIPath{"get": {
+		Tags: []string{"Prompt runs"}, Summary: "List distinct executed prompt names", OperationID: "listNamedPrompts",
+		Responses: map[string]rpc.OpenAPIResponse{
+			"200": jsonResponse(&rpc.OpenAPISchema{Type: "array", Items: &rpc.OpenAPISchema{
+				Type: "object", Required: []string{"name", "origin", "runId", "sessionId", "queuedAt"},
+				Properties: map[string]*rpc.OpenAPISchema{
+					"name": {Type: "string"}, "origin": {Type: "string"},
+					"runId": {Type: "string", Format: "uuid"}, "sessionId": {Type: "string", Format: "uuid"},
+					"queuedAt": {Type: "string", Format: "date-time"},
+				},
+			}}),
+			"500": {Description: "Database read failed"},
+			"503": {Description: "Selected database context is unavailable"},
+		},
+	}}
 	pathParameter := rpc.OpenAPIParameter{
 		Name: "runId", In: "path", Required: true,
 		Schema: &rpc.OpenAPISchema{Type: "string"},

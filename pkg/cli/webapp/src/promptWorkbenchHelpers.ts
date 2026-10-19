@@ -1,8 +1,9 @@
 import type { ComboboxOption } from "@flanksource/clicky-ui/components";
 import type { ChatModel } from "@flanksource/clicky-ui/chat";
-import type { PromptSummary } from "./promptData";
+import type { PromptSelectionSummary, PromptSummary } from "./promptData";
+import { namedPromptSummary, type NamedPrompt } from "./promptNames";
 
-const SOURCE_GROUP_ORDER = ["embedded", "local"];
+const SOURCE_GROUP_ORDER = ["embedded", "local", "executed"];
 
 export function resolveProvider(
   models: ChatModel[],
@@ -19,12 +20,16 @@ export function resolveProvider(
 
 export function promptOptions(
   prompts: PromptSummary[],
-  selected?: PromptSummary,
+  selected?: PromptSelectionSummary,
+  executed: NamedPrompt[] = [],
 ): ComboboxOption[] {
-  const all =
-    selected && !prompts.some((prompt) => prompt.id === selected.id)
-      ? [...prompts, selected]
-      : prompts;
+  const all: PromptSelectionSummary[] = [
+    ...prompts,
+    ...executed.map(namedPromptSummary),
+  ];
+  if (selected && !all.some((prompt) => prompt.id === selected.id)) {
+    all.push(selected);
+  }
   return [...all]
     .sort(
       (a, b) =>
