@@ -61,7 +61,7 @@ var _ = Describe("CLI model selection", func() {
 
 	It("accepts the whoami catalog model when configuring Gemini cli defaults", func() {
 		Expect(validateProviderDefaults(context.Background(), api.Google, ProviderDefaultView{
-			Mode: "cli", Model: "gemini-3.6-flash", Effort: "high",
+			Mode: "cli", Model: "gemini-3.8-flash", Effort: "high",
 		})).To(Succeed())
 	})
 

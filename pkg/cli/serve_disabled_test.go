@@ -109,13 +109,21 @@ func TestDisabledPutKeepsPersistedAndRuntimeSelectionsConsistentUnderConcurrency
 }
 
 func TestDisabledPutRejectsInvalidSets(t *testing.T) {
+	var providerNames []string
+	for _, provider := range api.Providers() {
+		providerNames = append(providerNames, provider.Name)
+	}
+	everyProvider, err := json.Marshal(providerNames)
+	if err != nil {
+		t.Fatalf("encode provider names: %v", err)
+	}
 	for name, body := range map[string]string{
 		"unknown mode":             `{"modes":["telepathy"],"providers":[],"runtimes":[],"models":[],"efforts":[]}`,
 		"unknown provider":         `{"modes":[],"providers":["acme"],"runtimes":[],"models":[],"efforts":[]}`,
 		"unknown runtime provider": `{"modes":[],"providers":[],"runtimes":[{"provider":"carrier-pigeon","mode":"cli"}],"models":[],"efforts":[]}`,
 		"unknown runtime mode":     `{"modes":[],"providers":[],"runtimes":[{"provider":"anthropic","mode":"telepathy"}],"models":[],"efforts":[]}`,
 		"unknown effort":           `{"modes":[],"providers":[],"runtimes":[],"models":[],"efforts":["frantic"]}`,
-		"every provider":           `{"modes":[],"providers":["anthropic","openai","google","deepseek"],"runtimes":[],"models":[],"efforts":[]}`,
+		"every provider":           `{"modes":[],"providers":` + string(everyProvider) + `,"runtimes":[],"models":[],"efforts":[]}`,
 		"every effort":             `{"modes":[],"providers":[],"runtimes":[],"models":[],"efforts":["low","medium","high","xhigh","max","ultra"]}`,
 		"every mode":               `{"modes":["api","cli","agent","cmux"],"providers":[],"runtimes":[],"models":[],"efforts":[]}`,
 		"active provider stranded": `{"modes":[],"providers":[],"models":[],"efforts":[],
