@@ -90,10 +90,15 @@ jobs:
 
   mcp-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-go
+      # The suite builds both binaries with -trimpath under a 5m deadline meant
+      # to catch hangs; a cold compile of cmd/captain alone can exceed it on a
+      # runner, so warm the build cache with the same flags first.
+      - name: Warm the e2e binary builds
+        run: go build -trimpath ./cmd/captain ./tests/e2e/mcp2cli/fixture
       - run: go test -tags=e2e -count=1 -v -timeout=8m ./tests/e2e/mcp2cli
 
   build:

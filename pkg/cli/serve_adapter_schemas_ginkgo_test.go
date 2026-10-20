@@ -23,7 +23,9 @@ var _ = Describe("adapter schema viewer API", func() {
 		Expect(response.Header().Get("Content-Type")).To(Equal("application/json"))
 		var documents []adapters.SchemaDocument
 		Expect(json.Unmarshal(response.Body.Bytes(), &documents)).To(Succeed())
-		Expect(documents).To(HaveLen(9))
+		embedded, err := adapters.Schemas()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(documents).To(HaveLen(len(embedded)))
 		Expect(documents[0].Provider).To(Equal("anthropic"))
 		Expect(documents[0].Mode).To(Equal("api"))
 		Expect(documents[0].Schema).NotTo(BeEmpty())

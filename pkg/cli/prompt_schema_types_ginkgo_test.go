@@ -1,17 +1,10 @@
 package cli
 
 import (
-	"testing"
-
 	"github.com/flanksource/captain/pkg/api"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestPromptSchemaTypes(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Prompt Schema Types Suite")
-}
 
 var _ = Describe("Prompt schema inspection", func() {
 	It("exposes native TypeSafe questions and explicit input and output types", func() {
