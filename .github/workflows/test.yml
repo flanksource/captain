@@ -24,7 +24,7 @@ jobs:
         with:
           restore: false
       - name: Lint with Gavel
-        uses: flanksource/gavel@d3d2d80cd30a04659e6d3cec1df2eea5c3946152 # v0.0.55
+        uses: flanksource/gavel@ce8e88b2ad8b9dc62802ae4230bb086768d3d105 # v0.0.56
         with:
           args: lint golangci-lint
           version: v0.0.54
@@ -63,7 +63,7 @@ jobs:
       # pkg/cli/webapp is ignored: its vitest suite needs a sibling clicky-ui
       # checkout (a link: dependency), which does not exist on CI runners.
       - name: Test with Gavel
-        uses: flanksource/gavel@d3d2d80cd30a04659e6d3cec1df2eea5c3946152 # v0.0.55
+        uses: flanksource/gavel@ce8e88b2ad8b9dc62802ae4230bb086768d3d105 # v0.0.56
         with:
           # --test-timeout is the per-package deadline (gavel defaults to 5m).
           # pkg/ai/fixture drives real agent subprocesses and exceeded it on a

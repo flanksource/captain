@@ -9,8 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.3
 	github.com/charmbracelet/huh v1.0.0
 	github.com/firebase/genkit/go v1.13.1
-	github.com/flanksource/clicky v1.21.80
-	github.com/flanksource/clicky/aichat v1.21.80
+	github.com/flanksource/clicky v1.21.82
+	github.com/flanksource/clicky/aichat v1.21.82
 	github.com/flanksource/commons v1.60.1
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
@@ -40,7 +40,7 @@ require (
 )
 
 require (
-	github.com/flanksource/commons-db v0.1.58
+	github.com/flanksource/commons-db v0.1.61
 	github.com/gliderlabs/ssh v0.3.8
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/pelletier/go-toml/v2 v2.4.3
@@ -50,6 +50,7 @@ require (
 	github.com/alpkeskin/gotoon v0.1.1 // indirect
 	github.com/atombender/go-jsonschema v0.24.1 // indirect
 	github.com/ebitengine/purego v0.10.2 // indirect
+	github.com/flanksource/sqlglot-go v1.0.3 // indirect
 	github.com/glebarez/sqlite v1.11.0 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.4 // indirect
 	github.com/go-openapi/swag/conv v0.25.4 // indirect
@@ -68,6 +69,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.7 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
+	gorm.io/driver/sqlserver v1.6.4 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
