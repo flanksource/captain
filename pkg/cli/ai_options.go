@@ -172,4 +172,6 @@ type AIPromptResult struct {
 	Output           int            `json:"outputTokens" pretty:"label=Output Tokens"`
 	CostUSD          float64        `json:"costUSD,omitempty" pretty:"label=Cost USD"`
 	Duration         string         `json:"duration" pretty:"label=Duration"`
+
+	TerminalOutcome *ai.TerminalOutcome `json:"-" pretty:"-"`
 }

@@ -37,6 +37,20 @@ Two rules apply to every callback:
 - **Deny is a hard floor.** A tool the run's permission strategy denies, and anything plan mode forbids, is rejected before `OnApproval` runs. No row is written and no event is sent, and no decision, scope, or grant can override it.
 - **Any approval may escalate.** An approved `command`, `filesystem`, `network`, or `permissions` request can go beyond the run's initial sandbox posture. `Escalates` marks the ones that do.
 
+## Foreground terminal runs
+
+A single-runtime `captain prompt run` using Claude Agent or Codex app-server attaches `approval.Terminal` when stdin and stderr are terminals. Native questions and permission requests draw on stderr and read answers from stdin. The event renderer pauses while a form is open, and execution resumes with the selected answer.
+
+```sh
+captain prompt run --model agent:haiku --edit -p "Inspect the project and ask through the question tool if a required decision is missing."
+```
+
+Redirecting stdout preserves the answer channel, including JSON output. `--no-stream` also permits terminal questions. Piped input, redirected stderr, and concurrent multi-model comparisons have no terminal broker. Explicit Claude `bypassPermissions` keeps that permission mode and disables terminal questions.
+
+Both agent runtimes disable their native question tool when no broker exists. Codex permits blocking questions in plan mode; default mode keeps questions disabled because its native questions are nonblocking. When questions are unavailable, instructions require the agent to complete independently within the authorized scope or report an unresolved blocker without asking questions. When available, instructions require the native question tool and an answer before continuing. These instructions preserve the prompt's response format; they do not classify arbitrary final prose as a question.
+
+HTTP runs use their host's configured broker and never inherit the server process's terminal. An explicitly supplied `Config.OnApproval` callback remains authoritative. Answered or refused native question calls are resolved by their tool-call IDs; an outstanding native question cannot make a foreground run succeed.
+
 ## Migrating from `CanUseTool`
 
 The approval callback was renamed and widened. The old names remain as deprecated aliases until the unified-approval Phase 6.
