@@ -1,0 +1,42 @@
+name: captain-codex-prompt-question
+openai:
+  - match:
+      prompt_contains: captain-codex-policy-fixture
+    respond:
+      function_call:
+        name: request_user_input
+        call_id: call_captain_disabled_question
+        arguments:
+          questions:
+            - id: storage
+              header: Storage
+              question: Which database should the store use?
+              options:
+                - label: postgres
+                  description: Use the server database.
+                - label: sqlite
+                  description: Use the embedded database.
+  - match:
+      tool_result_for: request_user_input
+    respond:
+      text: CAPTAIN_POLICY_COMPLETE
+  - match:
+      prompt_contains: captain-codex-question-fixture
+    respond:
+      function_call:
+        name: request_user_input
+        call_id: call_captain_question
+        arguments:
+          questions:
+            - id: storage
+              header: Storage
+              question: Which database should the store use?
+              options:
+                - label: postgres
+                  description: Use the server database.
+                - label: sqlite
+                  description: Use the embedded database.
+  - match:
+      tool_result_for: request_user_input
+    respond:
+      text: CAPTAIN_QUESTION_COMPLETE

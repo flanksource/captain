@@ -100,9 +100,12 @@ func codexQuestionApproval(request codexUserInputRequest, raw json.RawMessage) (
 	if err != nil {
 		return api.ApprovalRequest{}, fmt.Errorf("codex question input: %w", err)
 	}
-	questions := make([]api.TerminalQuestion, 0, len(request.Questions))
+	questions, err := api.TerminalQuestionsFromInput(input)
+	if err != nil {
+		return api.ApprovalRequest{}, fmt.Errorf("codex questions: %w", err)
+	}
 	seen := make(map[string]struct{}, len(request.Questions))
-	for _, question := range request.Questions {
+	for i, question := range request.Questions {
 		if question.ID == "" || strings.TrimSpace(question.Question) == "" {
 			return api.ApprovalRequest{}, fmt.Errorf("codex question request has an empty question id or text")
 		}
@@ -110,11 +113,8 @@ func codexQuestionApproval(request codexUserInputRequest, raw json.RawMessage) (
 			return api.ApprovalRequest{}, fmt.Errorf("codex question request repeats id %q", question.ID)
 		}
 		seen[question.ID] = struct{}{}
-		// MultiSelect: Codex takes a list of answers per question whatever the
-		// question was, so every one of them accepts several.
-		questions = append(questions, api.TerminalQuestion{
-			ID: question.ID, Text: strings.TrimSpace(question.Question), MultiSelect: true, Secret: question.IsSecret,
-		})
+		questions[i].Secret = question.IsSecret
+		questions[i].MultiSelect = len(questions[i].Options) == 0
 	}
 	return api.ApprovalRequest{
 		Tool: "AskUserQuestion", Input: input, ToolUseID: request.ItemID, SessionID: request.ThreadID,

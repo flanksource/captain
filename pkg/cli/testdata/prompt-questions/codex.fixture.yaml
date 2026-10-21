@@ -1,0 +1,75 @@
+kind: Fixture
+name: Captain Codex plan mode routes terminal questions and disables them without an answer channel
+defaults:
+  timeout: 90s
+env:
+  CAPTAIN_SESSION_DB_URL: "off"
+  CAPTAIN_MONITOR_HOOKS: "off"
+  CAPTAIN_DB_CONTEXT: default
+  OPENAI_API_KEY: captain-mock
+steps:
+  - id: workspace
+    kind: exec
+    script: |
+      set -eu
+      mkdir -p "{{.fixture.dir}}/../../../../.tmp"
+      mktemp -d "{{.fixture.dir}}/../../../../.tmp/prompt-questions-codex.XXXXXX" | tr -d '\n'
+    export:
+      CASE_DIR: "{{.outputs.stdout}}"
+      CAPTAIN_BIN: "{{.fixture.dir}}/../../../../.bin/captain"
+    override: true
+  - id: stack
+    kind: services
+    services:
+      aimock:
+        exec: '"$CAPTAIN_BIN" ai mock --only openai --openai-addr 127.0.0.1:{{.port}} --scenario "{{.fixture.dir}}/codex.aimock.yaml" --journal "$CASE_DIR/requests.jsonl"'
+        ready: {tcp: "127.0.0.1:{{.port}}"}
+  - id: noninteractive
+    kind: exec
+    cwd: "{{.env.CASE_DIR}}"
+    script: |
+      set -eu
+      mkdir -p "$CODEX_HOME"
+      "$CAPTAIN_BIN" prompt run --model agent:sol --mode agent --api-url "{{.env.AIMOCK_URL}}/v1" --api-key captain-mock --permission-mode plan --sandbox native --budget 0 --timeout 45s --no-user --no-project --no-memory --no-skills --no-hooks --no-mcp --json -p 'captain-codex-policy-fixture: finish with the available information.' > "$CASE_DIR/policy-result.json"
+      jq -s --slurpfile result "$CASE_DIR/policy-result.json" '
+        [.[] | select(.path == "/v1/responses") | .request] as $requests |
+        {
+          completed: ($result[0].status == "completed" and $result[0].mode == "agent" and $result[0].text == "CAPTAIN_POLICY_COMPLETE"),
+          requests: ($requests | length),
+          questionBlocked: any($requests[].messages[]? |
+            select(((.toolResults // []) | index("request_user_input")) != null);
+            (.content | test("(?i)(unavailable|not available|unknown|unrecognized|unsupported|disabled)"))),
+          policyPresent: any($requests[].messages[]?; (.content // "") | contains("Do not ask clarification questions."))
+        }
+      ' "$CASE_DIR/requests.jsonl"
+    env:
+      CODEX_HOME: "{{.env.CASE_DIR}}/codex-policy"
+    cel: json.requests > 0 && json.completed && json.questionBlocked && json.policyPresent
+  - id: ask
+    kind: exec
+    terminal: pty
+    cwd: "{{.env.CASE_DIR}}"
+    script: |
+      set -eu
+      mkdir -p "$CODEX_HOME"
+      "$CAPTAIN_BIN" prompt run --model agent:sol --mode agent --api-url "{{.env.AIMOCK_URL}}/v1" --api-key captain-mock --permission-mode plan --sandbox native --budget 0 --timeout 45s --no-user --no-project --no-memory --no-skills --no-hooks --no-mcp -p 'captain-codex-question-fixture: ask which database the store should use, then acknowledge the answer.'
+    env:
+      CODEX_HOME: "{{.env.CASE_DIR}}/codex-question"
+    input:
+      - {expect: "Question from the agent"}
+      - {expect: "Other (type an answer)", keys: [down, enter]}
+    cel: exitCode == 0 && stdout.contains("Which database should the store use?") && stdout.contains("CAPTAIN_QUESTION_COMPLETE")
+  - id: answer-reached-model
+    kind: exec
+    script: |
+      jq -s '
+        [.[] | select(.path == "/v1/responses") | .request |
+          select(any(.messages[]?; (.content // "") | contains("captain-codex-question-fixture")))] as $requests |
+        {
+          nativeQuestionPolicy: any($requests[].messages[]?; (.content // "") | contains("use request_user_input and wait for the answer")),
+          answered: any($requests[].messages[]? |
+            select(((.toolResults // []) | index("request_user_input")) != null);
+            ((.content | fromjson).answers.storage.answers == ["sqlite"]))
+        }
+      ' "$CASE_DIR/requests.jsonl"
+    cel: json.nativeQuestionPolicy && json.answered
