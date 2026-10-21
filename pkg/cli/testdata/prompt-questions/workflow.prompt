@@ -1,0 +1,12 @@
+---
+model: agent:haiku
+permissions:
+  mode: acceptEdits
+  presets: [edit]
+workflow:
+  verify:
+    commands:
+      - printf '%s' verified > question-verified.txt
+    maxIterations: 1
+---
+captain-question-fixture: ask which database the store should use, then acknowledge the answer.

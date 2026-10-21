@@ -1,0 +1,56 @@
+kind: Fixture
+name: Captain streamed prompt answers a native question at the terminal
+defaults:
+  timeout: 90s
+env:
+  CAPTAIN_SESSION_DB_URL: "off"
+  CAPTAIN_MONITOR_HOOKS: "off"
+  CAPTAIN_DB_CONTEXT: default
+  ANTHROPIC_API_KEY: captain-mock
+  ANTHROPIC_AUTH_TOKEN: captain-mock
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+steps:
+  - id: workspace
+    kind: exec
+    script: |
+      set -eu
+      mkdir -p "{{.fixture.dir}}/../../../../.tmp"
+      mktemp -d "{{.fixture.dir}}/../../../../.tmp/prompt-questions-streamed.XXXXXX" | tr -d '\n'
+    export:
+      CASE_DIR: "{{.outputs.stdout}}"
+      CAPTAIN_BIN: "{{.fixture.dir}}/../../../../.bin/captain"
+    override: true
+  - id: stack
+    kind: services
+    services:
+      aimock:
+        exec: '"$CAPTAIN_BIN" ai mock --only anthropic --addr 127.0.0.1:{{.port}} --scenario "{{.fixture.dir}}/question.aimock.yaml" --journal "$CASE_DIR/requests.jsonl"'
+        ready: {tcp: "127.0.0.1:{{.port}}"}
+  - id: ask
+    kind: exec
+    terminal: pty
+    cwd: "{{.env.CASE_DIR}}"
+    script: |
+      set -eu
+      "$CAPTAIN_BIN" prompt run --model agent:haiku --edit --sandbox off --budget 0 --max-tokens 4096 --timeout 45s --no-user --no-project --no-memory --no-skills --no-hooks --no-mcp -p 'captain-question-fixture: ask which database the store should use, then acknowledge the answer.'
+    env:
+      ANTHROPIC_BASE_URL: "{{.env.AIMOCK_URL}}"
+      CLAUDE_CONFIG_DIR: "{{.env.CASE_DIR}}/claude"
+    input:
+      - {expect: "Question from the agent"}
+      - {expect: "Other (type an answer)", keys: [down, enter]}
+    cel: exitCode == 0 && stdout.contains("Which database should the store use?") && stdout.contains("CAPTAIN_QUESTION_COMPLETE")
+  - id: answer-reached-model
+    kind: exec
+    script: |
+      jq -s '
+        [.[] | select(.path == "/v1/messages") | .request] as $requests |
+        {
+          advertised: any($requests[]; (.toolNames | index("AskUserQuestion")) != null),
+          nativeQuestionPolicy: any($requests[]; .system | contains("use AskUserQuestion and wait for the answer")),
+          answered: any($requests[].messages[]?;
+            ((.toolResults // []) | index("AskUserQuestion")) != null and
+            (.content | contains("\"Which database should the store use?\"=\"sqlite\"")))
+        }
+      ' "$CASE_DIR/requests.jsonl"
+    cel: json.advertised && json.nativeQuestionPolicy && json.answered

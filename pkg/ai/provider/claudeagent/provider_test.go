@@ -69,7 +69,7 @@ func TestProvider_InitializeParamsTranslatesPortableToolNames(t *testing.T) {
 		"NotATool": api.ToolPolicyDeny,
 	}}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Bash", "BashOutput", "Edit", "KillShell", "Monitor", "MultiEdit", "NotebookEdit"}, params.DisallowedTools)
+	assert.Equal(t, []string{"Bash", "BashOutput", "Edit", "KillShell", "Monitor", "MultiEdit", "NotebookEdit", "AskUserQuestion"}, params.DisallowedTools)
 	assert.Equal(t, []string{"Read"}, params.AllowedTools)
 	assert.Contains(t, logs.String(), `permissions.tools "NotATool" deny is ignored: anthropic agent has no tool it names`)
 }

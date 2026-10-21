@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	osexec "os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -148,6 +149,7 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 		return nil, err
 	}
 	req = c.beginTurn(req)
+	req.Prompt.AppendSystem = strings.Join([]string{req.Prompt.AppendSystem, ai.QuestionInstructions("request_user_input", c.cfg.OnApproval != nil && req.Permissions.Mode == api.PermissionPlan)}, "\n\n")
 	if err := c.ensureStarted(ctx); err != nil {
 		c.turnMu.Unlock()
 		return nil, err
