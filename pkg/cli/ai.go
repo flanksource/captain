@@ -201,6 +201,7 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 	}
 	return AIPromptResult{
 		Text:             text,
+		TerminalOutcome:  resp.TerminalOutcome,
 		StructuredOutput: structuredOutput,
 		Model:            model,
 		Provider:         runtime.Provider,
@@ -229,8 +230,14 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		session          = req.SessionID
 		structuredOutput map[string]any
 		structuredErr    error
+		terminal         ai.TerminalOutcomeTracker
+		terminalErr      error
 	)
-	renderer := NewEventRenderer(os.Stderr)
+	renderer := promptEventRenderer(ctx)
+	ownRenderer := renderer == nil
+	if ownRenderer {
+		renderer = NewEventRenderer(os.Stderr)
+	}
 	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      sp,
 		MaxIterations: 1,
@@ -242,6 +249,9 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 			return req, true
 		},
 		OnEvent: func(iteration int, ev ai.Event) {
+			if terminalErr == nil {
+				terminalErr = terminal.Observe(ev)
+			}
 			if ev.Model != "" {
 				model = ev.Model
 			}
@@ -264,14 +274,17 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 			}
 		},
 	})
-	if renderErr := renderer.Flush(); renderErr != nil {
-		return nil, errors.Join(err, renderErr)
+	if ownRenderer {
+		err = errors.Join(err, renderer.Flush())
 	}
 	if err != nil {
 		return nil, err
 	}
 	if structuredErr != nil {
 		return nil, structuredErr
+	}
+	if terminalErr != nil {
+		return nil, fmt.Errorf("invalid terminal outcome: %w", terminalErr)
 	}
 	if loop.StopReason == "error" {
 		return nil, fmt.Errorf("streaming loop stopped: %s", loop.StopReason)
@@ -295,6 +308,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		HistoryFile:      historyFileForRun(providerOf(runtime), runtime.Mode, input.SessionID, dir),
 		Input:            input,
 		InputTokens:      usage.InputTokens,
+		TerminalOutcome:  terminal.Outcome(),
 		Output:           usage.OutputTokens,
 		CostUSD:          cost,
 		Duration:         time.Since(start).Round(time.Millisecond).String(),

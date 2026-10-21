@@ -9,7 +9,8 @@ import (
 )
 
 func newCodexAppServerProcess(cfg ai.Config) *exec.Process {
-	args := []string{"app-server"}
+	args := []string{"app-server", "-c", fmt.Sprintf("tools.experimental_request_user_input.enabled=%t", cfg.OnApproval != nil)}
+	args = append(args, "-c", "features.default_mode_request_user_input=false")
 	if cfg.APIURL != "" {
 		args = append(args, codexProviderOverride(cfg.APIURL)...)
 	}

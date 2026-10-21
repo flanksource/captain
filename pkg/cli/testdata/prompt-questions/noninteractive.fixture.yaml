@@ -1,0 +1,49 @@
+kind: Fixture
+name: Captain without a terminal disables native questions and supplies a no-question policy
+defaults:
+  timeout: 90s
+env:
+  CAPTAIN_SESSION_DB_URL: "off"
+  CAPTAIN_MONITOR_HOOKS: "off"
+  CAPTAIN_DB_CONTEXT: default
+  ANTHROPIC_API_KEY: captain-mock
+  ANTHROPIC_AUTH_TOKEN: captain-mock
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+steps:
+  - id: workspace
+    kind: exec
+    script: |
+      set -eu
+      mkdir -p "{{.fixture.dir}}/../../../../.tmp"
+      mktemp -d "{{.fixture.dir}}/../../../../.tmp/prompt-questions-noninteractive.XXXXXX" | tr -d '\n'
+    export:
+      CASE_DIR: "{{.outputs.stdout}}"
+      CAPTAIN_BIN: "{{.fixture.dir}}/../../../../.bin/captain"
+    override: true
+  - id: stack
+    kind: services
+    services:
+      aimock:
+        exec: '"$CAPTAIN_BIN" ai mock --only anthropic --addr 127.0.0.1:{{.port}} --scenario "{{.fixture.dir}}/policy.aimock.yaml" --journal "$CASE_DIR/requests.jsonl"'
+        ready: {tcp: "127.0.0.1:{{.port}}"}
+  - id: no-question-policy
+    kind: exec
+    cwd: "{{.env.CASE_DIR}}"
+    script: |
+      set -eu
+      printf '%s' 'captain-question-policy-fixture: finish with the available information.' |
+        "$CAPTAIN_BIN" prompt run --model agent:haiku --edit --sandbox off --budget 0 --max-tokens 4096 --timeout 45s --no-user --no-project --no-memory --no-skills --no-hooks --no-mcp --json > "$CASE_DIR/result.json"
+      jq -s --slurpfile result "$CASE_DIR/result.json" '
+        [.[] | select(.path == "/v1/messages") | .request |
+          select(any(.messages[]?; .role == "user" and (.content | contains("captain-question-policy-fixture"))))] as $requests |
+        {
+          requests: ($requests | length),
+          completed: ($result[0].status == "completed" and $result[0].text == "CAPTAIN_POLICY_COMPLETE"),
+          questionsAdvertised: any($requests[]; (.toolNames | index("AskUserQuestion")) != null),
+          noQuestionPolicy: any($requests[]; .system | test("(?i)(do not|must not|never) ask (the user |any |clarifying |clarification )?questions"))
+        }
+      ' "$CASE_DIR/requests.jsonl"
+    env:
+      ANTHROPIC_BASE_URL: "{{.env.AIMOCK_URL}}"
+      CLAUDE_CONFIG_DIR: "{{.env.CASE_DIR}}/claude"
+    cel: json.requests > 0 && json.completed && !json.questionsAdvertised && json.noQuestionPolicy

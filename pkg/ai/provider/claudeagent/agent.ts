@@ -153,6 +153,7 @@ function buildOptions(params: InitializeParams): Options {
     maxTurns: params.maxTurns || undefined,
     maxBudgetUsd: params.maxBudgetUsd || undefined,
     permissionMode,
+    permissionPrompts: brokered ? "host" : "none",
     // Stream text and thinking as they are produced. Without it the SDK reports
     // only whole assistant messages, so a host rendering live progress showed
     // nothing for the length of a reasoning block and then the whole block at

@@ -152,16 +152,26 @@ func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPro
 	return executeSyncRunSingle(ctx, rendered, opts)
 }
 
-func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
-	group := task.StartGroup[PromptRunResult](
-		"prompt "+rendered.Name,
+func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (result PromptRunResult, err error) {
+	ctx, renderer, err := attachPromptTerminal(ctx, &rendered)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	if renderer != nil {
+		defer func() { err = errors.Join(err, renderer.Flush()) }()
+	}
+	groupOptions := []task.TaskGroupOption{
 		task.WithKind("prompt"),
 		task.WithLabels(promptTaskLabels(rendered, "")),
-	)
+	}
+	if renderer != nil {
+		groupOptions = append(groupOptions, task.WithNoRender())
+	}
+	group := task.StartGroup[PromptRunResult]("prompt "+rendered.Name, groupOptions...)
 	run := group.Add("execute "+rendered.Mode+":"+rendered.Model, func(_ flanksourceContext.Context, t *task.Task) (PromptRunResult, error) {
 		taskCtx := ai.ContextWithLogger(t.Context(), t)
 		return executeSyncRunSingleDirect(taskCtx, t, rendered, opts, nil)
-	}, task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
+	}, task.WithContext(ctx), task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
 	return run.GetResult()
 }
 
@@ -173,6 +183,9 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
 	r, err := executeDirectPrompt(ctx, rendered, opts)
+	if err == nil {
+		err = unansweredPromptQuestions(r.TerminalOutcome)
+	}
 	recording := promptRecordingInput{Rendered: rendered, Binding: binding}
 	if recordErr := recordCompletedRun(ctx, recording, directRun(rendered, r, err)); err != nil || recordErr != nil {
 		return PromptRunResult{}, errors.Join(err, recordErr)

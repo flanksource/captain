@@ -1,0 +1,15 @@
+name: captain-prompt-question-policy
+description: The fixture checks the actual request policy and tool list, independently of this final reply.
+anthropic:
+  - match:
+      system_contains: You are naming a coding session
+    repeat: -1
+    respond:
+      text: Captain policy fixture
+      stop_reason: end_turn
+  - match:
+      prompt_contains: captain-question-policy-fixture
+    repeat: -1
+    respond:
+      text: CAPTAIN_POLICY_COMPLETE
+      stop_reason: end_turn
