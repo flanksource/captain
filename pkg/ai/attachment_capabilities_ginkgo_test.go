@@ -64,7 +64,7 @@ var _ = Describe("Attachment capabilities", func() {
 		Entry("Gemini API", api.Google, api.ModeAPI, []string{"image/*", "audio/*", "video/*", "application/pdf"}),
 		Entry("Anthropic API", api.Anthropic, api.ModeAPI, []string{"image/*"}),
 		Entry("OpenAI API", api.OpenAI, api.ModeAPI, []string{"image/*"}),
-		Entry("DeepSeek API", api.DeepSeek, api.ModeAPI, []string{}),
+		Entry("DeepSeek API", api.DeepSeek, api.ModeAPI, []string{"image/png", "image/jpeg", "image/gif", "image/webp"}),
 		Entry("Codex agent", api.OpenAI, api.ModeAgent, []string{"image/*"}),
 		Entry("Codex CLI", api.OpenAI, api.ModeCLI, []string{"image/*"}),
 		Entry("Claude Agent", api.Anthropic, api.ModeAgent, []string{"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"}),
