@@ -69,7 +69,7 @@ func ComposeSession(
 		for _, iteration := range iterations {
 			if iteration.VerificationResult != nil {
 				if err := iteration.VerificationResult.Validate(); err != nil {
-					return load.Result{}, nil, fmt.Errorf("invalid verification for Captain prompt run %s iteration %d: %w", runs[0].ID, iteration.Iteration, err)
+					logger.Warnf("inconsistent verification result of Captain prompt run %s iteration %d: %v", runs[0].ID, iteration.Iteration, err)
 				}
 				facts.Verifications = append(facts.Verifications, session.Verification{Iteration: iteration.Iteration, Report: *iteration.VerificationResult})
 			}
