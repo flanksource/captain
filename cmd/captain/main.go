@@ -143,7 +143,7 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommandWithContext("tokens", sessionsCmd, cli.SessionTokensOptions{}, cli.RunSessionTokens).Short = "Size canonical transcript rows without changing recorded usage"
 
 	rootCmd.AddCommand(cli.NewBrowserCommand())
-	registerLintCommand(rootCmd)
+	rootcmd.RegisterLintCommand(rootCmd, isStdinAvailable)
 
 	psCmd := clicky.AddNamedCommandWithContext("ps", rootCmd, cli.PSOptions{}, cli.RunPS)
 	psCmd.Short = "List live agent sessions, or inspect specific process IDs"
