@@ -23,6 +23,7 @@ type RuntimePreset struct {
 	Scope       SpecLayerScope    `json:"scope" yaml:"scope"`
 	Spec        RuntimePresetSpec `json:"spec" yaml:"spec"`
 	Presets     []string          `json:"presets,omitempty" yaml:"presets,omitempty"`
+	Order       int               `json:"order,omitempty" yaml:"order,omitempty"`
 }
 
 type RuntimeProfile struct {
@@ -77,7 +78,7 @@ func RuntimePresetLayers(request RuntimePresetResolveRequest) ([]SpecLayer, erro
 		selected[preset.ID] = struct{}{}
 		layers = append(layers, SpecLayer{
 			ID: preset.ID, Source: SpecLayerSourcePreset,
-			Name: preset.Name, Scope: preset.Scope, Spec: preset.Spec.ToSpec(),
+			Name: preset.Name, Scope: preset.Scope, Spec: preset.Spec.ToSpec(), Order: preset.Order,
 		})
 	}
 	if err := ValidateSpecLayers(layers...); err != nil {

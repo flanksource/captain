@@ -220,3 +220,41 @@ File arguments are checked directly, including explicitly named ignored files. D
 Missing body variables are allowed because lint does not render the body. Frontmatter variables need values to validate the declarations they generate: without complete sample inputs, lint checks template syntax and emits a `promptfile/variables` warning listing unresolved inputs and the deferred declaration checks. Supply repeated `--var key=value` flags or a `--vars` JSON object to enable those checks. Schema compilation uses bundled declarations and does not fetch external references.
 
 Results use Gavel's standard linter-result array, including stable rule IDs, severities, file counts, and source positions where available. Warning-only results exit successfully; invalid content or execution failures exit nonzero. JSON output retains diagnostics on failure. The command performs validation only and does not modify promptfiles.
+
+## Review documents with Gavel
+
+`gavel lint prompt` runs a prompt with the `lint` preset, which replaces the prompt's output schema with Gavel's violation contract, so any prompt that asks for located findings works as a linter. Captain ships five built-in document review prompts, resolved by name from any directory. They run as read-only agents: they read the listed files themselves, search the working tree to check concrete references, and report each finding with its file, line, quoted text, severity and a stable `family/name` rule id. Errors fail the lint; warnings and info do not.
+
+<table>
+  <thead>
+    <tr><th>Prompt</th><th>Reader</th><th>Rule families</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>spec-internal-high</code></td><td>Team deciding what to build: PRDs, RFCs, architecture overviews, plans</td><td><code>req/</code> <code>doc/</code> <code>hl/</code> <code>int/</code></td></tr>
+    <tr><td><code>spec-internal-low</code></td><td>Implementers: detailed, schema and algorithm designs</td><td><code>req/</code> <code>doc/</code> <code>ll/</code> <code>int/</code></td></tr>
+    <tr><td><code>spec-public-high</code></td><td>Customers evaluating: product specs, solution overviews, whitepapers</td><td><code>req/</code> <code>doc/</code> <code>hl/</code> <code>pub/</code></td></tr>
+    <tr><td><code>spec-public-low</code></td><td>External integrators: API references, protocol and format specs</td><td><code>req/</code> <code>doc/</code> <code>ll/</code> <code>pub/</code></td></tr>
+    <tr><td><code>proposal-review</code></td><td>Evaluators: RFP responses, proposals, statements of work</td><td><code>req/</code> <code>doc/</code> <code>prop/</code></td></tr>
+  </tbody>
+</table>
+
+`req/` checks requirement quality (verifiable, unambiguous, singular, with units, consistent). `doc/` catches defects common in generated documents: unsourced numbers, cross-section inconsistencies, placeholders, boilerplate, and planned behavior described as existing. `hl/` and `ll/` hold each level to its job, so a PRD is not asked for field types and an API reference is not asked for market rationale. `int/` verifies references against the repository; `pub/` catches internal leaks, undefined terms and missing versioning. `prop/` traces every mandatory RFP requirement to the response when `rfp` is supplied.
+
+To customize a built-in prompt, copy it from `pkg/ai/prompt/builtin/` into `~/.config/captain/prompts/`, or into a repository's `.captain/prompts/`, under the same name. The local copy shadows the built-in.
+
+<CodeExample client:load language="bash" title="Review documents" source={`
+# Validate the prompt declarations without calling a model.
+captain lint promptfile pkg/ai/prompt/builtin/spec-internal-high.prompt --var files=docs/prd.md
+
+# Show the rendered request, including the lint schema and read-only permissions.
+gavel lint prompt spec-internal-high -V files=docs/prd.md --dry-run
+
+# Review a design against the high-level spec it implements.
+gavel lint prompt spec-internal-low -V files=docs/design.md -V parent=docs/prd.md
+
+# Review several public documents with an extra focus, grouped by rule.
+gavel lint prompt spec-public-low -V files="docs/api.md docs/errors.md" -V focus="pagination" --summary
+
+# Trace an RFP response against the RFP.
+gavel lint prompt proposal-review -V files=bid/response.md -V rfp=bid/rfp.md
+`} />

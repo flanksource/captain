@@ -38,7 +38,7 @@ export type StoredRuntimeProfile = RuntimeProfile & StoredRecord;
 
 export type RuntimePresetWrite = Pick<
   RuntimePreset,
-  "name" | "description" | "scope" | "spec" | "presets"
+  "name" | "description" | "scope" | "spec" | "presets" | "order"
 >;
 export type RuntimeProfileWrite = Pick<
   RuntimeProfile,
@@ -49,6 +49,7 @@ export function presetWrite(preset: RuntimePreset): RuntimePresetWrite {
   return {
     name: preset.name,
     scope: preset.scope,
+    ...(preset.order !== undefined ? { order: preset.order } : {}),
     spec: preset.spec,
     presets: preset.presets ?? [],
     ...(preset.description !== undefined

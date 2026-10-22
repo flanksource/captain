@@ -25,6 +25,12 @@ func (p *Prompt) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &a); err != nil {
 		return err
 	}
+	// A JSON null on an opaque field is an explicit clear, not a value.
+	for _, raw := range []*json.RawMessage{&a.SchemaJSON, &a.InputSchemaJSON, &a.TypeSafeQuestions} {
+		if bytes.Equal(bytes.TrimSpace(*raw), []byte("null")) {
+			*raw = nil
+		}
+	}
 	*p = Prompt(a)
 	return nil
 }
@@ -40,11 +46,13 @@ func (p *Prompt) UnmarshalYAML(value *yaml.Node) error {
 		*p = Prompt{User: user}
 		return nil
 	}
-	type promptAlias Prompt
-	var a promptAlias
-	if err := value.Decode(&a); err != nil {
+	var fields any
+	if err := value.Decode(&fields); err != nil {
 		return err
 	}
-	*p = Prompt(a)
-	return nil
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	return p.UnmarshalJSON(data)
 }

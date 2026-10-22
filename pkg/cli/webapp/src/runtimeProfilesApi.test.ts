@@ -6,6 +6,7 @@ import {
   fetchRuntimePresets,
   fetchRuntimeProfileResolution,
   fetchRuntimeProfiles,
+  presetWrite,
   resolveRuntimePresets,
   resolveRuntimeProfile,
   runtimeProfilesClient,
@@ -35,6 +36,14 @@ const PRESET: StoredRuntimePreset = {
   source: DB_SOURCE,
   updatedAt: "2026-09-01T10:00:00Z",
 };
+
+describe("preset order", () => {
+  it.each([0, 100, -100])("preserves authored order %s", (order) => {
+    expect(presetWrite({ ...PRESET, order })).toEqual({
+      name: PRESET.name, scope: PRESET.scope, spec: PRESET.spec, presets: [], order,
+    });
+  });
+});
 
 const PROFILE: StoredRuntimeProfile = {
   id: "profile-1",
