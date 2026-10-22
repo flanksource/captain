@@ -45,39 +45,25 @@ type PromptRunSummary struct {
 // prompt` is a deprecated alias.
 func runPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRunResult, error) {
 	_, isHTTP := clickyrpc.RequestFromContext(ctx)
-
-	var rendered PromptRenderResult
-	var opts AIPromptOptions
-	var chatRequested bool
-	if isHTTP {
-		req, err := readRenderRequest(ctx, flags)
+	if !isHTTP {
+		opts, err := actionFlagsToOptions(flags)
 		if err != nil {
 			return PromptRunResult{}, err
 		}
-		if rendered, err = renderPrompt(ctx, id, req); err != nil {
-			return PromptRunResult{}, err
-		}
-		chatRequested = req.Chat
-	} else {
-		var err error
-		if opts, err = actionFlagsToOptions(flags); err != nil {
-			return PromptRunResult{}, err
-		}
-		stdin, err := readStdinIfCLI(ctx)
-		if err != nil {
-			return PromptRunResult{}, err
-		}
-		if rendered, err = renderPromptCLI(ctx, id, opts, opts.Vars, stdin); err != nil {
-			return PromptRunResult{}, err
-		}
+		return RunPrompt(ctx, PromptInvocation{Reference: id, Options: opts})
+	}
+	req, err := readRenderRequest(ctx, flags)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	rendered, err := renderPrompt(ctx, id, req)
+	if err != nil {
+		return PromptRunResult{}, err
 	}
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
-	if !isHTTP {
-		logRuntimeWarnings(rendered.Resolution.Warnings)
-	}
-	if chatRequested {
+	if req.Chat {
 		if rendered.Input.Prompt.HasSchema() {
 			return PromptRunResult{}, errors.New("chat mode does not support structured-output prompts")
 		}
@@ -86,13 +72,10 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		}
 	}
 
-	if isHTTP {
-		if len(rendered.Runtimes) > 0 {
-			return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, chatRequested)
-		}
-		return launchAsyncRun(id, rendered, chatRequested)
+	if len(rendered.Runtimes) > 0 {
+		return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, req.Chat)
 	}
-	return executeSyncRun(ctx, rendered, opts)
+	return launchAsyncRun(id, rendered, req.Chat)
 }
 
 var executePromptRequestFunc = executePromptRequest
