@@ -37,3 +37,4 @@ hack/*
 !pkg/cli/webapp/dist/index.html
 *.test
 .codegraph/
+/assets/brand/captain-formation/presentation/
