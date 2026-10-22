@@ -57,11 +57,12 @@ type Preset struct {
 	Spec        api.RuntimePresetSpec `json:"spec"`
 	Presets     []string              `json:"presets"`
 	UpdatedAt   time.Time             `json:"updatedAt"`
+	Order       int                   `json:"order,omitempty" yaml:"order,omitempty"`
 }
 
 // API projects the preset onto the resolver's input type.
 func (p Preset) API() api.RuntimePreset {
-	return api.RuntimePreset{ID: p.ID, Name: p.Name, Description: p.Description, Scope: p.Scope, Spec: p.Spec, Presets: slices.Clone(p.Presets)}
+	return api.RuntimePreset{ID: p.ID, Name: p.Name, Description: p.Description, Scope: p.Scope, Spec: p.Spec, Presets: slices.Clone(p.Presets), Order: p.Order}
 }
 
 // Profile is a task-specific spec plus the ordered preset references (ids or
@@ -92,6 +93,7 @@ type PresetInput struct {
 	Scope       api.SpecLayerScope    `json:"scope" yaml:"scope"`
 	Spec        api.RuntimePresetSpec `json:"spec,omitempty" yaml:"spec,omitempty"`
 	Presets     []string              `json:"presets,omitempty" yaml:"presets,omitempty"`
+	Order       int                   `json:"order,omitempty" yaml:"order,omitempty"`
 }
 
 // ProfileInput is everything a caller authors for a profile; see PresetInput.
@@ -191,7 +193,7 @@ func (in PresetInput) validate() error {
 	if name == "" {
 		return fmt.Errorf("%w: preset name is required", ErrInvalid)
 	}
-	preset := api.RuntimePreset{ID: name, Name: name, Scope: in.Scope, Spec: in.Spec, Presets: in.Presets}
+	preset := api.RuntimePreset{ID: name, Name: name, Scope: in.Scope, Spec: in.Spec, Presets: in.Presets, Order: in.Order}
 	if err := api.ValidateRuntimePreset(preset); err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
@@ -201,7 +203,7 @@ func (in PresetInput) validate() error {
 func (in PresetInput) build(meta recordMeta) Preset {
 	return Preset{
 		ID: meta.ID, Key: meta.Key, Source: meta.Source, Name: in.Name, Description: in.Description,
-		Scope: in.Scope, Spec: in.Spec, Presets: slices.Clone(in.Presets), UpdatedAt: meta.UpdatedAt,
+		Scope: in.Scope, Spec: in.Spec, Presets: slices.Clone(in.Presets), UpdatedAt: meta.UpdatedAt, Order: in.Order,
 	}
 }
 

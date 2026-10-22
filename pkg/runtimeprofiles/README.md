@@ -30,11 +30,11 @@ for _, warning := range resolved.Warnings {
 }
 ```
 
-`ResolveSpecLayers` composes in global → context → surface → user scope order, preserving order within a scope. It intersects restrictive catalogs, applies the strictest nonzero budget limits, and preserves raw layers in `Trace`. Compact model selectors retain their existing mode pin semantics: a prefix inside the effective model name wins over its sibling mode field. A higher layer's explicit effort overrides a lower compact effort and retains that higher layer's ownership. Model aliases and fallback names resolve only after composition. Final model, sandbox, and tool-policy refusals are errors; unsupported permission/resource capabilities produce separate `Warnings` for this compatibility release. The library never loads saved defaults from disk. Model-free compositions remain valid unless `RequireModel` is true; full execution admission still belongs to `promptrun.Preflight`.
+`ResolveSpecLayers` composes in ascending explicit order, then global → context → surface → user scope order, preserving selection order for ties. It intersects restrictive catalogs, applies the strictest nonzero budget limits, and preserves raw layers in `Trace`. Compact model selectors retain their existing mode pin semantics: a prefix inside the effective model name wins over its sibling mode field. A higher layer's explicit effort overrides a lower compact effort and retains that higher layer's ownership. Model aliases and fallback names resolve only after composition. Final model, sandbox, and tool-policy refusals are errors; unsupported permission/resource capabilities produce separate `Warnings` for this compatibility release. The library never loads saved defaults from disk. Model-free compositions remain valid unless `RequireModel` is true; full execution admission still belongs to `promptrun.Preflight`.
 
 Use `api.ComposeSpecLayers` with the same `ResolveSpecOptions` for forms and defaults before a complete request exists. Its distinct `ComposedSpec` exposes `Spec`, `Trace`, `Provenance`, and `Warnings` without claiming runtime validity. It shares the same fold and saved-default pass as final resolution. Unknown authored models remain visible in composition; provider-specific defaults wait until a provider is known. Keep the authored layers when adding a request, then call `ResolveSpecLayers` once for the final stack.
 
-An optional `Saved *captainconfig.AIDefaults` snapshot fills gaps after every authored layer. Provider mode and effort defaults apply independently to the final primary and each fallback. The global compact selector contributes its mode, effort, and fallback chain only within its provider family. Authored primary temperature/cache settings, and same-family effort, retain the existing fallback inheritance rules. File-wide temperature, cache, budget, timeout, and ambient-memory toggles remain run-wide. With a saved snapshot, a missing token budget uses Captain's existing 4096 default and missing effort uses the selected model's catalog default when one is declared. A nil snapshot injects neither saved nor built-in defaults, supporting catalog and authoritative snapshot consumers.
+An optional `Saved *captainconfig.AIDefaults` snapshot fills gaps after every authored layer. Provider mode and effort defaults apply independently to the final primary and each fallback. The global compact selector contributes its mode, effort, and fallback chain only within its provider family. Authored primary temperature/cache settings, and same-family effort, retain the existing fallback inheritance rules. File-wide temperature, cache, budget, timeout, and ambient-memory toggles remain run-wide. With a saved snapshot, a missing token budget stays unset so the runtime applies its own default, and missing effort uses the selected model's catalog default when one is declared. A nil snapshot injects neither saved nor built-in defaults, supporting catalog and authoritative snapshot consumers.
 
 JSON/YAML decoding retains explicitly authored `false`, zero, empty lists/maps, and null values. Go callers mark intentional zero values with `spec.WithExplicit("/noCache", "/budget/cost", "/fallbacks")`; ordinary nonzero fields and scalar pointers already count as supplied. Paths use the serialized JSON-pointer vocabulary, including `/permissions/mcp/disabled` for the native MCP toggle. Merging replaces explicit clears, preserves unrelated groups, and removes stale presence when a list is replaced. `WithoutSession` removes both conversation data and its presence metadata. `Spec.DecodeFields` exposes the complete native shape so enclosing decoders retain their unknown-field policy; Captain prompt documents reject unknown declarations, while hosts can report them as warnings.
 
@@ -48,13 +48,27 @@ Layer resolution checks every declared primary and fallback runtime. Execution p
 
 Catalog failures preserve ownership: `*runtimeprofiles.OwnedLayersError` wraps invalid stored data and missing nested preset references. An absent or ambiguous top-level profile remains `ErrNotFound` or `ErrAmbiguous`. `Resolver` additionally wraps selection failures in `*SelectionError`, recording whether the request, prompt pin, or configured default selected the profile. Use `errors.As` and `errors.Is` instead of parsing error text.
 
+## Preset order
+
+Presets accept an integer `order`, defaulting to `0`. Layers merge in ascending `order`, then global → context → surface → user scope order, preserving selection order for ties. Negative values apply before ordinary layers; positive values apply after ordinary prompt and request layers. The value survives file and database storage, API writes, and resolution traces. A later layer can override fields from an earlier one.
+
+The built-in `Lint` preset uses `order: 100` and supplies `prompt.schemaJSON` plus `schemaStrictness: error`. It replaces authored output schemas while retaining the prompt body, input schema, model and other runtime settings:
+
+```sh
+captain prompt run review.prompt --preset lint
+captain prompt render review.prompt --preset lint --json
+```
+
+Its output is an object with a required `violations` array. Entries require `message`; optional fields are `file`, `line`, `column`, `severity` (`error`, `warning`, `info`), `rule` (`method`, `package`), `source`, and `code`. An empty array means no findings. Gavel's `lint prompt` command selects this preset automatically and renders the response as lint results.
+
 ## Built-in presets
 
-Captain ships three runtime presets, embedded from `builtin/presets/*.yaml` and served by `NewBuiltinSource` (source kind `builtin`, id `builtin`, label `Built-in`, read-only, no profiles). `NewDefaultCatalog` registers the built-in source last, including file-only catalogs, so it is the lowest-precedence source. All three use `scope: context`.
+Captain ships runtime presets embedded from `builtin/presets/*.yaml` and served by `NewBuiltinSource` (source kind `builtin`, id `builtin`, label `Built-in`, read-only, no profiles). `NewDefaultCatalog` registers the built-in source last, including file-only catalogs, so a file or database preset with the same name takes precedence. Permission presets use `scope: context`; `Lint` uses `scope: surface` with `order: 100`.
 
 | Name | Spec | Notes |
 |---|---|---|
 | `Edit` | `permissions: {mode: acceptEdits, presets: [edit]}` | The same posture as `--edit`: acceptEdits plus the `edit` bundle. |
+| `Lint` | `prompt.schemaJSON`, `prompt.schemaStrictness: error` | Structured lint findings; applies after ordinary prompt and request layers. |
 | `Plan` | `permissions: {mode: plan, tools: {read: allow, shell: deny}}` | Edit and write stay available so the runtime's native plan mode can write its plan file. Sets no web policy. |
 | `Read-only` | `permissions: {tools: {edit: deny, write: deny, shell: deny, web_search: deny, web_fetch: deny}}` | Sets no mode, so it combines with any posture; it blocks plan files too. Sets no read policy. |
 

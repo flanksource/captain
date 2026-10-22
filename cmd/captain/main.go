@@ -160,6 +160,10 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(permissionsCmd)
 	clicky.AddNamedCommand("matrix", permissionsCmd, cli.PermissionsMatrixOptions{}, cli.RunPermissionsMatrix).Short =
 		"Print the declared permission capability matrix (settings × runtimes)"
+	clicky.AddNamedCommandWithContext("explain", permissionsCmd, cli.PermissionsExplainOptions{}, cli.RunPermissionsExplain).Short =
+		"Show what a prompt's permissions compile to on each runtime, and the portable form"
+	clicky.AddNamedCommand("convert", permissionsCmd, cli.PermissionsConvertOptions{}, cli.RunPermissionsConvert).Short =
+		"Rewrite a prompt or preset's permissions as permissions.access when the conversion is exact or tighter"
 
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
