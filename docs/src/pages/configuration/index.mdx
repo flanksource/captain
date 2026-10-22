@@ -1,11 +1,70 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Configuration
-description: Placeholder for Captain configuration documentation.
-section: Next Sections
+description: Saved runtime defaults, credentials, prompt sources, and verification configuration.
+section: Reference
 ---
 
 # Configuration
 
-This section is scaffolded for `captain configure`, `~/.captain.yaml`, provider defaults, prompt directories, memory toggles, and safety defaults.
+Captain reads saved defaults from `~/.captain.yaml`. Run `captain configure` for the interactive wizard, or select a provider to save its runtime defaults or credentials. Explicit request values take precedence over saved defaults.
+
+## Configure a runtime
+
+```sh
+captain configure
+captain configure openai --mode agent --model gpt-6.1-sol --effort high --active
+captain configure anthropic --mode agent --model sonnet --effort default
+captain whoami --models=false
+```
+
+`--active` selects the provider used by flagless runs. `--effort default` clears the explicit effort so the model's catalog default can apply. A runtime is a model and a mechanism (`api`, `agent`, `cli`, `cmux`); the provider family is derived from the model. Each fallback uses defaults for its own provider. `--backend` and `configure --agent` have been replaced by `--mode`.
+
+```yaml
+# ~/.captain.yaml
+ai:
+  defaultProvider: openai
+  providers:
+    openai:
+      mode: agent
+      model: gpt-6.1-sol
+      reasoningEffort: high
+  timeout: 20m
+prompts:
+  dirs: [~/prompts]
+runtime:
+  presetDirs: [~/captain-presets]
+chat:
+  presets: [Plan]
+verify:
+  fixtureRunner: [gavel, fixtures, run, --format, captain-verify-report]
+```
+
+The `ai` block also supports `budgetUSD`, `maxTokens`, `temperature`, `noCache`, `noMCP`, `noHooks`, `noSkills`, `noUser`, `noProject` and `noMemory`. Defaults fill missing fields after authored layers have been composed; intentional zero or false values remain explicit. See [Runtime overlay](/prompts/runtime/) for layer order, restrictive budgets and provenance.
+
+## Provider credentials
+
+```sh
+captain configure openai
+captain configure openai --test
+captain configure anthropic
+```
+
+With no runtime-default flags, selecting an API provider opens a secure token prompt. Captain validates the token against that provider before saving it in `~/.config/captain/vault`; `--test` validates without writing. Explicit runtime keys take precedence over the vault, then environment variables. Local agent runtimes use their CLI's own login. The `/whoami` page exposes token validation and runtime defaults without displaying stored tokens.
+
+## Sources and presets
+
+Prompt sources include embedded examples, built-in review prompts, configured directories, server `--prompt-dir` directories, project `.captain/prompts`, and the user config prompt directory. Local names shadow embedded names; conflicting local names require an explicit path or ID. See [Sources and API](/prompts/sources-api/) for discovery and write destinations.
+
+Select runtime presets in frontmatter with `presets: [Plan]`, with repeated `--preset` flags, or through the runtime editor. `--no-presets` clears the selection. `runtimeProfile` and `--runtime-profile` are deprecated and ignored. Built-in presets can be overridden by a local preset of the same name; see [Built-in runtime presets](/prompts/runtime/#built-in-runtime-presets).
+
+## Database contexts
+
+`captain serve` keeps sessions, prompt runs, approvals and catalogs in PostgreSQL. `--db-url URL` chooses the default database; repeated `--db-url name=URL` entries declare additional read-only contexts. `--context name` chooses the read context. Check the server's startup database identity before inspecting a different context.
+
+## Output and diagnostics
+
+`--json`, `--yaml`, `--markdown`, or `--format` select command result formats. `captain prompt --help` and child help use color on a human terminal, plain output with `--no-color`, `NO_COLOR`, or redirection, and Markdown in detected agent sessions. These help rules are independent of the result format.
+
+Increase verbosity with `-v` for HTTP access lines, `-vv` for headers/query, `-vvv` for request bodies, and `-vvvv` for response bodies. Credentials are redacted. `-Phttp.har=.tmp/captain.har` records a HAR archive; `-Phttp.har.level=metadata` excludes bodies. Root `captain --help` describes the inherited HTTP and logging properties.
 
