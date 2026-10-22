@@ -34,7 +34,7 @@ go test ./pkg/ai -run '^TestAttachmentCapabilities$' -ginkgo.focus='Named prompt
 Set `DEEPSEEK_API_KEY`, then attach an existing image to a prompt:
 
 ```sh
-captain prompt run --model api:deepseek-flash --attach chart.png "Describe this chart."
+captain prompt run --model api:deepseek-flash --attach chart.png -p "Describe this chart."
 ```
 
 For Go callers, put references in `Spec.Prompt.Attachments` or user-message attachment parts and resolve them with the attachment store before execution. Captain sends prepared images inline through the existing OpenAI-compatible Chat Completions endpoint; it does not upload them to DeepSeek's Files API.

@@ -1,5 +1,7 @@
 # Unified approval callback
 
+This is the design and implementation record, including rollout checklists and deferred removal work. For the current public contract, broker fields and terminal behavior, see [Approvals](../src/pages/agents/approvals.mdx). Historical findings below describe the state observed during the design review.
+
 ## Summary
 
 Extend Captain's existing `CanUseTool` callback in place, so that one callback carries execution approvals, clarification questions, and MCP elicitation, and give it a name that says so.

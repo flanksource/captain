@@ -1,4 +1,6 @@
-# Runtime profile composition
+# Runtime preset composition
+
+Select reusable layers with presets. `RequestedProfile`, `PinnedProfile`, `DefaultProfile`, prompt `runtimeProfile` and CLI `--runtime-profile` are deprecated: the resolver emits a warning and contributes no profile layers. Use `RequestedPresets` (or frontmatter `presets` / CLI `--preset`) instead.
 
 Use `Catalog.Layers` or `Resolver.Layers` to load reusable configuration before adding a prompt and request. They validate authored structures without choosing a model or checking a guessed runtime. A profile can contain only permissions, mode, effort, or budget; a later request can supply or replace its runtime.
 
@@ -6,7 +8,7 @@ Validate each owner's raw layers with `api.ValidateSpecLayers` before combining 
 
 ```go
 layers, err := resolver.Layers(ctx, runtimeprofiles.ResolveOptions{
-    RequestedProfile: "review",
+    RequestedPresets: []string{"Plan"},
     SurfaceLayers: []api.SpecLayer{
         api.PromptSpecLayer("review.prompt", document.Spec),
     },
@@ -46,7 +48,7 @@ Malformed saved declarations fail before a request can hide them and return `*ap
 
 Layer resolution checks every declared primary and fallback runtime. Execution preflight separately checks the enabled candidates selected for the actual provider configuration. Disabling a candidate for one execution does not make an unsupported sandbox or tool policy valid in the declared profile.
 
-Catalog failures preserve ownership: `*runtimeprofiles.OwnedLayersError` wraps invalid stored data and missing nested preset references. An absent or ambiguous top-level profile remains `ErrNotFound` or `ErrAmbiguous`. `Resolver` additionally wraps selection failures in `*SelectionError`, recording whether the request, prompt pin, or configured default selected the profile. Use `errors.As` and `errors.Is` instead of parsing error text.
+Catalog failures preserve ownership: `*runtimeprofiles.OwnedLayersError` wraps invalid stored data and missing nested preset references. An absent or ambiguous top-level selection remains `ErrNotFound` or `ErrAmbiguous`. `Resolver` additionally wraps selection failures in `*SelectionError`, recording whether the request, prompt pin, or configured default selected the presets. Use `errors.As` and `errors.Is` instead of parsing error text.
 
 ## Preset order
 
