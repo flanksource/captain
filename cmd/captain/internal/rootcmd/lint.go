@@ -1,4 +1,4 @@
-package main
+package rootcmd
 
 import (
 	"context"
@@ -20,7 +20,7 @@ type promptfileLintOptions struct {
 	Vars  string   `flag:"vars" clicky:"cli-file-read" help:"Sample template inputs as a JSON object, or @file"`
 }
 
-func registerLintCommand(root *cobra.Command) {
+func RegisterLintCommand(root *cobra.Command, isStdinAvailable func() bool) {
 	parent := &cobra.Command{Use: "lint", Short: "Validate Captain configuration files"}
 	clicky.MarkLocalOnly(parent)
 	root.AddCommand(parent)
