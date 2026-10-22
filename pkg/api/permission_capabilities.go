@@ -352,7 +352,8 @@ func apiAccess() map[AccessLevel]Support {
 // claudeAccess: the tool dialect, compiled to per-tool denies.
 func claudeAccess() map[AccessLevel]Support {
 	return access(nativeNote("--disallowedTools",
-		"denies every edit, write and shell carrier plus Agent, Task and Workflow, and disables third-party MCP servers"))
+		"denies every edit, write and shell carrier plus the tools that act outside the agent's process (sub-agents and teams, "+
+			"SendMessage to peer sessions, RemoteTrigger, CronCreate/CronDelete, Enter/ExitWorktree), and disables third-party MCP servers"))
 }
 
 // codexAccess: the sandbox dialect. Codex reads through its shell, so the shell
@@ -361,7 +362,8 @@ func claudeAccess() map[AccessLevel]Support {
 func codexAccess() map[AccessLevel]Support {
 	return access(Support{Kind: SupportNative, Effects: PermissionEffects{
 		Sandbox: string(CodexSandboxReadOnly), Approval: string(CodexApprovalNever),
-		Note: "the shell stays as codex's read path, confined by the read-only sandbox; third-party MCP servers are disabled",
+		Note: "the shell stays as codex's read path, confined by the read-only sandbox; third-party MCP servers are disabled; " +
+			"execpolicy allow rules, which run commands outside the sandbox, are kept out with --ignore-rules on exec and an isolated CODEX_HOME on the app-server and cmux",
 	}})
 }
 
