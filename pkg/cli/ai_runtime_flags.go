@@ -18,7 +18,7 @@ func (o AIRuntimeOptions) WithExplicit(paths ...string) AIRuntimeOptions {
 var runtimeFlagFields = map[string]string{
 	"model": "/model", "mode": "/mode", "fallback": "/fallbacks", "effort": "/effort", "temperature": "/temperature", "no-cache": "/noCache",
 	"budget": "/budget/cost", "max-tokens": "/budget/maxTokens", "max-turns": "/budget/maxTurns", "resume": "/sessionId",
-	"no-mcp": "/permissions/mcp/disabled", "permission-mode": "/permissions/mode",
+	"no-mcp": "/permissions/mcp/disabled", "permission-mode": "/permissions/mode", "access": "/permissions/access",
 	"no-hooks": "/memory/skipHooks", "no-skills": "/memory/skipSkills", "no-user": "/memory/skipUser",
 	"no-project": "/memory/skipProject", "no-memory": "/memory/skipMemory", "bare": "/memory/bare", "skill-dir": "/memory/skills",
 	"timeout": "/budget/timeout", "system": "/prompt/system", "append-system": "/prompt/appendSystem",
@@ -53,10 +53,14 @@ func (o AIRuntimeOptions) requestSpec() (api.Spec, error) {
 	if err := validatePermissionMode(o.PermissionMode); err != nil {
 		return api.Spec{}, err
 	}
+	if access := api.AccessLevel(o.Access); !access.Valid() {
+		return api.Spec{}, fmt.Errorf("invalid --access %q (valid: read-only|full)", o.Access)
+	}
 	permissions := api.Permissions{
-		Mode:  api.PermissionMode(o.PermissionMode),
-		Tools: api.ToolsFromLists(o.AllowedTools, o.DisallowedTools),
-		MCP:   api.MCP{Disabled: o.NoMCP},
+		Mode:   api.PermissionMode(o.PermissionMode),
+		Access: api.AccessLevel(o.Access),
+		Tools:  api.ToolsFromLists(o.AllowedTools, o.DisallowedTools),
+		MCP:    api.MCP{Disabled: o.NoMCP},
 	}
 	if o.Edit {
 		permissions.Presets = []api.Preset{api.PresetEdit}
