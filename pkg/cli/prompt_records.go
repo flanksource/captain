@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -148,6 +149,10 @@ func resolvePromptRecordByName(sources []promptSource, name string) (promptRecor
 				matches = append(matches, record)
 			}
 		}
+	}
+	// A local copy of a shipped prompt overrides it rather than making the name ambiguous.
+	if slices.ContainsFunc(matches, func(record promptRecord) bool { return record.Source.Kind != "embedded" }) {
+		matches = slices.DeleteFunc(matches, func(record promptRecord) bool { return record.Source.Kind == "embedded" })
 	}
 	switch len(matches) {
 	case 0:

@@ -30,6 +30,7 @@ func (r RuntimePresetRecord) Columns() []clickyapi.ColumnDef {
 		clickyapi.Column("name").Label("Name").Build(),
 		clickyapi.Column("source").Label("Source").MaxWidth(40).Build(),
 		clickyapi.Column("scope").Label("Scope").Build(),
+		clickyapi.Column("order").Label("Order").Build(),
 		clickyapi.Column("model").Label("Model").Build(),
 		clickyapi.Column("description").Label("Description").MaxWidth(80).Build(),
 	}
@@ -40,6 +41,7 @@ func (r RuntimePresetRecord) Row() map[string]any {
 		"name":        r.Name,
 		"source":      r.Source.Label,
 		"scope":       string(r.Scope),
+		"order":       r.Order,
 		"model":       runtimeModelLabel(r.Spec.Model),
 		"description": r.Description,
 	}
@@ -60,18 +62,19 @@ type RuntimePresetWriteRequest struct {
 	Spec        *api.RuntimePresetSpec `json:"spec,omitempty"`
 	Presets     []string               `json:"presets,omitempty"`
 	Content     string                 `json:"content,omitempty"`
+	Order       int                    `json:"order,omitempty"`
 }
 
 func (req RuntimePresetWriteRequest) input() (runtimeprofiles.PresetInput, error) {
 	if req.Content == "" {
-		in := runtimeprofiles.PresetInput{Name: req.Name, Description: req.Description, Scope: req.Scope, Presets: req.Presets}
+		in := runtimeprofiles.PresetInput{Name: req.Name, Description: req.Description, Scope: req.Scope, Presets: req.Presets, Order: req.Order}
 		if req.Spec != nil {
 			in.Spec = *req.Spec
 		}
 		return in, nil
 	}
-	if req.Name != "" || req.Description != "" || req.Scope != "" || req.Spec != nil || len(req.Presets) > 0 {
-		return runtimeprofiles.PresetInput{}, runtimeBodyError("content excludes name, description, scope, spec and presets; send one or the other")
+	if req.Name != "" || req.Description != "" || req.Scope != "" || req.Spec != nil || len(req.Presets) > 0 || req.Order != 0 {
+		return runtimeprofiles.PresetInput{}, runtimeBodyError("content excludes name, description, scope, spec, presets and order; send one or the other")
 	}
 	var in runtimeprofiles.PresetInput
 	if err := decodeRuntimeContent(req.Content, &in); err != nil {
