@@ -102,7 +102,7 @@ var _ = Describe("Default runtime catalog", func() {
 		Expect(sources[len(sources)-1]).To(Equal(NewBuiltinSource().Info()))
 		listed, err := catalog.ListPresets(ctx)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(presetSummaries(listed)).To(Equal([][2]string{{"file", "Plan"}, {"builtin", "Edit"}, {"builtin", "Read-only"}}))
+		Expect(presetSummaries(listed)).To(Equal([][2]string{{"file", "Plan"}, {"builtin", "Edit"}, {"builtin", "Lint"}, {"builtin", "Read-only"}}))
 		resolution, err := catalog.ResolvePresets(ctx, []string{"plan"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(resolution.Resolved.Spec.Permissions.Mode).To(Equal(api.PermissionDefault))

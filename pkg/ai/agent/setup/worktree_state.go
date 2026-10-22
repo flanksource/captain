@@ -87,8 +87,11 @@ func recordWorktree(path string, snapshot bool) (*api.WorktreeState, error) {
 // `git worktree list` — rather than the checkout's path, which a remote checkout
 // does not have.
 func inspectWorktree(dir string) (branch, repo string, err error) {
-	if branch, err = git(dir, "symbolic-ref", "--short", "HEAD"); err != nil {
+	if branch, err = git(dir, "rev-parse", "--abbrev-ref", "HEAD"); err != nil {
 		return "", "", err
+	}
+	if branch == "HEAD" {
+		branch = ""
 	}
 	list, err := git(dir, "worktree", "list", "--porcelain")
 	if err != nil {

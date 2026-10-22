@@ -97,7 +97,7 @@ var _ = Describe("Catalog host source precedence", func() {
 		listed, err := catalog.ListPresets(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(presetSources(listed)).To(Equal([][2]string{
-			{hostSourceID, "Acme debug"}, {hostSourceID, "Plan"}, {BuiltinSourceID, "Edit"}, {BuiltinSourceID, "Read-only"},
+			{hostSourceID, "Acme debug"}, {hostSourceID, "Plan"}, {BuiltinSourceID, "Edit"}, {BuiltinSourceID, "Lint"}, {BuiltinSourceID, "Read-only"},
 		}))
 		plan, err := catalog.GetPreset(ctx, "plan")
 		Expect(err).NotTo(HaveOccurred())
@@ -124,7 +124,7 @@ var _ = Describe("Catalog host source precedence", func() {
 		listed, err := catalog.ListPresets(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(presetSummaries(listed)).To(Equal([][2]string{
-			{"file", "Acme debug"}, {"builtin", "Plan"}, {"builtin", "Edit"}, {"builtin", "Read-only"},
+			{"file", "Acme debug"}, {"builtin", "Plan"}, {"builtin", "Edit"}, {"builtin", "Lint"}, {"builtin", "Read-only"},
 		}))
 		debug, err := catalog.GetPreset(ctx, "ACME debug")
 		Expect(err).NotTo(HaveOccurred())
