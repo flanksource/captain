@@ -1,877 +1,152 @@
 # Captain
 
-Captain is a Go CLI for working with **Claude Code sessions, hooks, and sandboxes**.
-
-It provides tools to:
-
-- inspect Claude Code project/session history
-- summarize tool usage, paths, binaries, and API cost
-- list files changed by a session
-- install Claude Code hooks
-- run a workflow's **verification** checks — commands, LLM judges, and fixtures — as a definition of done
-- test and use AI providers from the command line
-- run iterative AI agents with verifiers, worktrees, and commits
-- generate/build/run containerized Claude Code sandboxes
-- inspect and clean stored Claude project session data
-- expose captain commands as an MCP server
-- run a web UI for launching and chatting with AI agents
-- configure default backend, model, and AI safety toggles
-
-```xml h=185px w=358px preview
-<div style="font-family:system-ui,sans-serif;padding:20px;color:var(--foreground)">
-  <label for="amt" style="font-size:14px;font-weight:600">Monthly budget</label>
-  <div id="out" style="font-size:30px;font-weight:700;color:var(--chart-1);margin:6px 0">$2,500</div>
-  <input id="amt" type="range" min="500" max="10000" step="100" value="2500"
-    style="width:100%;accent-color:var(--primary)" />
-  <p style="font-size:13px;color:var(--muted-foreground)">Drag to adjust — the figure updates live.</p>
-  <script>
-    var amt = document.getElementById('amt');
-    var out = document.getElementById('out');
-    amt.addEventListener('input', function () {
-      out.textContent = '$' + Number(amt.value).toLocaleString();
-    });
-  </script>
-</div>
-```
-
-```html preview
-<div style="font-family:system-ui,sans-serif;padding:20px">
-  <div id="cards" style="display:flex;gap:14px;flex-wrap:wrap"></div>
-  <script>
-    var stats = [
-      ['Active users', '12,480', '+8.2% MoM', 'var(--chart-2)'],
-      ['Revenue', '$48.2k', '+3.1% MoM', 'var(--chart-1)'],
-      ['Churn', '2.4%', '-0.5% MoM', 'var(--chart-5)']
-    ];
-    document.getElementById('cards').innerHTML = stats.map(function (s) {
-      return '<div style="flex:1;min-width:150px;padding:16px;background:var(--card);' +
-        'color:var(--card-foreground);border:1px solid var(--border);' +
-        'border-radius:var(--radius)">' +
-        '<div style="font-size:13px;color:var(--muted-foreground)">' + s[0] + '</div>' +
-        '<div style="font-size:26px;font-weight:700;margin-top:4px">' + s[1] + '</div>' +
-        '<div style="font-size:12px;font-weight:600;margin-top:4px;color:' + s[3] + '">' +
-        s[2] + '</div>' +
-        '</div>';
-    }).join('');
-  </script>
-</div>
-```
-
-## What it does
-
-From the codebase, Captain is organized around a few core capabilities:
-
-### 1. Claude Code history and cost analysis
-
-Captain reads Claude session history and exposes commands for:
-
-- `history` — inspect tool usage from Claude sessions
-- `info` — show project/session metadata for the current directory
-- `cost` — estimate and group token/API usage across sessions
-- `projects list` — list tracked Claude projects and sessions
-- `projects clean` — remove old session history
-
-It analyzes:
-
-- tools used
-- files/directories read and written
-- domains accessed
-- binaries executed
-- approval / denial state
-- categories of bash activity
-- token and cost summaries
-
-### 2. Claude hooks
-
-Captain can install hook commands into Claude settings for:
-
-- **PreToolUse bash scanning** via `hook bash-check`
-
-The bash-check hook scans bash commands and can deny unsafe or disallowed commands.
-
-### 3. Verification
-
-`captain verify` runs the checks an `api.Workflow` declares against a working tree and reports each one's verdict:
-
-- `--command` — a shell command run as a pass/fail check (repeatable)
-- `--prompt` — a `.prompt` LLM judge, judged by the run's provider (repeatable)
-- `--fixture` — a fixture document handed to the runner configured as `verify.fixtureRunner` in `~/.captain.yaml`
-
-The same checks are the generate→verify loop's definition of done: a failing verdict's output feeds the next iteration. A declared check with nothing to run it is an error, never a silent pass.
-
-`captain verify` is local only — it is excluded from both the REST API and the MCP tool set, because `--command` runs through `sh -c` against a caller-chosen `--cwd`, and published as REST or MCP that would be unauthenticated remote code execution.
-
-### 4. Session changes
-
-`captain changes` lists the files written or edited during a Claude Code or Codex session:
-
-- defaults to the most recent session in the current directory
-- `--session-id` targets a specific session by exact or prefix match
-- `--all` searches across all projects
-- `--claude` / `--codex` filter by session source
-- `--agents` (default: true) includes files edited by nested sub-agents
-- `--plans` / `--ignored` control whether plan files and git-ignored files are shown
-
-### 5. AI provider utilities
-
-Captain includes provider-agnostic AI utilities under `captain ai`:
-
-- `ai prompt` — send a prompt to a selected backend/model
-- `ai agent` — run an iterative agent loop with optional verifiers, a throwaway git worktree, commit, and LLM judge
-- `ai models` — list model information
-- `ai test` — verify provider connectivity
-- `ai fixture` — run a YAML benchmark fixture across multiple Claude configurations and capture a markdown evidence report
-
-Supported backends are inferred from code and dependencies, including:
-
-- Anthropic
-- Gemini / Google
-- OpenAI-compatible paths via the internal provider layer
-- CLI/provider abstractions for local tool-backed backends (claude, codex, gemini)
-
-### 6. Adapter status and configuration
-
-- `whoami` — lists every AI adapter (API providers and CLI agents), how each is authenticated, whether its binary is installed, and the models it exposes
-- `configure` — configure per-provider agent, model, and effort defaults in `~/.captain.yaml`, or validate and save direct-provider API tokens in `~/.config/captain/vault`
-
-### 7. Web UI and MCP server
-
-- `serve` — starts an HTTP API and embedded web UI for launching AI agents and opening follow-up chat sessions; supports `--dev` to proxy to the Vite dev server
-- `mcp` — exposes captain commands (history, info, cost, changes, verify, etc.) as MCP tools so Claude Code can invoke them directly
-
-### 8. Utility commands
-
-- `cmux info <copy-id-lines|pid>` — resolves all processes in a cmux surface, pane, or workspace and reports runtime, CPU, memory, listening TCP ports, and optional Go stacks
-- `cmux screenshot` — captures a screenshot of the active browser surface in cmux and copies the path to the clipboard
-- `port kill <port>` — finds and kills the process listening on a TCP port
-
-### 9. Container sandbox builder
-
-Captain can discover Claude-related local configuration and package it into a container sandbox.
-
-Supported workflows include:
-
-- `container` — interactive TUI
-- `container list` — list discovered components
-- `container generate` — generate Dockerfile/build context and sandbox config
-- `container build` — build the sandbox image
-- `container run` — run the generated sandbox
-- `sandbox presets` — list available sandbox-runtime presets
-
-The container workflow is designed to package things like:
-
-- Claude config
-- agents
-- commands
-- hooks
-- MCP server config
-- project settings
-- token/env passthrough
-- sandbox-runtime presets for languages/tools
-
-## Project layout
-
-```text
-captain/
-├── cmd/captain/           # CLI entrypoint
-├── docs/                  # Astro documentation site
-├── pkg/ai/                # AI abstraction, provider config, models
-├── pkg/ai/agent/          # Iterative agent loop, plugins (verify, worktree, judge)
-├── pkg/ai/fixture/        # YAML fixture runner for Claude configuration benchmarks
-├── pkg/api/               # HTTP API types and handlers (used by serve)
-├── pkg/bash/              # Bash scanning, classification, rules
-├── pkg/captainconfig/     # ~/.captain.yaml config load/save
-├── pkg/claude/            # Claude history, sessions, parsing, formatting
-├── pkg/cli/               # Cobra/clicky command implementations
-├── pkg/cli/webapp/        # Embedded React web UI (served by captain serve)
-├── pkg/cmux/              # Terminal multiplexer integration (processes and screenshots)
-├── pkg/collections/       # Generic collection utilities
-├── pkg/container/         # Sandbox discovery, generation, build/run logic
-├── pkg/container/base/    # Embedded agent base image (Dockerfile, deps.yaml, entrypoint.sh)
-├── pkg/git/               # Git worktree helpers
-├── pkg/sandbox/           # Token/preset/sandbox helpers
-├── Makefile               # Thin wrapper around Taskfile
-└── Taskfile.yaml          # Main developer tasks
-```
-
-## CLI overview
-
-Top-level commands exposed by `cmd/captain/main.go`:
-
-```bash
-captain history
-captain info
-captain cost
-captain changes
-captain sandbox
-captain ai
-captain whoami
-captain configure
-captain serve
-captain verify
-captain hook
-captain projects
-captain container
-captain mcp
-captain cmux
-captain port
-```
-
-### History
-
-```bash
-captain history
-captain history --summary
-captain history --all
-captain history --tool Bash --since now-7d
-captain history --category git --compact
-captain history --session-id 019e0365-dc2a-7ad0-a5a8-78936481a928
-captain history 019e0365-dc2a-7ad0-a5a8-78936481a928
-```
-
-Useful flags include:
-
-- `--file`
-- `--tool`
-- `--dir`
-- `--category`
-- `--approved`
-- `--session-id`
-- `--limit`
-- `--since`
-- `--all`
-- `--short`
-- `--compact`
-- `--summary`
-
-### Info
-
-```bash
-captain info
-captain info --path /path/to/project
-```
-
-Shows project root detection, Claude project directory, session counts, history range, and tool call totals.
-
-### Cost
-
-```bash
-captain cost
-captain cost --group-by project
-captain cost --group-by model
-captain cost --group-by tool
-captain cost --group-by category
-captain cost --session-id 019e0365-dc2a-7ad0-a5a8-78936481a928
-captain cost --all --since now-30d
-```
-
-Supported groupings from the code:
-
-- `session`
-- `project`
-- `model`
-- `day`
-- `dir`
-- `file`
-- `tool`
-- `category`
-
-### Changes
-
-```bash
-captain changes
-captain changes --session-id <session-id>
-captain changes --all --since now-7d
-captain changes --claude
-captain changes --agents=false
-```
-
-Lists the files written or edited during a Claude Code or Codex session. Defaults to the most recent session in the current directory.
-
-### Hook installation
-
-Install the bash safety hook:
-
-```bash
-captain hook bash-check install
-captain hook bash-check install --user
-```
-
-### Verification
-
-```bash
-captain verify --command "go test ./..." --command "golangci-lint run"
-captain verify --fixture acceptance.md --cwd /path/to/repo
-captain verify --prompt review-diff.prompt --model claude-sonnet-4-6
-```
-
-Running fixtures needs a runner, since captain declares fixtures but does not execute them:
-
-```yaml
-# ~/.captain.yaml
-verify:
-  fixtureRunner: [gavel, fixture, verify]
-```
-
-The runner is handed the fixture document on stdin, plus `--cwd <dir>` and one `--changed <path>` per changed file, and answers on stdout with NDJSON: any number of `{"progress": <report>}` lines, then exactly one `{"report": <report>}`.
-
-### AI utilities
-
-```bash
-captain ai prompt --model claude-sonnet-4 --prompt "Summarize this diff"
-captain ai agent --prompt "Fix the failing tests" --verify "go test ./..."
-captain ai agent --prompt "Refactor this module" --worktree --commit --judge "all tests pass"
-captain ai test --model gemini-2.0-flash
-captain ai models
-captain ai fixture --file examples/ai-fixtures/mission-control-investigate.yaml
-```
-
-Relevant provider flags include:
-
-- `--model`
-- `--backend`
-- `--api-key`
-- `--no-cache`
-- `--budget`
-- `--debug`
-
-#### AI agent
-
-`captain ai agent` runs an iterative AI agent loop with optional quality gates:
-
-- `--prompt` / `-p` — task prompt (required; can be piped from stdin)
-- `--system` / `-s` — system prompt override
-- `--verify` — shell command run after each turn; non-zero exit triggers a re-run (repeatable)
-- `--max-iterations` — max verify-and-rerun iterations (default: 1)
-- `--scope` — verifier scope: `changed` (only changed files) or `all` (default)
-- `--worktree` — run in a throwaway git branch/worktree
-- `--branch` — worktree branch name (default: `captain/agent-<timestamp>`)
-- `--commit` — commit changes on the worktree branch (requires `--worktree`)
-- `--judge` — LLM rubric; fails a turn when the judge rejects the result
-
-#### Fixture benchmarks
-
-`captain ai fixture` runs the same prompt against multiple Claude
-configurations (different models, tool allowlists, MCP servers, prompt
-caching on/off) and prints a side-by-side table of duration, cost,
-tokens, and tool-call counts. It's intended to produce **evidence** that
-one approach — e.g. a structured MCP — is faster and cheaper than a
-Bash/CLI equivalent.
-
-```bash
-captain ai fixture -f examples/ai-fixtures/mission-control-investigate.yaml
-captain ai fixture -f examples/ai-fixtures/mission-control-describe.yaml --report /tmp/mc-describe.md
-captain ai fixture -f examples/ai-fixtures/mission-control-multistep.yaml --repeat 5
-```
-
-Flags:
-
-- `--file` / `-f` — path to the YAML fixture (required)
-- `--report` / `-r` — write an evidence report (headline, metrics table, per-run config, tool-usage breakdown) to this path
-- `--format` — report format: `markdown` (default), `html`, or `ansi`
-- `--artifacts` — directory for per-run `stream-json` captures (default: `<fixture-dir>/.captain/fixtures/<name>/`)
-- `--repeat` — override every run's repeat count (useful for smoke tests: `--repeat 1`)
-
-YAML schema (abridged):
-
-```yaml
-name: my-benchmark
-description: What you're measuring and why
-prompt: |
-  The prompt sent to every run (can be overridden per-run).
-baseline: direct        # which run to compare against for Speedup/Cheaper ratios
-repeat: 3               # default N per run; overridable per-run and via --repeat
-
-defaults:
-  timeout: 3m
-  permissionMode: bypassPermissions
-  promptCaching: true
-  model: claude-sonnet-4
-
-runs:
-  - name: direct
-    tools: [Bash]
-    allowedTools: ["Bash(kubectl *)", "Bash(aws *)"]
-
-  - name: mission-control
-    tools: [default]
-    mcpConfig: [.mcp.json]
-    allowedTools: ["mcp__mission-control__*"]
-    repeat: 5           # overrides fixture-level repeat for this run
-```
-
-#### Isolation guarantees
-
-Two rules the runner enforces for you so direct-vs-MCP comparisons stay
-honest — both are automatic, no extra flags needed:
-
-- **MCP is opt-in per run.** A run gets MCP servers only when `mcpConfig`
-  is set. With no `mcpConfig`, the runner passes `--strict-mcp-config`
-  with an empty inline config, so ambient `.mcp.json` in the fixture
-  directory and user-level MCP servers are never picked up.
-- **`allowedTools` is treated as a real allowlist.** Claude CLI's
-  `--allowedTools` is natively an auto-approve list, not a restriction —
-  under `bypassPermissions` the model can still reach for anything. When
-  a run specifies `allowedTools`, the runner demotes the effective
-  `--permission-mode` from `bypassPermissions` to `default` so unlisted
-  tools are denied in non-interactive mode. If you set `permissionMode`
-  to anything other than `bypassPermissions` explicitly, your choice is
-  preserved. Runs without `allowedTools` keep whatever permission mode
-  they asked for.
-
-Practical consequence for a direct-vs-MCP fixture: the `direct` run with
-`allowedTools: [Bash(kubectl *), ...]` can only shell out to those
-patterns; the `mission-control` run with
-`allowedTools: [mcp__mission-control__*]` can only use MCP — Bash is off
-even though it's a built-in. Neither run can accidentally borrow from
-the other's toolset.
-
-Supported per-run fields: `name`, `prompt`, `system`, `model`, `timeout`,
-`cwd`, `permissionMode`, `appendSystemPrompt`, `settings`,
-`maxBudgetUSD`, `repeat`, `tools`, `allowedTools`, `disallowedTools`,
-`mcpConfig`, `addDir`, `betas`, `extraArgs`, `env`, `promptCaching`,
-`noSessionPersistence`, `bare`. See
-[`examples/ai-fixtures/`](examples/ai-fixtures/) for working benchmarks.
-
-Repeats (`repeat: N`) execute each run N times and report the mean
-duration/cost plus a sample standard deviation — single-shot LLM numbers
-are noisy and N≥3 makes comparisons defensible. The raw per-iteration
-`stream-json` is saved under the artifacts directory so every claim in
-the report is reproducible.
-
-#### Kubernetes proxy capture
-
-Set `captureKubernetesProxy: true` at the fixture level to route every
-`kubectl` call made during the fixture through a captain-managed reverse
-proxy, and record both layers of activity:
-
-```yaml
-captureKubernetesProxy: true
-kubeconfig: ~/.kube/config   # optional; defaults to client-go discovery
-```
-
-When enabled, the runner:
-
-- starts a localhost reverse proxy that loads the user's kubeconfig (auth
-  plugins included) and forwards to the real cluster
-- generates a temp kubeconfig pointing at the proxy and injects
-  `KUBECONFIG=<that path>` into every run's environment, so kubectl can't
-  bypass it
-- writes a JSONL log per run/iteration to
-  `<artifacts>/<run>-<iter>.kubectl.jsonl` with two record types:
-    - `{"type":"command","command":"kubectl get pods -n prod"}` — literal
-      CLI invocation parsed from the model's Bash tool calls
-    - `{"type":"request","method":"GET","path":"/api/v1/...","status":200}`
-      — every API call observed by the proxy
-- surfaces a **Kubectl activity** section in the report with per-run CLI
-  and API counts plus a few sample commands
-
-### Container sandbox workflow
-
-```bash
-captain container
-captain container list
-captain container generate
-captain container generate -i
-captain container build --preset golang
-captain container run
-captain sandbox presets
-```
-
-Important generate/build flags:
-
-- `--interactive`
-- `--preset`
-- `--base`
-- `--mode copy|mount`
-
-### Whoami
-
-```bash
-captain whoami
-captain whoami --backend anthropic
-captain whoami --models=false
-captain whoami --no-cache
-```
-
-Lists every AI adapter (API providers and CLI agents: `anthropic`, `openai`, `gemini`, `claude-cli`, `claude-agent`, `codex-cli`, `gemini-cli`), their authentication method, binary availability, and a live model listing.
-
-Provider model listings are resolved through credential- and endpoint-scoped entries under `~/.config/captain/models/` (24h TTL), and priced from the OpenRouter snapshot in `~/Library/Caches/flanksource/openrouter-pricing.json` (24h TTL). The model cache uses a machine-local keyed namespace, so different provider accounts cannot reuse one another's availability. `--no-cache` skips both caches, re-queries every provider's model endpoint plus OpenRouter pricing, and rewrites only the affected model-cache entries with the fresh result. Add `-v` to see an access line per request, `-vv` for headers and query params, `-vvv` for request bodies, `-vvvv` for response bodies; credentials are redacted at every rung. Failed requests (status >= 400 or a transport error) are logged at the default verbosity. `-Plog.level.http=<level>` raises HTTP logging alone, and `-Phttp.log.base-level=<level>` (or `HTTP_LOG_BASE_LEVEL`) shifts the whole ladder.
-
-To keep the traffic instead of watching it scroll past, `-Phttp.har=<path>` writes every request/response pair — including redirect hops and retries — to a HAR 1.2 archive you can open in browser DevTools. It applies to any command, not just `whoami`, and the file is written even when the command fails. `-Phttp.har.level=metadata` records headers, query strings and timings without bodies; `-Phttp.har.maxBodySize=<bytes>` changes the 64 KB per-body cap (`0` for none). Credentials are masked the same way as in the wire log, which means the archive is safe to attach to a bug report but cannot be replayed — `-Phttp.har.sensitive=true` keeps them verbatim and writes the file `0600`. Use `-Phttp.captain.har=<path>` to capture captain's own traffic when a shared `http.har` is already set.
-
-### Configure
-
-```bash
-captain configure
-captain configure openai
-captain configure openai --test
-captain configure openai --agent codex-agent --model gpt-5.6-sol --effort high --active
-```
-
-The providerless interactive wizard writes `~/.captain.yaml` with defaults for backend, model, reasoning effort, budget, timeout, and feature toggles (caching, MCP, hooks, skills, user/project settings, memory).
-
-With a provider and any of `--agent`, `--model`, `--effort`, or `--active`, `configure` saves provider-specific runtime defaults in `~/.captain.yaml`. `--effort default` clears an explicit effort so the selected model chooses its own default. The active provider supplies the agent and model for completely flagless runs. Explicit command flags still win, and each fallback model independently inherits defaults from its own provider.
-
-Passing `anthropic`, `openai`, `gemini`, or `deepseek` securely prompts for an API token, validates it with the provider's model-list endpoint, and saves it to `~/.config/captain/vault` only when validation succeeds. `--test` validates the currently effective token without writing. Automation may use `--token`, but interactive input is preferred because command-line arguments can be retained in shell history or process listings. Explicit runtime keys take precedence over the vault, and the vault takes precedence over environment variables.
-
-The `/whoami` page in `captain serve` exposes the same token operations plus agent, model, effort, and active-provider controls. Stored tokens are never displayed; only a masked identifier and credential source are returned.
-
-### Serve
-
-```bash
-captain serve
-captain serve --port 8080
-captain serve --dev
-go run ./cmd/captain serve --dev --open
-task www:dev
-task www:build
-```
-
-Starts an HTTP API and embedded web UI. The UI launches `captain ai agent` operations and opens follow-up chat windows that resume the returned session. `--dev` keeps the Go API on the configured `--port` (`9020` by default), starts Vite on a random free port, and proxies `/api` to the API. Pass `--ui-port` to use a specific Vite port. Use `task www:dev` for the local Go-backed Vite proxy with the browser opened, and `task www:build` to rebuild the embedded web UI assets.
-
-### MCP server
-
-```bash
-captain mcp
-```
-
-Exposes captain commands as MCP tools. Auto-exposes all commands except `sandbox`, `projects`, `container`, `hook`, and `ai`.
-
-### Browser sessions
-
-```bash
-# List live agent-browser sessions with their cost and owning agent session
-captain browser ls
-
-# Include sessions whose daemon has exited, and search by name/pid/agent session
-captain browser ls --all
-captain browser ls -q 8c630de6
-
-# Register captain as an agent-browser launch plugin (inspect the merge first)
-captain browser install --global --dry-run
-captain browser install --global
-```
-
-```
- SESSION                    AGE    CPU    MEMORY  PID    AGENT SESSION     PROJECT
- captain-fb7c9f910548       12m    3.1%   412MB   11473  claude 8c630de6   captain
- designpg/default           2h4m   0.4%   180MB    9921  codex  01f2a9c    clicky-ui
-```
-
-An `agent-browser` session is only a name plus a set of sidecar files, and its `<session>.pid` holds the **daemon's** pid — the browser itself is an unrecorded child of that daemon. So CPU and memory are summed across the daemon's whole process tree, and age comes from the daemon's start time.
-
-The owning agent session is resolved from three independent signals, first hit wins, and the one used is reported as the row's link source:
-
-1. **`env`** — the daemon inherits the environment of the shell the agent ran `agent-browser` from, including `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. This needs no setup and works for browsers started before the plugin was installed.
-2. **`sidecar`** — the record `captain browser install` arranges for, written to `~/.captain/browser/<namespace>/<session>.json` when the browser launches. Covers the cases where the environment cannot be read.
-3. **`ancestor`** — the nearest claude/codex process above the daemon in the process tree.
-
-`captain browser install` merges captain into `agent-browser.json` as a `launch.mutate` plugin, preserving the rest of the configuration. The plugin appends nothing to the launch: agent-browser hashes the launch configuration into `<session>.config`, and a hash that varied per agent session would restart the daemon and discard the browser's state. Captain never deletes agent-browser's sidecar files — `agent-browser doctor` owns that cleanup.
-
-Install also creates `~/.captain/browser` and registers it as writable in both agent sandboxes, because the plugin runs inside whatever sandbox confines the agent's own tools and cannot grant itself access once it is running:
-
-| Agent | File | Key |
-|---|---|---|
-| Claude Code | `~/.claude/settings.json` | `sandbox.filesystem.allowWrite` |
-| codex | `~/.codex/config.toml` | `[sandbox_workspace_write].writable_roots` |
-
-Without this the plugin's write is denied as a bare "operation not permitted" and browsers silently go unattributed. `pkg/agentsandbox.EnsureWritable` is the reusable entry point for any other captain feature that has to write from inside an agent's sandbox; pass `--sandbox=false` to skip it. The codex edit is line-level so comments and ordering survive; `settings.json` is rewritten by `encoding/json` and comes back key-sorted, exactly as `captain hook monitor install` already leaves it.
-
-Browsers a session opened also appear on `captain sessions get <id>` under `browsers`.
-
-### Utility commands
-
-```bash
-# Inspect every process attributed to a copied cmux surface
-captain cmux info \
-  surface_ref=surface:21 \
-  surface_id=65BB4725-B785-48DE-B3FD-31167ECB8300
-
-# Pipe the Copy IDs block directly from the clipboard
-pbpaste | captain cmux info
-
-# Inspect a PID and request a Go goroutine stack through gops
-captain cmux info 33745 --stack
-
-# Screenshot active browser surface in cmux
-captain cmux screenshot
-
-# Kill the process on a TCP port
-captain port kill 3000
-```
-
-## Build and development
-
-This repo uses `task` as the main task runner.
-
-### Build
-
-Build the web UI before the Go binary so the generated JavaScript and CSS assets
-are included in the embedded filesystem:
-
-```bash
-task www:build
-task build
-```
-
-Binary output:
-
-```text
-.bin/captain
-```
-
-### Docs
-
-```bash
-task docs:dev
-task docs:build
-```
-
-The Astro docs site lives in `docs/`. The prompts engine is the first complete section; other Captain areas are scaffolded for future expansion.
-
-### Test
-
-```bash
-task test
-# or
-make test
-```
-
-### Lint
-
-```bash
-task lint
-```
-
-### Install
-
-```bash
-task install
-```
-
-By default this copies the built binary to:
-
-```text
-/usr/local/bin/captain
-```
-
-## Docker image
-
-`pkg/container/base/Dockerfile` (embedded into the binary, built as `claude-env:base` by
-`captain container`) builds on `flanksource/base-image` and installs a full agent toolchain:
-
-- **Agent CLIs** — one per backend: `claude` (`@anthropic-ai/claude-code`), `codex`
-  (`@openai/codex`), `gemini` (`@google/gemini-cli`), plus `tsx` for the `claude-agent`
-  SDK bridge
-- **Flanksource tools** — `captain`, `gavel`, `repomap` (installed via `deps` from
-  `pkg/container/base/deps.yaml`)
-- **Go** — toolchain, `task`, `ginkgo`, `golangci-lint`
-- **Node** — Node.js 22, `npm`, `pnpm`, `typescript`
-- **Browser automation** — `agent-browser` and Playwright Chromium (shared at
-  `/ms-playwright`)
-- **Shell tooling** — `rg`, `fd`, `bat`, `delta`, `gh`, `jq`, `tree`, `htop`, `lsof`,
-  `sqlite3`, `psql`, `tmux`, `shellcheck`, `vim`, `nano`, `zsh`, `fzf`, git
-
-The image is set up to:
-
-- create a user matching host UID/GID
-- switch execution using `gosu`
-- use `/workspace` as the working directory
-
-Building it requires BuildKit. Set `GITHUB_TOKEN` (or `GH_TOKEN`) before
-`captain container build` to avoid GitHub's unauthenticated API rate limit — captain passes
-it through as a BuildKit secret, so it never lands in image history. To build by hand:
-
-```bash
-DOCKER_BUILDKIT=1 docker build -t claude-env:base \
-  --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
-  pkg/container/base
-```
-
-Publishing to `flanksource/captain` on Docker Hub and GHCR (`linux/amd64` +
-`linux/arm64`) is the **Publish Image** workflow. It is manual only — dispatch it from
-the tag you want to ship, and only once that tag's release exists, since the image
-installs `captain` from the latest GitHub release.
-
-### Running a git-agent sidecar from it
-
-`captain sandbox git-agent deploy` enrolls an agent and places its sidecar on Docker or
-Kubernetes using this image:
-
-```bash
-captain sandbox git-agent serve --role mailbox --listen :7422 &   # once, on the supervisor
-captain sandbox git-agent deploy worker-01 --target docker --dry-run
-captain sandbox git-agent deploy worker-01 --target docker
-```
-
-It applies by default; `--dry-run` prints every intended mutation first. Before minting
-anything it proves a live mailbox is listening and presenting this host's own key, then
-resolves the two addresses the protocol needs in opposite directions — the one the agent
-reaches the mailbox on, and the one the supervisor dispatches back to. Leaving either to
-be derived produces an agent that enrols, looks healthy in `git-agent list`, and fails at
-the first dispatch, so `deploy` refuses rather than guesses. For `--target kubernetes`
-that means `--supervisor-address` is required unless captain is itself running in the
-cluster: a laptop is not routable from a managed cluster.
-
-The sidecar runs unprivileged (uid 501, all capabilities dropped, no privilege
-escalation, read-only root with scratch on `/tmp`) and never receives a container runtime
-socket — that would be a full host escape, and there is no flag to grant one. Sizing is
-`--cpu-limit` / `--memory-limit` / `--storage`; the image is `--image`. The captain token
-reaches the workload as a mounted file, never in argv, and `undeploy` tears the workload
-down and revokes both the key and the token together.
-
-### Over HTTPS, with no separate mailbox process
-
-The mailbox can be hosted on the ordinary `captain serve` instead of its own SSH
-listener. That is the process holding the database the tokens live in, so one server
-serves the API, the UI and the git endpoint:
-
-```bash
-captain serve --host 0.0.0.0 --tls --tls-host supervisor.internal   # supervisor
-captain sandbox git-agent add worker-01 --endpoint https://supervisor.internal:9020
-# run the printed join command on the agent host
-```
-
-`--tls` generates a self-signed certificate beside the git-agent keys and reuses it;
-`--tls-cert` / `--tls-key` supply a real one instead. The certificate is never silently
-re-issued, because every enrolled agent pins it — a certificate that does not cover an
-address you name with `--tls-host` is an error at startup rather than a push failure
-weeks later. An enrolling agent receives that certificate over the exchange it already
-pinned, and verifies later relays against it.
-
-Requests from `127.0.0.1` need no token, so the local UI, CLI and hooks are unaffected;
-anything off-box needs one. See `captain token` to mint, list and revoke them. Two
-scopes exist: `git` reaches the push endpoint only, and `api` reaches the command API —
-an agent gets `git`, so a leaked agent token cannot run commands on the supervisor.
-
-Tokens are durable rather than single-use, which is what lets a restarting or rescheduled
-sidecar re-present the one it already has. `captain sandbox git-agent add --pool
---max-agents 5` mints one token that names each member as it arrives, for a scaled
-deployment; members of a pool share a secret, so a token bound to a single agent remains
-the default and stronger choice.
-
-## Sandbox credentials
-
-A sandbox needs a way to reach a model provider. An API key can simply be passed through,
-but a **subscription** login cannot: Claude Code keeps its OAuth credential in the macOS
-Keychain (item `Claude Code-credentials`) or `~/.claude/.credentials.json`, and Codex keeps
-a ChatGPT-plan credential in `~/.codex/auth.json`, which has no env-var form at all.
-
-`captain sandbox credentials` mirrors those logins **with the refresh token stripped**, so a
-sandbox holds an access token it can use but cannot use to mint another. For Claude that
-also drops the entire `mcpOAuth` map, which holds unrelated client secrets for every MCP
-server the user has authorized.
-
-```bash
-captain sandbox credentials status                     # expiry per provider, and where it publishes
-captain sandbox credentials sync --directory ~/.captain/sandbox/credentials
-captain sandbox credentials sync --namespace agents    # into a Kubernetes Secret
-```
-
-Because the copy cannot refresh itself, the supervisor has to. `captain serve` runs a
-republish loop whose schedule comes from the credential's own expiry rather than a fixed
-interval, so what lands in the target is as fresh as the host can make it. An
-already-expired source is refused rather than published — a dead token in a Secret would
-surface as an unexplained `401` inside an agent instead of an error where it was caused.
-The host CLIs refresh their own tokens when used, so the fix is to use them.
-
-```yaml
-# ~/.captain.yaml — publishing is opt-in; with no entries nothing is mirrored
-credentials:
-  refreshMargin: 5m
-  publish:
-    - providers: [claude, codex]
-      directory: ~/.captain/sandbox/credentials      # docker bind-mounts this
-    - providers: [claude, codex]
-      kubernetes: { namespace: agents, secret: captain-agent-credentials }
-```
-
-Local `srt` and `container` sandboxes consume the same credentials through the backend's
-`tokens:` block, which also finally makes the cloud providers beside them take effect:
-
-```yaml
-sandbox:
-  backends:
-    local:
-      kind: srt
-      tokens: { claude: {}, codex: {}, github: {} }
-```
-
-The redacted copy lands in a private directory and the CLI is pointed at it with
-`CLAUDE_CONFIG_DIR` / `CODEX_HOME`. Once that replacement exists the host's own credential
-file is added to the sandbox's deny-read list, so the sandboxed CLI can no longer reach the
-refresh token — only the credential file, not the whole state directory, since the CLI still
-needs its own settings and history.
-
-A deployed sidecar receives the Secret as a read-only **directory** mount at
-`/run/captain/credentials` (`--credentials-secret`, or `--credentials-dir` for docker) and
-copies each credential to the path its CLI reads. The mount is a directory rather than a
-`subPath` deliberately: kubelet never updates a `subPath` volume after the pod starts, which
-would pin the sidecar to the first credential it ever saw. The Secret is shared across every
-agent in the namespace, so `undeploy` leaves it alone.
-
-## Dependencies and stack
-
-Primary stack:
-
-- **Go 1.25.8**
-- **Cobra** for CLI wiring
-- **clicky** for formatting/output/flag binding
-- **charmbracelet/huh** for the interactive `configure` TUI
-- **sandbox-runtime** for sandbox preset handling
-- AI SDKs for Anthropic, OpenAI, and Gemini/Google
-- shell parsing via `mvdan.cc/sh/v3`
+Captain is a Go CLI and embeddable runtime for AI prompts, agent execution, verification and session history. It runs API, agent, CLI and cmux runtimes selected by model, records Claude and Codex sessions, brokers approvals, and exposes a local web workbench.
 
 ## Quick start
 
-```bash
-cd captain
+Build with the Go version declared in [go.mod](go.mod), Node.js/pnpm for the web assets, and [Task](https://taskfile.dev) installed:
+
+```sh
+task www:build
 make build
-.bin/captain info
-.bin/captain history --summary
-.bin/captain changes
-.bin/captain container list
-```
-
-Configure defaults:
-
-```bash
 .bin/captain configure
-.bin/captain whoami
+.bin/captain prompt list
+.bin/captain prompt run --model agent:sonnet -p 'Explain this repository'
+.bin/captain serve --open
 ```
 
-If you want to use hooks:
+Local agent runtimes require their CLI and its login. API runtimes require provider credentials; `captain configure openai` securely validates and stores an API token. `captain whoami --models=false` inspects runtime readiness. Server/session persistence uses PostgreSQL; startup logs identify the selected database.
 
-```bash
-.bin/captain hook bash-check install --user
-.bin/captain hook monitor install
-# Opt in to Claude CLI estimate capture:
-.bin/captain hook monitor install --capture-cost
+## Prompts
+
+Keep instructions and runtime declarations in a `.prompt` file:
+
+```yaml
+---
+name: Review a package
+model: agent:sonnet
+permissions:
+  access: read-only
+budget:
+  timeout: 10m
+input:
+  default:
+    target: pkg/cli
+---
+{{role "user"}}
+Review {{target}} for correctness. Report findings with file paths and lines.
 ```
 
-`--capture-cost` is opt-in because it configures a Claude Code custom status
-line, with Claude's normal custom-status-line UI effects. Captain composes with
-an existing status-line command and captures `cost.total_cost_usd` as Claude's
-client-side session estimate. It is never attributed to model calls or written
-as provider-reported billing. If the current project defines a higher-precedence
-`.claude/settings.json` or `.claude/settings.local.json` status line, installation
-fails rather than silently configuring an overridden user command. Without the
-flag, monitor installation changes only the existing lifecycle hooks and Codex
-notify configuration. Ordinary Claude transcripts and Codex's local artifacts
-do not expose a monetary total, so those histories keep Captain's token-based
-list-price estimate.
+Save as `review.prompt`, preview the effective request, then execute:
 
-Start the web UI:
-
-```bash
-.bin/captain serve
+```sh
+captain lint promptfile review.prompt
+captain prompt render review.prompt -V target=pkg/promptrun --json
+captain prompt run review.prompt -V target=pkg/promptrun
+captain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.1-sol
 ```
 
-## Notes
+Render performs no model call or setup. Files are templates; inline `-p` and piped text are literal unless variables or `{{input}}` opt into templating. Piped input binds to `input`, a named `-V key=-`, or is appended when unused. Use `--attach` for files/URLs, `--preset` for reusable runtime layers and `--no-stream --json` for a buffered structured result.
 
-- Captain is tightly focused on **Claude Code workflows**.
-- It is both an analysis tool and an execution/control tool.
-- The container/sandbox functionality is a major part of the project, not a side feature.
-- Many commands assume the presence of Claude local state under the user’s Claude config/projects directories.
-- Runtime defaults are persisted to `~/.captain.yaml`; validated provider tokens are persisted separately to the private `~/.config/captain/vault` file.
+```sh
+captain prompt --help
+captain prompt run --help
+captain prompt render --no-color --help
+captain prompt --schema
+```
+
+`prompt` and every child command have colored terminal help, plain output with `--no-color`, `NO_COLOR` or redirection, and Markdown in detected agent sessions. Root help covers authoring; child help adds command examples and generated flags. See the [Prompt CLI guide](docs/src/pages/prompts/cli.mdx), [format](docs/src/pages/prompts/format.mdx), [runtime composition](docs/src/pages/prompts/runtime.mdx) and [sources/API](docs/src/pages/prompts/sources-api.mdx).
+
+## Command map
+
+| Area | Commands | Documentation |
+| --- | --- | --- |
+| Prompts | `prompt list/get/create/update/delete/render/run/observe`, `lint promptfile` | [Prompt CLI](docs/src/pages/prompts/cli.mdx) |
+| Runtime configuration | `configure`, `whoami`, `runtime-preset`, `permissions explain/matrix/convert` | [Configuration](docs/src/pages/configuration/index.mdx) |
+| Verification | `verify`, prompt `workflow.verify` | [Verification](docs/src/pages/agents/verification.mdx) |
+| Sessions | `sessions`, `history`, `info`, `cost`, `changes`, `browser ls` | [Sessions](docs/src/pages/sessions/index.mdx) |
+| Web/API | `serve`, `mcp`, `token` | [Serve](docs/src/pages/serve/index.mdx) |
+| Benchmarks | `ai fixture`, `prompt observe` | [Fixtures](docs/src/pages/fixtures/index.mdx) |
+| Isolation | `container`, `sandbox`, `sandbox credentials`, `sandbox git-agent` | [Sandboxes](docs/src/pages/sandboxes/index.mdx) |
+| Gavel integration | `gavel todos` embeds Captain | [TODO lifecycle](docs/src/pages/todos/index.mdx) |
+
+`captain ai prompt` aliases `captain prompt run`. Other AI utilities include `ai agent` for explicit generate/verify workflows, `ai models`, `ai test`, `ai tokens` and `ai mock`. Use each command's help for its current flags. A runtime is `(model, mode)`; mode is `api`, `agent`, `cli` or `cmux`, with provider derived from the model. Configure provider defaults with `captain configure openai --mode agent --model gpt-6.1-sol --effort high --active`.
+
+## Verification and embedding
+
+```sh
+captain verify --command 'make build' --command 'go test ./pkg/ai/prompt'
+captain verify --fixture acceptance.md --cwd /path/to/repo
+```
+
+Fixtures require a runner, configured in `~/.captain.yaml`:
+
+```yaml
+verify:
+  fixtureRunner: [gavel, fixtures, run, --format, captain-verify-report]
+```
+
+The external runner receives fixture Markdown on stdin plus cwd/changed-file arguments and returns NDJSON progress followed by one report. Captain's `verify` command is local only. Workflow prompts can declare commands, LLM judges and fixtures under `workflow.verify`; failed verdicts feed the next iteration up to `maxIterations`.
+
+Go hosts call `promptrun.Preflight` and `promptrun.Run` with a resolved spec, prepared attachments, timeout and optional recording/approval settings. Gavel uses this same seam and owns its commit finalization. See [Embedding a run](docs/src/pages/agents/embedding.mdx), [Approvals](docs/src/pages/agents/approvals.mdx), [runtime composition](pkg/runtimeprofiles/README.md), [prompt rendering](pkg/ai/prompt/README.md), [recording](pkg/promptrun/README.md), [chat](pkg/aichat/README.md) and [budget rules](pkg/budgets/README.md).
+
+## History, hooks and utilities
+
+```sh
+captain history --summary
+captain history --tool Bash --since now-7d
+captain cost --group-by model
+captain changes --session-id SESSION_ID
+captain sessions get SESSION_ID --json --limit 0
+captain browser ls --all
+```
+
+History filters include tool, category, path, time range and session. Changes defaults to the latest session in the current directory; `--agents=false` excludes nested agents. Token costs distinguish recorded usage, provider-reported cost and estimates; see [Sessions](docs/src/pages/sessions/index.mdx).
+
+```sh
+captain hook bash-check install --user
+captain hook monitor install
+captain hook monitor install --capture-cost
+captain browser install --global --dry-run
+```
+
+The bash-check hook scans shell calls. Monitor hooks track session lifecycle; `--capture-cost` opts into Claude's custom status line and records its client-side estimate separately from provider billing. Installation refuses a higher-precedence project status line that would override it. Browser installation previews/merges an agent-browser launch plugin; see [browser attribution](docs/src/pages/sessions/index.mdx#browser-sessions).
+
+`captain cmux info` accepts copied surface IDs, a PID or stdin and reports process trees, resource use and listening ports; `--stack` requests Go stacks through gops. `captain cmux screenshot` captures the active browser surface. `captain port kill PORT` stops the port's listener. `projects list` and `projects clean` inspect and maintain stored Claude project history.
+
+## Development
+
+```sh
+make build
+make lint
+gavel test ./pkg/ai/prompt
+make test
+task install
+```
+
+`make` forwards to [Taskfile.yaml](Taskfile.yaml). Build writes `.bin/captain`; install uses `go install` and its configured Go bin directory. Rebuild `task www:build` before the Go binary when changing embedded UI assets. `task www:dev` starts the Go-backed Vite development proxy.
+
+```sh
+task docs:dev
+task docs:build
+pnpm --dir docs check
+```
+
+The Astro site covers prompts, runtime composition, approvals, verification, sessions, server configuration, fixtures, sandboxes and the Gavel integration. Start at [the documentation overview](docs/src/pages/index.mdx). Source docs and examples should match the current generated CLI/schema; historical designs in `docs/plans` remain design records.
+
+## Source layout
+
+| Path | Owns |
+| --- | --- |
+| `cmd/captain` | CLI wiring |
+| `pkg/api` | Typed runtime, approval and verification contracts |
+| `pkg/ai` | Providers, model catalog, prompt rendering, agent loop and middleware |
+| `pkg/promptrun` | Execution admission, run lifecycle and recording |
+| `pkg/runtimeprofiles` | Preset catalogs and layered composition |
+| `pkg/session`, `pkg/claude` | Unified sessions and transcript parsing |
+| `pkg/database`, `migrations` | PostgreSQL storage and migrations |
+| `pkg/cli`, `pkg/cli/webapp` | Command handlers and embedded React UI |
+| `pkg/captainconfig` | Saved defaults and credential publishing configuration |
+| `pkg/sandbox`, `pkg/container`, `pkg/gitagent` | Isolation and remote execution |
+| `pkg/bash`, `pkg/cmux` | Shell classification and terminal integration |
+| `docs` | Astro documentation |
