@@ -302,6 +302,20 @@ func Path() (string, error) {
 	return filepath.Join(home, ".captain.yaml"), nil
 }
 
+// Home returns Captain's user configuration directory, which holds implicit
+// record directories such as presets, profiles and prompts:
+// $XDG_CONFIG_HOME/captain, or ~/.config/captain.
+func Home() (string, error) {
+	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
+		return filepath.Join(base, "captain"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "captain"), nil
+}
+
 // Load reads the config file. The bool return is false when the file does
 // not exist (a normal first-run state), in which case err is nil and the
 // returned Config is zero-valued.

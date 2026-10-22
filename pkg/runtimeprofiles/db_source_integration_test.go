@@ -26,6 +26,24 @@ func sameDB(db *database.DB) func(context.Context) (*database.DB, error) {
 }
 
 var _ = Describe("Database source", func() {
+	It("round trips preset order through creation, resolution and an explicit zero update", func(ctx SpecContext) {
+		db := openRuntimeDB(ctx, "captain_runtimeprofiles_order")
+		source, err := NewDBSource(DBSourceOptions{Read: sameDB(db), Write: sameDB(db)})
+		Expect(err).NotTo(HaveOccurred())
+		created, err := source.Presets().Create(ctx, PresetInput{Name: "Ordered", Scope: api.SpecLayerContext, Order: 100})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(source.Presets().Get(ctx, created.Key)).To(Equal(created))
+		Expect(created.Order).To(Equal(100))
+		catalog, err := NewCatalog(source)
+		Expect(err).NotTo(HaveOccurred())
+		layers, err := catalog.PresetLayers(ctx, []string{created.ID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(layers.Layers[0].Order).To(Equal(100))
+		updated, err := source.Presets().Update(ctx, created.Key, PresetInput{Name: "Ordered", Scope: api.SpecLayerContext, Order: 0})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(updated.Order).To(BeZero())
+	})
+
 	It("requires a reader and is read-only without a writer", func(ctx SpecContext) {
 		_, err := NewDBSource(DBSourceOptions{})
 		Expect(err).To(MatchError(ContainSubstring("Read opener")))
