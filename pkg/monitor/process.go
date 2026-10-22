@@ -2,12 +2,12 @@ package monitor
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/codexhome"
 	"github.com/flanksource/captain/pkg/database"
 	sessionprocess "github.com/flanksource/captain/pkg/session/process"
 	"github.com/google/uuid"
@@ -181,7 +181,7 @@ func (m *Monitor) watchLiveSession(ctx context.Context, watcher *transcriptWatch
 			watcher.watchDir(filepath.Join(claude.GetProjectsDir(), claude.NormalizePath(proc.CWD)), "claude")
 		}
 	case "codex":
-		watcher.watchDir(codexDayDir(time.Now()), "codex")
+		watchCodexDayDirs(watcher, time.Now())
 	}
 	path := m.samples.sessionPath(sessionID)
 	if path == "" {
@@ -195,12 +195,25 @@ func (m *Monitor) watchLiveSession(ctx context.Context, watcher *transcriptWatch
 	}
 }
 
-func codexDayDir(now time.Time) string {
-	home, err := os.UserHomeDir()
+// codexDayDirs are codex's per-day rollout directories for now under every
+// home it writes to: the user's and captain's isolated read-only home.
+func codexDayDirs(now time.Time) []string {
+	roots, err := codexhome.SessionRoots()
 	if err != nil {
-		return ""
+		log.Warnf("codex session roots: %v", err)
+		return nil
 	}
-	return filepath.Join(home, ".codex", "sessions", now.Format("2006/01/02"))
+	dirs := make([]string, len(roots))
+	for i, root := range roots {
+		dirs[i] = filepath.Join(root, now.Format("2006/01/02"))
+	}
+	return dirs
+}
+
+func watchCodexDayDirs(watcher *transcriptWatcher, now time.Time) {
+	for _, dir := range codexDayDirs(now) {
+		watcher.watchDir(dir, "codex")
+	}
 }
 
 func processStartOrNow(proc Process) time.Time {
