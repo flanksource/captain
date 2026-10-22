@@ -69,6 +69,10 @@ func ResolveSpecLayers(options ResolveSpecOptions) (ResolvedSpec, error) {
 	}
 	resolved := ResolvedSpec{Spec: composed.Spec, Trace: composed.Trace,
 		Provenance: composed.Provenance, Warnings: composed.Warnings}
+	if resolved.Access, err = ResolveAccessState(composed.Trace); err != nil {
+		return ResolvedSpec{}, err
+	}
+	resolved.Spec.Permissions.AccessState = resolved.Access
 	if err := resolved.Spec.ValidateStructure(); err != nil {
 		return ResolvedSpec{}, fmt.Errorf("effective spec: %w", err)
 	}

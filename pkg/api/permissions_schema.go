@@ -37,6 +37,17 @@ func (PermissionMode) JSONSchema() *jsonschema.Schema {
 	}
 }
 
+// JSONSchema declares the portable access levels.
+func (AccessLevel) JSONSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type: "string",
+		Enum: enumValues(AllAccessLevels()),
+		Description: "Portable access contract, compiled to each runtime's native dialect. read-only: the agent may read the workspace " +
+			"but cannot create, modify or delete files, spawn sub-agents, use third-party MCP servers, or obtain write access by approval. " +
+			"full: no access restriction, overriding a read-only intent from an earlier layer. Unset leaves every runtime unchanged.",
+	}
+}
+
 // JSONSchema declares the per-tool policy values.
 func (ToolPolicy) JSONSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{

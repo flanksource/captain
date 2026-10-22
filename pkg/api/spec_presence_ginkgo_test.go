@@ -28,6 +28,20 @@ var _ = Describe("Spec field presence", func() {
 		Entry("YAML", yaml.Unmarshal, yaml.Marshal, "model: agent:sonnet\nnoCache: false\nfallbacks: []\nbudget: {cost: 0, maxTurns: 4}\nmemory: {skipSkills: false}\nprompt: review\n"),
 	)
 
+	DescribeTable("treats a null opaque prompt field as an explicit clear", func(decode func([]byte, any) error, data string) {
+		var override Spec
+		Expect(decode([]byte(data), &override)).To(Succeed())
+		Expect(override.Prompt.TypeSafeQuestions).To(BeNil())
+		Expect(override.Fields()).To(HaveKeyWithValue("/prompt/typeSafeQuestions", true))
+		base := Spec{Prompt: Prompt{User: "review", OutputSchemaType: SchemaTypeTypeSafe, TypeSafeQuestions: json.RawMessage(`{"valid":{"type":"noul"}}`)}}
+		merged := base.Merge(override)
+		Expect(merged.Prompt.TypeSafeQuestions).To(BeNil())
+		Expect(merged.Prompt.Validate()).To(Succeed())
+	},
+		Entry("JSON", json.Unmarshal, `{"prompt":{"outputSchemaType":"json-schema","typeSafeQuestions":null}}`),
+		Entry("YAML", yaml.Unmarshal, "prompt:\n  outputSchemaType: json-schema\n  typeSafeQuestions: null\n"),
+	)
+
 	It("merges intentional zero values without losing sibling fields or mutating input", func() {
 		base := Spec{Model: Model{Name: "sonnet", NoCache: true, Fallbacks: []Model{{Name: "sol"}}}, Budget: Budget{Cost: 2, MaxTurns: 4}, Memory: Memory{SkipSkills: true}}
 		override := (Spec{}).WithExplicit("/noCache", "/fallbacks", "/budget/cost", "/memory/skipSkills")

@@ -182,6 +182,13 @@ func legacyMergePermissions(p, o Permissions) Permissions {
 	if o.ApprovalTimeout != "" {
 		p.ApprovalTimeout = o.ApprovalTimeout
 	}
+	// The access level layers like the mode: a layer that names one replaces it.
+	if o.Access != "" {
+		p.Access = o.Access
+	}
+	if o.AccessState != nil {
+		p.AccessState = o.AccessState
+	}
 	if len(o.Presets) > 0 {
 		p.Presets = o.Presets
 	}

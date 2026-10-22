@@ -58,6 +58,27 @@ var _ = Describe("fallback chains under an opt-out set", func() {
 		Expect(got[0].Name).NotTo(BeEmpty())
 	})
 
+	DescribeTable("substitutes a disabled model on its authored runtime before widening",
+		func(mode RuntimeMode, disabledModels []string, family string) {
+			install(NewDisabledSet(nil, nil, nil, disabledModels, nil))
+			resolved, err := ResolveModel(Model{Name: "claude-sonnet-5", Mode: mode})
+			Expect(err).NotTo(HaveOccurred())
+
+			got := resolved.Candidates()
+
+			Expect(got).To(HaveLen(1))
+			Expect(got[0].Provider).To(Equal(Anthropic))
+			Expect(got[0].Mode).To(Equal(mode))
+			known, ok := Anthropic.Lookup(got[0].Name)
+			Expect(ok).To(BeTrue(), got[0].Name)
+			Expect(known.Family).To(Equal(family), got[0].Name)
+			Expect(disabledModels).NotTo(ContainElement("anthropic/" + got[0].Name))
+		},
+		Entry("agent keeps the family", ModeAgent, []string{"anthropic/claude-sonnet-5"}, "sonnet"),
+		Entry("cli keeps the family", ModeCLI, []string{"anthropic/claude-sonnet-5"}, "sonnet"),
+		Entry("agent moves to another family when the whole family is disabled", ModeAgent, sonnetModels(), "opus"),
+	)
+
 	It("returns the unfiltered chain when every provider is disabled, so the caller reports the dead end", func() {
 		providers := make([]string, 0, len(Providers()))
 		for _, p := range Providers() {
@@ -82,3 +103,13 @@ var _ = Describe("fallback chains under an opt-out set", func() {
 		Expect(names(resolved.Candidates())).To(Equal([]string{"not-a-real-model-family"}))
 	})
 })
+
+func sonnetModels() []string {
+	var out []string
+	for _, model := range Anthropic.Models() {
+		if model.Family == "sonnet" {
+			out = append(out, "anthropic/"+model.ID)
+		}
+	}
+	return out
+}
