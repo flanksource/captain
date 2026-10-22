@@ -1,69 +1,46 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Todo Execution
-description: How gavel drives Captain's agent runtime to execute TODOs.
+description: How Gavel's PostgreSQL-backed TODO lifecycle embeds Captain.
 section: Todos
 ---
 
-import CodeExample from "../../components/CodeExample.tsx";
-
 # Todo execution
 
-Gavel's `todos` subsystem is the task-execution side of its failure-to-fix loop. Other gavel commands *create* TODOs from failing tests, lint violations, CI jobs, and PR review comments; `gavel todos` inspects, plans, executes, verifies, and commits them. The actual implementation work is done by a Claude or Codex coding agent driven **in-process through Captain's AI runtime** — gavel imports `github.com/flanksource/captain/pkg/ai` and composes an `agent.Runner`; it never shells out to a `claude` or `captain` binary in the run path.
+Gavel owns TODOs, their lifecycle, acceptance criteria, fixture verification and commit finalization. Captain owns prompt rendering, runtime resolution, provider execution, approvals, session recording and the generate/verify loop. Gavel embeds Captain through Go APIs; it does not require the `captain` CLI to dispatch a run. A selected runtime may launch its own agent CLI or use its API transport.
 
-## How Captain and gavel relate
+TODOs are PostgreSQL-backed issues. Markdown `.todos` files are portable import/export artifacts rather than the live store; grite and file-provider selection are no longer the runtime workflow.
 
-The dependency is one-directional: gavel embeds Captain, Captain has no awareness of gavel.
+## Typical flow
 
-<div className="docs-card-grid">
-  <div className="docs-card">
-    <h3>Gavel owns the workflow</h3>
-    <p>TODO files, providers, discovery, grouping, statuses, prompts, retry loops, and commit finalization all live in gavel's `todos/` package and `gavel todos` CLI.</p>
-  </div>
-  <div className="docs-card">
-    <h3>Captain owns the agent runtime</h3>
-    <p>Gavel builds Captain `ai.Request`s, selects a Captain runtime — the `(model, mode)` pair, where mode is `api`, `agent`, `cli`, or `cmux` — and streams events from Captain's `agent.Runner`, the same runtime documented under <a href="/agents/">AI Agents</a>.</p>
-  </div>
-  <div className="docs-card">
-    <h3>Prompts are Captain prompts</h3>
-    <p>The run and plan instructions are dotprompt files (`todos/prompt/todos-run.prompt`, `todos-plan.prompt`) rendered through the same engine described in <a href="/prompts/">Prompts</a>.</p>
-  </div>
-  <div className="docs-card">
-    <h3>Verification reuses fixtures</h3>
-    <p>A TODO's `Steps to Reproduce` and `Verification` sections are executable fixture tests, compiled into in-loop verifier plugins so a failing definition-of-done drives another agent iteration.</p>
-  </div>
-</div>
+```sh
+gavel todos list
+gavel todos list --all --done
+gavel todos get TODO_ID
+gavel todos steps TODO_ID
+gavel todos run TODO_ID --step plan
+gavel todos plan approve TODO_ID
+gavel todos run TODO_ID
+gavel todos check TODO_ID
+```
 
-## Lifecycle at a glance
+`run` requires explicit IDs. Without `--step`, it selects the next applicable lifecycle step; `steps` shows the available steps and where a TODO stands. Planning stores a durable Captain plan revision for human review. Implementation runs through Captain and Gavel verifies the persisted definition-of-done fixture before its post-verification commit step.
 
-1. **Create** — `gavel test|lint|verify|pr status --sync-todos` writes TODOs from failures, or author one with `gavel todos create`.
-2. **Select** — `gavel todos run` discovers pending TODOs (filter with `--status`, pick interactively with `-i`, batch with `--group-by`).
-3. **Plan (optional)** — `--mode plan` runs the agent read-only and parks the TODO in `review` until a human approves, rejects, or revises the plan.
-4. **Execute** — the agent implements the change; `Verification` fixtures run in-loop until they pass or the iteration budget runs out.
-5. **Commit** — gavel (not the agent) stages and commits via `gavel commit` after each TODO, unless `--commit=false`.
-6. **Verify** — `gavel todos verify` scores the committed work against the TODO's acceptance criteria with an agentic review pass and promotes it to `verified` at or above the threshold.
+## Ownership
 
-## Quick start
+| Gavel | Captain |
+| --- | --- |
+| TODO body, priority, status, labels, parent and links | Resolved `api.Spec`, trace, provenance and warnings |
+| Lifecycle selection and result predicates | Provider construction and execution admission |
+| Fixture engine and CEL verification verdict | Verifier registry and progress/report transport |
+| Commit gates, staging and issue/session trailers | Session, prompt-run, approval and plan storage |
 
-<CodeExample client:load language="bash" title="Typical flow" source={`
-# turn failures into TODOs
-gavel test --sync-todos
-gavel pr status --sync-todos     # one TODO per failed CI job
+The same `promptrun.Run` seam serves standalone prompt execution and an embedding host. Gavel supplies host hooks and commit ownership so one run cannot commit the same tree twice.
 
-# inspect
-gavel todos list --status pending
-gavel todos get .todos/fix-bug.md
+## Further reading
 
-# execute with the agent
-gavel todos run                  # all pending, grouped per repo session
-gavel todos run --mode plan      # propose a reviewable plan first
-gavel todos run --check          # re-run tests/lint after the agent, feed failures back
+- [Todo Format](/todos/format/) covers content, durable plans, verification and portability.
+- [Execution and Verification](/todos/execution/) covers lifecycle steps, review, runs and checks.
+- [Embedding a Run](/agents/embedding/) documents Captain's execution and recording API.
 
-# score committed work against acceptance criteria
-gavel todos verify --strict
-`} />
-
-## Where to go next
-
-- [Todo Format](/todos/format/) covers providers (grite vs `.todos/` files), frontmatter, body sections, statuses, and the `--sync-todos` creation paths.
-- [Execution and Verification](/todos/execution/) covers run modes, drivers, flags, the check loop, plan review, and AI verification.
+Use the installed `gavel todos <command> --help` for the complete Gavel flag reference; Captain's documentation describes the integration boundary.
