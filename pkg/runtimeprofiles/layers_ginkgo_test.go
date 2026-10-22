@@ -7,6 +7,16 @@ import (
 )
 
 var _ = Describe("Catalog layers", func() {
+	It("round trips preset order through YAML and catalog projections", func(ctx SpecContext) {
+		source := presetDir(GinkgoT().TempDir(), true)
+		created, err := source.Presets().Create(ctx, PresetInput{Name: "Ordered", Scope: api.SpecLayerContext, Order: 100})
+		Expect(err).NotTo(HaveOccurred())
+		reloaded, err := source.Presets().Get(ctx, created.Key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(reloaded.Order).To(Equal(100))
+		Expect(reloaded.API().Order).To(Equal(100))
+	})
+
 	It("materialises an ordered flat preset selection without a profile", func(ctx SpecContext) {
 		source := newMemSource("db", SourceDB, true)
 		organization := source.presets.put("organization", globalPreset("Organization"))

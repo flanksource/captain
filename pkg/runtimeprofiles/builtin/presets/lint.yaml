@@ -1,0 +1,52 @@
+name: Lint
+description: Return structured lint violations with file locations, rules and severity.
+scope: surface
+order: 100
+spec:
+  prompt:
+    outputSchemaType: json-schema
+    typeSafeQuestions: null
+    schemaStrictness: error
+    schemaJSON:
+      type: object
+      additionalProperties: false
+      required: [violations]
+      properties:
+        violations:
+          type: array
+          description: Findings from the review. Return an empty array when there are no findings.
+          items:
+            type: object
+            additionalProperties: false
+            required: [message]
+            properties:
+              file:
+                type: string
+                description: Path relative to the working directory. Omit for repository-wide findings.
+              line:
+                type: integer
+                minimum: 0
+              column:
+                type: integer
+                minimum: 0
+              message:
+                type: string
+                minLength: 1
+                description: Explain the problem and its concrete fix.
+              severity:
+                type: string
+                enum: [error, warning, info]
+                description: Omitted severity is an error.
+              rule:
+                type: object
+                additionalProperties: false
+                properties:
+                  method:
+                    type: string
+                    description: Stable rule identifier.
+                  package:
+                    type: string
+              source:
+                type: string
+              code:
+                type: string
