@@ -28,6 +28,12 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 		WalkRoot: "testdata",
 		FS:       promptlib.Examples,
 		Writable: false,
+	}, {
+		Kind:     "embedded",
+		ID:       "builtin",
+		Label:    "Built-in prompts",
+		WalkRoot: "builtin",
+		FS:       promptlib.Builtin,
 	}}
 
 	seen := map[string]bool{}
@@ -89,6 +95,22 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 	}
 	if _, ok := firstWritableSource(sources); !ok {
 		dir := filepath.Join(cwd, ".captain", "prompts")
+		sources = append(sources, promptSource{
+			Kind:     "local",
+			ID:       hashPromptDir(dir),
+			Label:    dir,
+			Root:     dir,
+			Writable: true,
+			Implicit: true,
+		})
+	}
+	// The user prompt directory comes after the fallback so it never becomes
+	// the default save target in place of the repository's .captain/prompts.
+	configHome, err := captainconfig.Home()
+	if err != nil {
+		return nil, err
+	}
+	if dir := filepath.Join(configHome, "prompts"); !seen[dir] {
 		sources = append(sources, promptSource{
 			Kind:     "local",
 			ID:       hashPromptDir(dir),

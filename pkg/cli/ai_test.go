@@ -44,8 +44,8 @@ func TestAIPromptOptions_Resolve_Defaults(t *testing.T) {
 	if req.Prompt.User != "hello" {
 		t.Errorf("Prompt = %q, want hello", req.Prompt.User)
 	}
-	if req.Budget.MaxTokens != 4096 {
-		t.Errorf("MaxTokens = %d, want 4096 built-in default", req.Budget.MaxTokens)
+	if req.Budget.MaxTokens != 0 {
+		t.Errorf("MaxTokens = %d, want 0 so the runtime applies its own default", req.Budget.MaxTokens)
 	}
 	for name, got := range map[string]bool{
 		"NoMCP": req.Permissions.MCP.Disabled, "NoHooks": req.Memory.SkipHooks, "NoSkills": req.Memory.SkipSkills,
@@ -283,7 +283,7 @@ prompts:
 }
 
 // TestAIRuntimeOptions_Resolve_MaxTokensPrecedence pins the flag > saved >
-// built-in order, replacing the old magic-4096 sentinel.
+// runtime-default order.
 func TestAIRuntimeOptions_Resolve_MaxTokensPrecedence(t *testing.T) {
 	t.Run("explicit flag wins over saved", func(t *testing.T) {
 		seedSavedAI(t, "ai:\n  maxTokens: 16000\n")
@@ -305,14 +305,14 @@ func TestAIRuntimeOptions_Resolve_MaxTokensPrecedence(t *testing.T) {
 			t.Errorf("MaxTokens = %d, want 16000 (saved)", req.Budget.MaxTokens)
 		}
 	})
-	t.Run("unset with no saved uses built-in 4096", func(t *testing.T) {
+	t.Run("unset with no saved leaves the runtime default", func(t *testing.T) {
 		isolateSavedAI(t)
 		req, err := runtimeRequestForTest(AIRuntimeOptions{}, api.Prompt{System: "", AppendSystem: "", User: "p"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if req.Budget.MaxTokens != 4096 {
-			t.Errorf("MaxTokens = %d, want 4096 (built-in)", req.Budget.MaxTokens)
+		if req.Budget.MaxTokens != 0 {
+			t.Errorf("MaxTokens = %d, want 0 (runtime default)", req.Budget.MaxTokens)
 		}
 	})
 }
