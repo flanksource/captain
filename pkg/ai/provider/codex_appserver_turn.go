@@ -108,6 +108,17 @@ func lastNonBlankLine(text string) string {
 	return ""
 }
 
+// ownsThread reports whether a notification naming threadID belongs to this
+// turn. A sub-agent the model spawns runs in a thread of its own on the same
+// app-server; its thread/started would otherwise replace the run's session id
+// and its turn/completed would end the parent's turn. Its rollout is still
+// written, and filed under its own thread, by the monitor. A notification
+// naming no thread, or arriving before the run's thread is known, is the run's.
+func (ts *turnState) ownsThread(threadID string) bool {
+	own, _ := ts.ids()
+	return threadID == "" || own == "" || threadID == own
+}
+
 func (ts *turnState) setIDs(threadID, turnID string) {
 	ts.idMu.Lock()
 	ts.threadID = threadID
