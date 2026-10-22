@@ -44,7 +44,8 @@ CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare
   "writable": false,
   "model": "claude-sonnet-4-6",
   "variables": [
-    { "name": "diff", "type": "string" }
+    { "name": "patch", "type": "string", "required": true },
+    { "name": "maxBodyLines", "type": "integer", "required": true }
   ]
 }
 `} />
@@ -84,13 +85,12 @@ Rendering accepts template variables and an optional runtime `spec` overlay. It 
 <CodeExample client:load language="json" title="PromptRenderRequest" source={`
 {
   "variables": {
-    "diff": "diff --git a/README.md b/README.md"
+    "patch": "diff --git a/README.md b/README.md",
+    "maxBodyLines": 4
   },
   "spec": {
-    "model": {
-      "name": "claude-sonnet-4-6",
-      "mode": "agent"
-    },
+    "model": "claude-sonnet-4-6",
+    "mode": "agent",
     "budget": {
       "timeout": "2h",
       "maxTokens": 4096

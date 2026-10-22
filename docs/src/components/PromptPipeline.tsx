@@ -36,8 +36,8 @@ const stages: Array<{
   {
     id: "overlay",
     label: "Overlay",
-    description: "CLI flags, saved defaults, and runtime spec edits resolve the final request.",
-    owner: "overlayCLI, overlayRuntimeSpec",
+    description: "Compose presets, prompt and request layers; fill saved defaults and validate the final runtime.",
+    owner: "promptLayers, api.ResolveSpecLayers",
     output: "Provider-ready request",
   },
 ];

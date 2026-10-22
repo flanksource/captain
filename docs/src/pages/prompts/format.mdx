@@ -53,9 +53,9 @@ A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt o
       <td>Declares the default parallel runtime matrix without becoming part of the request sent to each model.</td>
     </tr>
     <tr>
-      <td><code>runtimeProfile</code></td>
+      <td><code>presets</code></td>
       <td>Captain runtime catalog</td>
-      <td>Pins the runtime profile (id or name) whose presets and spec are layered beneath this frontmatter. A request <code>runtimeProfile</code> or <code>--runtime-profile</code> overrides the pin.</td>
+      <td>Selects reusable runtime presets by id or name. Request <code>presets</code> or repeated <code>--preset</code> flags replace the selection; <code>--no-presets</code> clears it.</td>
     </tr>
   </tbody>
 </table>
@@ -93,9 +93,8 @@ permissions:
   presets:
     - edit
   tools:
-    allow:
-      - Read
-      - Edit
+    Read: allow
+    Edit: allow
   mcp:
     disabled: true
 memory:
@@ -111,14 +110,16 @@ Refactor:
 {{target}}
 `} />
 
-## Runtime profile pin
+## Runtime preset selection
 
-`runtimeProfile` names a saved runtime profile by id or name. Rendering resolves the profile's presets (ordered by scope), then its spec, then this frontmatter, then the caller's request or CLI flags, so the file can defer model, budget, and permission defaults to a shared profile while still overriding any of them inline. A caller that passes `runtimeProfile` on the render request or `--runtime-profile` on the command line replaces the pin; a pin that names no profile in the catalog fails the render rather than silently running without it. The render result's `resolution.trace` lists every layer that contributed. Captain binaries older than this key reject a file that uses it.
+`presets` selects reusable runtime spec layers. Captain combines the selected presets, rendered frontmatter, and caller request, sorting by explicit `order`, then scope, then selection order. Ordinary presets supply defaults beneath the prompt; a higher `order` can enforce fields afterward. Saved configuration fills remaining gaps. Missing or ambiguous references fail rendering. The render result's `resolution.trace` and `resolution.provenance` explain the effective fields. See [Runtime overlay](/prompts/runtime/#precedence).
 
-<CodeExample client:load language="yaml" title="Pinned runtime profile" source={`
+`runtimeProfile` and `--runtime-profile` are deprecated and ignored with a warning. Replace them with `presets` and `--preset`.
+
+<CodeExample client:load language="yaml" title="Reusable runtime presets" source={`
 ---
 model: claude-sonnet-4-6
-runtimeProfile: review
+presets: [Plan]
 budget:
   maxTurns: 7
 ---
@@ -239,6 +240,8 @@ Results use Gavel's standard linter-result array, including stable rule IDs, sev
 </table>
 
 `req/` checks requirement quality (verifiable, unambiguous, singular, with units, consistent). `doc/` catches defects common in generated documents: unsourced numbers, cross-section inconsistencies, placeholders, boilerplate, and planned behavior described as existing. `hl/` and `ll/` hold each level to its job, so a PRD is not asked for field types and an API reference is not asked for market rationale. `int/` verifies references against the repository; `pub/` catches internal leaks, undefined terms and missing versioning. `prop/` traces every mandatory RFP requirement to the response when `rfp` is supplied.
+
+Each review prompt declares `permissions: {access: read-only}` rather than a tool list. The same file therefore runs read-only on claude, where it compiles to Edit, Write, Bash and sub-agent denies, and on codex, where it compiles to a read-only sandbox that never asks. Web tools stay available on both. `captain permissions explain proposal-review --model agent:sonnet --model agent:gpt-6.1-sol` shows both postures; see [Portable access](/prompts/runtime/#portable-access).
 
 To customize a built-in prompt, copy it from `pkg/ai/prompt/builtin/` into `~/.config/captain/prompts/`, or into a repository's `.captain/prompts/`, under the same name. The local copy shadows the built-in.
 

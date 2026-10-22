@@ -37,6 +37,10 @@ Two rules apply to every callback:
 - **Deny is a hard floor.** A tool the run's permission strategy denies, and anything plan mode forbids, is rejected before `OnApproval` runs. No row is written and no event is sent, and no decision, scope, or grant can override it.
 - **Any approval may escalate.** An approved `command`, `filesystem`, `network`, or `permissions` request can go beyond the run's initial sandbox posture. `Escalates` marks the ones that do.
 
+### Read-only runs have no escalation path
+
+`permissions.access: read-only` is compiled so that no approval can grant a write, whatever the broker answers. On claude, the edit, write, shell and sub-agent tools are denied, so the deny floor rejects them before `OnApproval` runs. On codex, the sandbox is `read-only` and the approval policy is `never`, so codex never raises a `command`, `filesystem` or `permissions` request. The codex app-server keeps an authored `mode: plan` instead, because plan mode already refuses every escalation. On gemini the run uses the `plan` approval mode, which the gemini client enforces itself. Caller tools are outside the contract and still follow `toolPolicy` and the broker. See [Portable access](/prompts/runtime/#portable-access) for the full per-runtime table.
+
 ## Foreground terminal runs
 
 A single-runtime `captain prompt run` using Claude Agent or Codex app-server attaches `approval.Terminal` when stdin and stderr are terminals. Native questions and permission requests draw on stderr and read answers from stdin. The event renderer pauses while a form is open, and execution resumes with the selected answer.
@@ -91,15 +95,15 @@ type Broker struct {
     CredentialID uuid.UUID
 
     RequestedBy string        // who raised it, e.g. "provider" or "caller_tool"
-    Timeout     time.Duration // approval expiry; required
+    Timeout     time.Duration // longest unanswered wait; required
     Poll        time.Duration // re-read interval; DefaultPoll (100ms) when zero
+    Deadline    time.Time     // optional run deadline; bounds expiry alongside Timeout
 
     // Notify surfaces the EventPermission frame; required.
     Notify func(context.Context, api.Event) error
 
-    // OnWaiting / OnRunning bracket the wait with the host's own state transitions.
-    OnWaiting func(context.Context) error
-    OnRunning func(context.Context) error
+    // The broker owns waiting/running transitions; hosts can mirror the updated row.
+    OnRunState func(context.Context, *database.PromptRun) error
 
     // ClaimToolUseID resolves a locally generated tool-use ID onto the provider's
     // own tool-call ID. Required only when a caller can set ToolUseIDGenerated.
@@ -109,9 +113,11 @@ type Broker struct {
 
 `Validate()` refuses to broker anything without a database, a session ID, a prompt run ID, a `Notify` callback, and a positive `Timeout`.
 
-## `Notify`, `OnWaiting` / `OnRunning`
+## `Notify` and `OnRunState`
 
-`OnApproval` (the `ApprovalFunc`) records the pending approval idempotently, calls `Notify` with the `EventPermission` frame, and blocks. `OnWaiting` and `OnRunning` bracket that wait with the host's own state: once the host has been told the run is waiting, **every** way out of `OnApproval` tells it the run is running again — a cancelled caller resumes on a context with cancellation stripped (`context.WithoutCancel`), because ending the wait is the response to the cancellation, not a victim of it. A credential-less (provider or host) approval depends on `OnWaiting`: the store only resolves such an approval while its prompt run is in the `waiting` state.
+`OnApproval` records a pending approval idempotently, holds its prompt run in `waiting`, sends `Notify` an `EventPermission` frame, and blocks. The broker owns the waiting/running transitions; `OnRunState` optionally mirrors each updated prompt-run row into the host. A host does not write those transitions itself. Concurrent approvals keep the run waiting until the last hold is released. Cleanup releases the hold even when the calling context was cancelled.
+
+`Timeout` bounds the unanswered wait; `Deadline`, when supplied, also bounds expiry by the run's own deadline. A credential-less provider/host approval can resolve only while its prompt run is `waiting`. Secret questions cannot use this durable broker because answers would be stored as plain JSON; a host that can handle a secret must use a direct callback.
 
 ## The provider path: no turn, no model call
 

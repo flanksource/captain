@@ -21,7 +21,7 @@ Three kinds of check exist, each mapped from one field of `workflow.verify` by a
 | `prompt` | `prompts` | built in, registered at package init |
 | `fixture` | `fixture` | not registered by default — a host links one in-process, or configures an external runner |
 
-A round runs every declared kind in `kindOrder`: `cmd`, then `prompt`, then `fixture` — cheap and deterministic first, so a run that is going to fail fails on the fast check rather than after a model call or a whole test run.
+A round runs every declared kind in `kindOrder`: `cmd`, then `prompt`, then `fixture`. Commands provide the first feedback; the final round report includes every declared check.
 
 ## `workflow.verify`
 
@@ -29,7 +29,7 @@ A round runs every declared kind in `kindOrder`: `cmd`, then `prompt`, then `fix
 workflow:
   verify:
     commands:
-      - go build ./...
+      - make build
       - go test ./pkg/...
     prompts:
       - .captain/prompts/judge-readability.prompt
@@ -40,7 +40,7 @@ workflow:
     maxIterations: 3       # 0 means the run default (1)
 `} />
 
-- **`commands`** (`[]string`) — shell commands run as pass/fail checks (exit 0 = pass); their output tail becomes the re-run feedback. This is the only part of `verify` captain itself executes, via `agent/verify.CmdVerifier`.
+- **`commands`** (`[]string`) — shell commands run as pass/fail checks (exit 0 = pass); their output tail becomes the re-run feedback, via `agent/verify.CmdVerifier`. Captain also executes LLM judges; fixture evaluation belongs to the registered runner.
 - **`fixture`** (`string`) — a clicky-FixtureEditor markdown document (acceptance criteria / LLM-judge checklist). Captain does not implement a fixture engine; it dispatches this document to whatever claimed the `fixture` kind.
 - **`prompts`** (`[]string`) — `.prompt` template paths run as LLM-judge checks. Each renders against the run's context and must yield `{ok, reason, feedback}` (`agent/verify.LLMJudgeVerifier`). A judge prompt **cannot** declare its own `sandbox` or a `model` different from the run's provider — both are hard validation errors, not a silent downgrade.
 - **`scope`** (`""` \| `all` \| `changed`) — narrows verification to the agent's changed files instead of the whole tree.
@@ -96,7 +96,7 @@ The contract fails loudly rather than guessing a verdict:
 
 | Runner behavior | Result |
 | --- | --- |
-| Exits 0 with exactly one `report` line | The verdict. A failing fixture is still a verdict (the runner exits non-zero for it and the report says `passed: false`). |
+| Exactly one valid `report` line, with exit 0 or nonzero | The report's verdict; a failed fixture can exit nonzero and still supply `passed: false`. |
 | Non-zero exit with no `report` line | Error: `"...exited N with no report line"`, plus the process error (e.g. a missing binary) and the stderr tail. |
 | More than one `report` line | Error: `"emitted more than one report line"`. |
 | Malformed JSON on a line | Error naming the malformed line (truncated to 200 bytes). |
@@ -140,7 +140,7 @@ A running check can report where it has got to before it has a verdict, at up to
 `captain verify` runs a workflow's checks against a working tree without spending a generation on it — the same checks the loop votes with, driven out of the generate→verify loop:
 
 <CodeExample client:load language="bash" title="captain verify flags" source={`
-captain verify --command "go build ./..." --command "go vet ./..."
+captain verify --command "make build" --command "go vet ./..."
 captain verify --prompt .captain/prompts/judge-readability.prompt
 captain verify --fixture ./acceptance.md --cwd ./worktree --timeout 5m
 `} />
