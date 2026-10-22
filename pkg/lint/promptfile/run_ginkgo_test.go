@@ -94,6 +94,16 @@ var _ = Describe("Promptfile linter", func() {
 		Expect(results[0].Success).To(BeTrue())
 	})
 
+	It("accepts the built-in prompts", func() {
+		builtin, err := filepath.Abs(filepath.Join("..", "..", "ai", "prompt", "builtin"))
+		Expect(err).NotTo(HaveOccurred())
+		results := Run(context.Background(), Options{WorkDir: builtin, Data: map[string]any{"files": "docs/spec.md"}})
+		Expect(results).To(HaveLen(1))
+		Expect(results[0].Success).To(BeTrue(), results[0].Error)
+		Expect(results[0].FileCount).To(Equal(5))
+		Expect(results[0].Violations).To(BeEmpty())
+	})
+
 	It("honors cancellation", func() {
 		write(filepath.Join(directory, "review.prompt"), "Review.\n")
 		ctx, cancel := context.WithCancel(context.Background())
