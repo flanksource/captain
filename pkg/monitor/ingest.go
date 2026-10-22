@@ -212,20 +212,16 @@ func (ing *ingestor) needsIngest(path string, info os.FileInfo) bool {
 // child sessions of the root transcript's session; root ingests also arm the
 // watcher on the session's subagents directory.
 func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error {
-	root, err := hookTranscriptRoot(source)
-	if err != nil {
-		return err
-	}
-	root, err = filepath.Abs(root)
-	if err != nil {
-		return fmt.Errorf("resolve %s transcript root: %w", source, err)
-	}
-	path, err = filepath.Abs(path)
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve %s transcript path: %w", source, err)
 	}
-	if !strings.HasPrefix(path, root+string(filepath.Separator)) {
-		return fmt.Errorf("transcript path %s is outside the %s session root", path, source)
+	root, err := hookTranscriptRootOf(source, path)
+	if err != nil {
+		return err
+	}
+	if root == "" {
+		return fmt.Errorf("transcript path %s is outside every %s session root", path, source)
 	}
 	rootFS, err := os.OpenRoot(root)
 	if err != nil {
