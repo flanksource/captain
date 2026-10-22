@@ -27,6 +27,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/callertools"
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/codexhome"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -300,6 +301,26 @@ func cmuxExtraArgs(agent string, req ai.Request) (any, error) {
 	}
 }
 
+// agentEnv is the environment the agent command runs with: the run's own, plus
+// for read-only codex the isolated CODEX_HOME. The interactive codex TUI has
+// no --ignore-rules, and an execpolicy allow rule runs its command outside the
+// read-only sandbox.
+func agentEnv(agent string, req ai.Request) (map[string]string, error) {
+	env := req.EnvMap()
+	if agent != "codex" {
+		return env, nil
+	}
+	home, err := codexhome.ForRun(req.Permissions.EffectiveAccess().ReadOnly(), req.Cwd())
+	if err != nil || home == "" {
+		return env, err
+	}
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["CODEX_HOME"] = home
+	return env, nil
+}
+
 // decodeCLIArgs round-trips the free-form CLIArgs map through JSON into the typed
 // option struct, failing loud on a type mismatch rather than silently dropping it.
 func decodeCLIArgs(args map[string]any, out any) error {
@@ -368,6 +389,10 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		log.Warnf("cmux: %s", warning)
 	}
 	tools := permissions.Tools
+	env, err := agentEnv(agent, req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("cmux: %w", err)
+	}
 	agentCommand := launch.launchCommand(withEnv(AgentCommand(AgentCommandOpts{
 		Agent:           agent,
 		Model:           model,
@@ -382,7 +407,7 @@ func (p *Provider) execute(ctx context.Context, req ai.Request, r *run) (*ai.Usa
 		ConfigOverrides: launch.configOverrides,
 		Memory:          req.Memory,
 		Extra:           extra,
-	}), req.EnvMap()))
+	}), env))
 
 	timeout := r.timeout()
 	// ctxLog routes internal step-by-step narration to the run's clicky task

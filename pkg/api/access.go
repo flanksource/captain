@@ -43,8 +43,16 @@ var readOnlyDeniedAliases = []string{"edit", "write", "shell"}
 // but claude's sandbox does not, because it only wraps Bash.
 var writeAliases = []string{"edit", "write"}
 
-// claudeSubAgentTools spawn agents that would not inherit a per-tool deny list.
-var claudeSubAgentTools = []string{"Agent", "Task", "Workflow"}
+// claudeOutOfProcessTools act outside the agent's own process, where its tool
+// denies do not follow: they spawn agents or teams that would not inherit the
+// deny list, message a peer or remote Claude session that could write for it
+// (SendMessage, RemoteTrigger), schedule prompts that run later, possibly in a
+// durable task file (CronCreate, CronDelete), or create and remove git
+// worktrees (EnterWorktree, ExitWorktree). Listing peers and crons only reads.
+var claudeOutOfProcessTools = []string{
+	"Agent", "Task", "Workflow", "TeamCreate", "TeamDelete",
+	"SendMessage", "RemoteTrigger", "CronCreate", "CronDelete", "EnterWorktree", "ExitWorktree",
+}
 
 // EffectiveAccess is the access intent a runtime compiles: the layer-resolved
 // state when the spec went through ResolveSpecLayers, otherwise the spec's own
