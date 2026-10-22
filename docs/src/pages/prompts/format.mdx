@@ -196,3 +196,27 @@ Commit message:
 Patch:
 {{patch}}
 `} />
+
+## Lint promptfiles
+
+Run `captain lint promptfile [paths...]` before executing a prompt. It checks frontmatter delimiters, YAML, Handlebars syntax, Captain declarations, structural options, hooks, and Picoschema, JSON Schema, or native TypeSafe output declarations. Validation does not execute the body, contact a model, resolve presets, or open a database. Body-only prompts and declarations that inherit their model remain valid.
+
+<CodeExample client:load language="bash" title="Validate promptfiles" source={`
+# Discover .prompt files recursively beneath the current directory.
+captain lint promptfile
+
+# Check a specific reusable prompt and return Gavel linter results as JSON.
+captain lint promptfile pkg/ai/prompt/testdata/commit.prompt --format json
+
+# Supply a frontmatter variable for the bundled review example.
+captain lint promptfile examples/lint-review.prompt --var limit=1024
+
+# Use JSON for typed inputs; individual --var values override matching JSON keys.
+captain lint promptfile examples/lint-review.prompt --vars '{"limit":512}' --var limit=1024 --format json
+`} />
+
+File arguments are checked directly, including explicitly named ignored files. Directory discovery respects Git ignore rules and skips nested projects. Overlapping paths are checked once. A missing path, unreadable file, or selection containing no `.prompt` files fails with an actionable error.
+
+Missing body variables are allowed because lint does not render the body. Frontmatter variables need values to validate the declarations they generate: without complete sample inputs, lint checks template syntax and emits a `promptfile/variables` warning listing unresolved inputs and the deferred declaration checks. Supply repeated `--var key=value` flags or a `--vars` JSON object to enable those checks. Schema compilation uses bundled declarations and does not fetch external references.
+
+Results use Gavel's standard linter-result array, including stable rule IDs, severities, file counts, and source positions where available. Warning-only results exit successfully; invalid content or execution failures exit nonzero. JSON output retains diagnostics on failure. The command performs validation only and does not modify promptfiles.
