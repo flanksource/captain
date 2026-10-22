@@ -50,9 +50,13 @@ func TestStatusLineDoesNotCountAsActivity(t *testing.T) {
 func TestWithinHookRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 
 	claudePath := filepath.Clean(filepath.Join(home, ".claude", "projects", "-repo", "s.jsonl"))
 	codexPath := filepath.Clean(filepath.Join(home, ".codex", "sessions", "2026", "07", "14", "rollout-x.jsonl"))
+	readOnlyPath := filepath.Clean(filepath.Join(home, ".config", "captain", "codex-read-only", "sessions", "2026", "07", "14", "rollout-y.jsonl"))
+	assert.True(t, withinHookRoot("codex", readOnlyPath), "a read-only run's rollout in captain's isolated CODEX_HOME is accepted")
 	traversal := filepath.Clean(filepath.Join(home, ".claude", "projects", "..", "..", "secret.jsonl"))
 
 	assert.True(t, withinHookRoot("claude", claudePath), "claude transcript under the projects root is accepted")
@@ -64,16 +68,31 @@ func TestWithinHookRoot(t *testing.T) {
 	assert.False(t, withinHookRoot("gemini", claudePath), "unknown provider is rejected")
 }
 
+func TestCodexDayDirsCoverTheReadOnlyHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	day := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+
+	assert.Equal(t, []string{
+		filepath.Join(home, ".codex", "sessions", "2026", "10", "22"),
+		filepath.Join(home, ".config", "captain", "codex-read-only", "sessions", "2026", "10", "22"),
+	}, codexDayDirs(day), "a read-only run's rollout is written under captain's isolated CODEX_HOME")
+}
+
 func TestResolveCodexTranscript(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
 	threadID := "0195c1de-4ab8-7000-8000-0123456789ab"
 
 	assert.Empty(t, resolveCodexTranscript(threadID), "no sessions dir yet")
 	assert.Empty(t, resolveCodexTranscript(""), "empty thread id")
 
 	writeRollout := func(day time.Time, name string) string {
-		dir := codexDayDir(day)
+		dir := codexDayDirs(day)[0]
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 		path := filepath.Join(dir, name)
 		require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o644))
