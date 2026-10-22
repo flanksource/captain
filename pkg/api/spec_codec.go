@@ -25,13 +25,6 @@ func (s Spec) MarshalYAML() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	for path := range s.Fields() {
-		tokens := strings.Split(strings.TrimPrefix(path, "/"), "/")
-		value := serializedField(reflect.ValueOf(s), tokens)
-		if value.IsValid() && value.Type() == reflect.TypeOf(json.RawMessage(nil)) {
-			putWireField(fields, tokens, []byte(value.Interface().(json.RawMessage)))
-		}
-	}
 	return yamlNumbers(fields)
 }
 

@@ -222,6 +222,31 @@ func (m PermissionMode) Valid() bool {
 	return false
 }
 
+// AccessLevel is the portable access contract (permissions.access). It states
+// what the agent may do to the workspace once, and CompileAccess turns it into
+// each runtime's own dialect: per-tool denies on claude, a sandbox and approval
+// policy on codex, an approval mode on gemini. Unset leaves every runtime as it
+// was.
+type AccessLevel string
+
+const (
+	// AccessReadOnly may read the workspace but not create, modify or delete
+	// files, spawn sub-agents, use third-party MCP servers, or gain write access
+	// by approval.
+	AccessReadOnly AccessLevel = "read-only"
+	// AccessFull adds nothing: it states that no access restriction applies,
+	// which overrides a read-only intent inherited from an earlier layer.
+	AccessFull AccessLevel = "full"
+)
+
+// AllAccessLevels lists the access levels in canonical order.
+func AllAccessLevels() []AccessLevel { return []AccessLevel{AccessReadOnly, AccessFull} }
+
+// Valid reports whether a is a recognised access level (including "").
+func (a AccessLevel) Valid() bool {
+	return a == "" || a == AccessReadOnly || a == AccessFull
+}
+
 // Preset is a named bundle of safety defaults applied before per-tool rules.
 type Preset string
 

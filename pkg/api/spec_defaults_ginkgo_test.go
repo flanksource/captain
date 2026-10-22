@@ -90,14 +90,14 @@ var _ = Describe("Saved spec defaults", func() {
 		Expect(err).To(MatchError(ContainSubstring("sandbox mode")))
 	})
 
-	It("uses catalog effort and the existing token default after saved gaps, preserving explicit clears", func() {
+	It("uses catalog effort after saved gaps, leaves max tokens to the runtime, and preserves explicit clears", func() {
 		saved := captainconfig.AIDefaults{}
 		layer := RequestSpecLayer("request", Spec{Model: Model{Name: "agent:fable"}})
 		result, err := ResolveSpecLayers(ResolveSpecOptions{Saved: &saved, Layers: []SpecLayer{layer}})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.Spec.Budget.MaxTokens).To(Equal(4096))
+		Expect(result.Spec.Budget.MaxTokens).To(BeZero())
 		Expect(result.Spec.Effort).To(Equal(EffortHigh))
-		Expect(result.Provenance["/budget/maxTokens"].Source.Kind).To(Equal(FieldSourceCatalog))
+		Expect(result.Provenance).NotTo(HaveKey("/budget/maxTokens"))
 		Expect(result.Provenance["/effort"].Source.Kind).To(Equal(FieldSourceCatalog))
 		layer.Spec = layer.Spec.WithExplicit("/budget/maxTokens", "/effort")
 		result, err = ResolveSpecLayers(ResolveSpecOptions{Saved: &saved, Layers: []SpecLayer{layer}})
