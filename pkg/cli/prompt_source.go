@@ -184,13 +184,16 @@ type promptVarsResult struct {
 	StdinBoundToVar bool
 }
 
-// promptVars builds the template data from --var key=value pairs and a --vars
+// ParsePromptVariables builds template data from --var key=value pairs and a --vars
 // JSON blob; unused stdin is exposed as {{input}}.
-func promptVars(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (promptVarsResult, error) {
+func ParsePromptVariables(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (promptVarsResult, error) {
 	data := map[string]any{}
 	if s := strings.TrimSpace(varsJSON); s != "" {
 		if err := json.Unmarshal([]byte(s), &data); err != nil {
 			return promptVarsResult{}, fmt.Errorf("parse --vars JSON: %w", err)
+		}
+		if data == nil {
+			return promptVarsResult{}, fmt.Errorf("--vars must be a JSON object, got null")
 		}
 	}
 	kv, boundStdin, err := parseVars(opts.Var, stdin)

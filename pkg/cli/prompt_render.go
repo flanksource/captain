@@ -102,7 +102,7 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	vars, err := promptVars(opts, varsJSON, stdin, body.UsedStdin)
+	vars, err := ParsePromptVariables(opts, varsJSON, stdin, body.UsedStdin)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}

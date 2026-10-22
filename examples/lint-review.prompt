@@ -1,0 +1,9 @@
+---
+description: A reusable review prompt with a templated output-token budget.
+budget:
+  maxTokens: {{limit}}
+---
+{{role "system"}}
+Review the supplied text for concrete correctness issues.
+{{role "user"}}
+{{text}}
