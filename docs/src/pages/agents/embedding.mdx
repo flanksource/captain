@@ -11,13 +11,16 @@ import CodeExample from "../../components/CodeExample.tsx";
 
 `pkg/promptrun.Run` executes one resolved prompt spec through captain's generate→verify loop: attachment checks, provider construction, tool-policy enforcement, the workflow's commit and verify hooks, the caller's own hooks, the setup plugin, and finally `agent.Runner`. It is the seam `captain prompt run` and an embedding host (gavel's todo lifecycle) share, so the two never assemble the same pieces by hand and drift.
 
-What stays with the caller: rendering the prompt and resolving its spec, resolving attachments against a store, persisting the run, and streaming events to whoever is watching (`OnEvent` is the tap for that).
+The caller renders and resolves the spec, prepares attachments against a store, and consumes events through `OnEvent`. Captain owns persistence when `Input.Record` is set; the host links its own rows through `Recording.Link` rather than writing Captain's tables.
 
 ## `Input`
 
-<CodeExample client:load language="go" title="pkg/promptrun.Input" source={`
+<CodeExample client:load language="go" title="pkg/promptrun.Input (main fields)" source={`
 type Input struct {
-    Request           ai.Request        // rendered prompt + resolved spec; attachments must already be resolved
+    Resolved          api.ResolvedSpec  // final spec, raw trace, provenance and warnings; attachments prepared
+    RuntimePresets    *runtimeprofiles.PresetResolution // records selected presets
+    Record            *promptrun.Recording // nil leaves the run unrecorded
+    Approvals         *promptrun.ApprovalOptions // durable per-run approval broker
     Config            ai.Config         // builds the provider when Provider is nil: model, credentials, sandbox, cache, OnApproval
     Provider          ai.Provider       // set to use as-is; taken to own the workspace (a remote sandbox, or a test double)
     Hooks             []any             // the caller's own agent hooks
@@ -29,6 +32,7 @@ type Input struct {
     Scope             agent.Scope       // overrides workflow.verify.scope; empty means the workflow decides
     NoStream          bool              // forces buffered execution even on a streaming provider
     Repo              string            // root the run's changed files are recorded relative to; empty means the request's cwd
+    ContextSources    []promptcontext.Source // optional initial-prompt enrichment hooks
 }
 `} />
 
@@ -36,6 +40,8 @@ type Input struct {
 - **`CallerOwnsCommits`** — for a host whose own commit pipeline runs the commit (gavel's pre-commit gates and trailers): `Run` builds no commit hook from `Workflow.Commits`, and leaves the declaration on the request so the recorded spec still says what the run commits, and validation of that declaration still runs. `Hooks` must be non-empty when this is set — nothing would commit otherwise, and `Hooks()` refuses the run rather than silently doing nothing.
 
 ## Timeout rule
+
+Call `promptrun.Preflight(input)` before dispatch to check the same resolved request that `Run` will admit. It validates declarations, attachments, deadlines, model selection, runtime policies, judge prompt files, verifier registration and commit ownership without constructing a provider or running setup. Log its returned warnings separately from fatal errors. `Run` applies configured prompt-context hooks before admission and repeats its admission checks before execution.
 
 <CodeExample client:load language="text" title="runTimeout precedence" source={`
 1. spec.budget.timeout  — wins when declared: it is what the run's author chose
@@ -49,7 +55,7 @@ There is deliberately no compiled-in ceiling. An earlier fallback capped a run t
 
 A spec with an empty `prompt.user` but a declared `workflow.verify` is **verify-only**: generation is skipped and the run scores the state that already exists (`api.Spec.IsVerifyOnly`). `Run` classifies every request exactly once, through `Request.ValidateRunnable`, so the caller building the provider and the runner deciding whether to call a model can never disagree about what kind of run this is.
 
-The rule this exists for is the near miss: attachments or a message history with no prompt body and no `workflow.verify` declared is **not** verify-only (there is nothing to verify) and is **not** runnable either — attachments and messages accompany a prompt, they never stand in for one. `ValidateRunnable` refuses that shape outright rather than let it silently report a pass having generated nothing and verified nothing.
+An attachment-only request with no generation input and no declared verifier is not verify-only. `ValidateRunnable` rejects an empty run rather than reporting a pass without generation or verification; conversation and resume payloads must satisfy their own runnable-input validation.
 
 A verify-only run of only `commands` and a `fixture` needs no model and builds no provider — it must work without credentials to hand. A verify-only run that also declares `prompts` (LLM judges) still builds one, because the judge needs it.
 
@@ -65,6 +71,7 @@ OnEvent func(iter int, ev ai.Event)
 
 <CodeExample client:load language="go" title="pkg/promptrun.Result" source={`
 type Result struct {
+    PromptRunID     uuid.UUID             // recorded row, or nil UUID when Record was unset
     Response        *ai.Response          // final text, structured data, terminal outcome, workspace
     Verdicts        []agent.VerifyResult  // every verify verdict, in the order it was reached
     Report          *api.VerifyReport     // the last round's rolled-up report
@@ -87,6 +94,8 @@ type Result struct {
 - **`FinalReport(verdicts)`** is the run's verdict as one report: a round runs every verifier the workflow declares, so it produces one report per verifier. Taking only the last of them used to throw the rest away — a round of `commands` + `fixture` came back as the fixture's tree alone. A round of one report is that report unwrapped; a round of several is `api.MergeReports`, which nests each report under its own group node (its own `summary` carried on the node, not recomputed, so an elided suite still contributes its whole tally) and passes only when every report in the round passed.
 
 ## Serving prompts and prompt runs over HTTP
+
+For recorded execution, `Admit` creates the placement session, prompt run and host link in one transaction; a failed link dispatches nothing. `Run` records iterations, notices, verification progress and terminal state. `Settle` records the outcome of a parked run completed outside `Run`; `Fail` and `Cancel` settle with a reason. See [pkg/promptrun](https://github.com/flanksource/captain/tree/main/pkg/promptrun) for recording inputs and lifecycle details.
 
 A host that serves captain's prompt surface instead of calling `promptrun.Run` itself wires four pieces from `pkg/cli`:
 

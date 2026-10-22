@@ -1,11 +1,61 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Fixtures
-description: Placeholder for Captain fixture documentation.
-section: Next Sections
+description: Claude configuration benchmarks, runtime observations, and verification fixtures.
+section: Reference
 ---
 
 # Fixtures
 
-This section is scaffolded for AI fixture benchmarks, repeat runs, artifact capture, direct-vs-MCP comparisons, and evidence reports.
+Captain provides two measurement surfaces: `ai fixture` compares Claude CLI configurations, while `prompt observe` captures one runtime as a structured observation. Workflow verification fixtures are executed by a registered runner, described under [Verification](/agents/verification/).
+
+## Claude configuration benchmarks
+
+`captain ai fixture` reads a YAML fixture, layers `defaults` beneath each run, executes repeated trials, and reports duration, cost, tokens and tool calls. It invokes the Claude CLI and requires its login and any tools declared by the fixture.
+
+```sh
+captain ai fixture --file examples/ai-fixtures/mission-control-investigate.yaml
+captain ai fixture --file benchmark.yaml --repeat 3 --report .tmp/benchmark.md
+captain ai fixture --file benchmark.yaml --report .tmp/benchmark.html --format html
+```
+
+```yaml
+name: repository-summary
+description: Compare tool exposure for the same repository question
+prompt: Describe this repository's main packages. Do not change files.
+repeat: 2
+defaults:
+  model: sonnet
+  timeout: 2m
+  permissionMode: default
+  disallowedTools: [Edit, Write, Bash, Agent, Task]
+runs:
+  - name: read-and-search
+    tools: [Read, Glob, Grep]
+  - name: read-only
+    tools: [Read]
+```
+
+`runs` must contain at least one entry. Per-run fields include `prompt`, `system`, `model`, `cwd`, `timeout`, `permissionMode`, `appendSystemPrompt`, `settings`, `maxBudgetUSD`, `repeat`, `tools`, `allowedTools`, `disallowedTools`, `mcpConfig`, `addDir`, `betas`, `extraArgs`, `env`, `promptCaching`, `noSessionPersistence` and `bare`. List overrides replace the default list. `--repeat` overrides the fixture-wide repeat count; a per-run repeat still wins.
+
+Stream artifacts default to `<fixture-dir>/.captain/fixtures/<name>`; use `--artifacts` to choose a destination. `--report` writes an evidence report in `markdown`, `html`, or `ansi` format. `baseline` names the comparison run for aggregate reporting.
+
+MCP servers are opt-in per run through `mcpConfig`; the runner uses strict MCP configuration so ambient servers do not leak into a comparison. With `allowedTools` and `bypassPermissions`, it changes the effective permission mode to `default` so non-interactive unlisted tools are denied. Other explicit permission modes are preserved. Repeated trials report aggregate duration/cost and variation; retain the per-trial streams as evidence for comparisons.
+
+## External tool traffic
+
+`captureKubernetesProxy: true` routes kubeconfig-aware Kubernetes requests through a local capture proxy. `kubeconfig` selects the source configuration. `mcpProxy: {capture: true}` wraps HTTP MCP servers from each run's `mcpConfig`; optional `headers` are merged into forwarded requests. Reports and per-run logs separate tool invocations from observed network requests.
+
+These proxies capture real traffic; they do not turn a mutating tool into a read-only one. Choose the target and tool policy before running a benchmark.
+
+## One runtime observation
+
+```sh
+captain prompt observe --runtime agent:sonnet -p 'Explain this repository' > .tmp/observation.json
+captain prompt observe review.prompt --runtime api:gpt-6.1-sol -V target=pkg/cli
+```
+
+`observe` is CLI-only and emits one `captain.observation/v1` JSON document. `--runtime` is required and cannot be combined with `--model` or `--mode`. Fallback chains, parallel matrices and workflow-backed prompts are rejected. `--mcp-config` and `--capture-kubernetes` request external capture; availability and capture coverage are recorded explicitly rather than treating missing measurements as zero.
+
+Use `captain prompt observe --help` for all source, capture and timeout flags. Observation execution can call a model and use the declared tools, just like a normal prompt run.
 
