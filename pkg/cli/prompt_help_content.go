@@ -43,7 +43,7 @@ permissions:
   mode: acceptEdits
   tools:
     Read: allow
-    Edit: ask
+    Edit: allow
 memory:
   skipUser: true
 setup:
@@ -63,6 +63,7 @@ Summarize this change:
 
 func promptDotpromptHelpFields() []promptHelpField {
 	return []promptHelpField{
+		{"presets[]", "Runtime preset ids or names selected beneath this prompt; --preset replaces the selection and --no-presets clears it. Explicit order controls final layer precedence."},
 		{"name, description", "Human-readable prompt catalog metadata."},
 		{"model", "Default model selector. Compact selectors may include runtime mode and effort, for example agent:sonnet:high."},
 		{"config.maxOutputTokens", "Maximum output tokens for each model call; takes precedence over budget.maxTokens when both are present."},
@@ -104,8 +105,9 @@ func promptSpecHelpFields() []promptHelpField {
 		{"memory.skipSkills, memory.skipHooks, memory.skipMemory", "Disable skills, hooks, or auto-memory/agent instruction files."},
 		{"memory.bare", "Skip hooks, skills, memory, and ambient settings together."},
 		{"permissions.mode", "Permission posture, independent of the sandbox: default, plan, acceptEdits, auto, bypassPermissions, or dontAsk."},
+		{"permissions.access", "Portable read-only or full access intent, compiled into the selected runtime's native restrictions. Caller tools remain governed by toolPreferences."},
 		{"permissions.presets[]", "Named safety bundles: edit or bare."},
-		{"permissions.tools.<tool>", "Per-tool policy: auto, ask, allow, or deny. Captain fails if the selected runtime cannot enforce it."},
+		{"permissions.tools.<tool>", "Declarative tool filter: auto, allow, or deny. ask cannot be enforced by native tool filters; per-call approval uses the broker. Unsupported restrictions fail before dispatch."},
 		{"permissions.mcp.disabled", "Disable all MCP servers."},
 		{"permissions.mcp.servers[]", "Optional allowlist of configured MCP servers."},
 		{"permissions.mcp.<server>", "Enable or disable one configured MCP server."},
