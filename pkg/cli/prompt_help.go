@@ -15,8 +15,7 @@ type promptHelpRenderOptions struct {
 	NoColor    bool
 }
 
-// AttachPromptHelp replaces the generated prompt root help while preserving
-// the generated help for its list, CRUD, render, and run subcommands.
+// AttachPromptHelp documents the prompt tree using the same terminal and agent formats.
 func AttachPromptHelp(root *cobra.Command) error {
 	promptCmd, _, err := root.Find([]string{"prompt"})
 	if err != nil {
@@ -26,12 +25,7 @@ func AttachPromptHelp(root *cobra.Command) error {
 		return fmt.Errorf("find prompt command: got %v", promptCmd)
 	}
 
-	defaultHelp := promptCmd.HelpFunc()
-	promptCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		if cmd != promptCmd {
-			defaultHelp(cmd, args)
-			return
-		}
+	promptCmd.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
 		opts := promptHelpRenderOptions{
 			LLMSession: CurrentEnvironmentSession() != nil,
 			NoColor:    clicky.Flags.NoColor,
@@ -51,7 +45,11 @@ func renderPromptHelp(cmd *cobra.Command, opts promptHelpRenderOptions) (string,
 	}
 	formatOpts := clicky.FormatOptions{Format: format, NoColor: opts.NoColor}
 	formatOpts.ResolveNoColor()
-	out, err := clicky.Format(promptHelpGuide(cmd, !opts.LLMSession), formatOpts)
+	guide := promptHelpGuide
+	if cmd.Name() != "prompt" {
+		guide = promptCommandHelpGuide
+	}
+	out, err := clicky.Format(guide(cmd, !opts.LLMSession), formatOpts)
 	if err != nil {
 		return "", fmt.Errorf("format prompt help as %s: %w", format, err)
 	}
@@ -78,6 +76,7 @@ func promptHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 		NewLine().NewLine().
 		Add(promptHelpHeading("Start here", styled)).NewLine().
 		Add(promptHelpBullets(styled,
+			"Discover available prompts: captain prompt list; inspect one: captain prompt get <name>",
 			"Validate and inspect a rendered file without calling a model: captain prompt render <file.prompt>",
 			"Execute it: captain prompt run <file.prompt>",
 			"Print the generated JSON schemas, catalogs, enum values, and backend-specific cliArgs: captain prompt --schema",
@@ -113,6 +112,13 @@ func promptHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 			"A .prompt file is a template. Inline text and piped input are data: they are sent verbatim, so braces and a leading --- stay content. Supply -V/--vars, or write {{input}}, to render them as a template instead.",
 			"Piped input is bound to {{input}}, or to a named variable with -V key=-. If the prompt uses neither, it is appended to the prompt body rather than dropped.",
 			"Use runtimes[] for prompt-owned parallel defaults, or repeat -M/--multi-models at execution time to compare explicit runtime targets.",
+		)).
+		NewLine().NewLine().
+		Add(promptHelpHeading("Help and output", styled)).NewLine().
+		Add(promptHelpBullets(styled,
+			"Use captain prompt <command> --help for examples and the complete generated flag reference.",
+			"Human terminal help uses color; --no-color or NO_COLOR disables it. Redirected output is uncolored. Detected agent sessions receive Markdown without ANSI escapes.",
+			"Use --json for structured command results, --no-stream for a buffered run, or captain prompt observe for one observation JSON document.",
 		)).
 		NewLine().NewLine().
 		Add(promptHelpHeading("Command usage", styled)).NewLine().

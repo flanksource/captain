@@ -347,6 +347,10 @@ func newRootCommand() *cobra.Command {
 	cli.RegisterRuntimeEntities()
 	cli.RegisterBudgetEntities()
 	clicky.GenerateCLI(rootCmd)
+	if err := cli.AttachPromptListOutput(rootCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach prompt list output: %v\n", err)
+		os.Exit(1)
+	}
 	if err := cli.AttachPromptSchemaFlag(rootCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to attach prompt schema flag: %v\n", err)
 		os.Exit(1)
