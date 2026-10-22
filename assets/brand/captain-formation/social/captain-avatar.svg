@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">Captain Formation avatar</title>
+  <rect width="256" height="256" rx="56" fill="#18252B"/>
+  <path fill="#F2A477" transform="translate(15.36 15.36) scale(0.88)" d="M64 32 H160 L208 80 H112 Z M32 104 H200 L224 128 L200 152 H32 Z M112 176 H208 L160 224 H64 Z"/>
+</svg>
