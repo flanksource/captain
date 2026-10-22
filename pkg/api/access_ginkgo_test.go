@@ -123,7 +123,9 @@ var _ = Describe("CompileAccess", func() {
 			claudeAgent, explicitReadOnly(Spec{Sandbox: &SandboxRef{Mode: SandboxOff}}),
 			Tools{"Bash": ToolPolicyDeny, "BashOutput": ToolPolicyDeny, "KillShell": ToolPolicyDeny, "Monitor": ToolPolicyDeny,
 				"Edit": ToolPolicyDeny, "MultiEdit": ToolPolicyDeny, "NotebookEdit": ToolPolicyDeny, "Write": ToolPolicyDeny,
-				"Agent": ToolPolicyDeny, "Task": ToolPolicyDeny, "Workflow": ToolPolicyDeny},
+				"Agent": ToolPolicyDeny, "Task": ToolPolicyDeny, "Workflow": ToolPolicyDeny, "TeamCreate": ToolPolicyDeny, "TeamDelete": ToolPolicyDeny,
+				"SendMessage": ToolPolicyDeny, "RemoteTrigger": ToolPolicyDeny, "CronCreate": ToolPolicyDeny, "CronDelete": ToolPolicyDeny,
+				"EnterWorktree": ToolPolicyDeny, "ExitWorktree": ToolPolicyDeny},
 			&SandboxRef{Mode: SandboxOff}, PermissionMode(""), true),
 		Entry("claude: a tool-derived intent passes through untouched",
 			claudeAgent, derived(Spec{Permissions: Permissions{Tools: readOnlyTools}}, AccessDialectTools, "permissions.tools"),
@@ -165,6 +167,18 @@ var _ = Describe("CompileAccess", func() {
 			"contradicts permissions.tools"),
 	)
 
+	It("denies every claude tool that acts outside the agent's own process, on every claude transport", func() {
+		for _, runtime := range []Runtime{claudeAgent, RuntimeOf(Anthropic, ModeCLI), RuntimeOf(Anthropic, ModeCmux)} {
+			p, _ := runtime.ModelProvider()
+			compiled, _, err := CompileAccess(runtime, explicitReadOnly(Spec{}))
+			Expect(err).NotTo(HaveOccurred())
+			tools, ignored := compiled.Permissions.Tools.ForRuntime(p, runtime.Mode)
+			Expect(ignored).To(BeEmpty(), "every denied name must be one the runtime knows, or the deny is dropped")
+			Expect(tools.DenyList()).To(ContainElements("SendMessage", "RemoteTrigger", "CronCreate", "TeamCreate", "EnterWorktree"))
+			Expect(tools.DenyList()).NotTo(ContainElements("ListAgents", "CronList", "WebFetch", "WebSearch"), "reads stay allowed")
+		}
+	})
+
 	It("never mutates the input spec", func() {
 		input := derived(Spec{Permissions: Permissions{Tools: Tools{"edit": ToolPolicyDeny, "write": ToolPolicyDeny, "shell": ToolPolicyDeny, "Read": ToolPolicyAllow}},
 			Sandbox: &SandboxRef{Mode: SandboxNative, Policy: &NativeSandboxPolicy{Filesystem: &SandboxFilesystemPolicy{}}}},
@@ -190,6 +204,18 @@ var _ = Describe("CompileAccess", func() {
 			"write_stdin (from Bash): kept as the read path, enforced by the read-only sandbox",
 		))
 	})
+
+	DescribeTable("reports how codex's execpolicy rules are kept out",
+		func(runtime Runtime, want string) {
+			GinkgoT().Setenv("XDG_CONFIG_HOME", "/config")
+			_, report, err := CompileAccess(runtime, explicitReadOnly(Spec{}))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(report.ExecPolicy).To(ContainSubstring(want))
+		},
+		Entry("codex exec ignores them", RuntimeOf(OpenAI, ModeCLI), "--ignore-rules"),
+		Entry("the app-server runs in the isolated home", codexAgent, "CODEX_HOME=/config/captain/codex-read-only"),
+		Entry("the cmux TUI runs in the isolated home", codexCmux, "CODEX_HOME=/config/captain/codex-read-only"),
+	)
 
 	It("agrees with the matrix's codex cell and the sandbox translator", func() {
 		compiled, _, err := CompileAccess(codexAgent, explicitReadOnly(Spec{}))

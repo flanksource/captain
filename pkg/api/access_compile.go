@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+
+	"github.com/flanksource/captain/pkg/codexhome"
 )
 
 // AccessReport is what CompileAccess did for one runtime, for explain output,
@@ -20,6 +22,9 @@ type AccessReport struct {
 	Approval    string         `json:"approval,omitempty"`
 	Mode        PermissionMode `json:"mode,omitempty"`
 	MCPDisabled bool           `json:"mcpDisabled,omitempty"`
+	// ExecPolicy is how codex's execpolicy allow rules, which bypass the
+	// sandbox, are kept out of a read-only run.
+	ExecPolicy string `json:"execPolicy,omitempty"`
 	// Overridden are authored settings the compiled posture replaced.
 	Overridden []string `json:"overridden,omitempty"`
 	// Equivalences are authored tool denies a runtime without a tool filter
@@ -115,7 +120,7 @@ func compileToolsAccess(runtime Runtime, spec *Spec, state *AccessState, report 
 		denyAccessTools(spec, report, aliasCarriers(vocabulary, writeAliases))
 		report.Notes = append(report.Notes, "the sandbox confines Bash only, so edit and write tools are denied; Bash stays under the authored sandbox")
 	default:
-		denyAccessTools(spec, report, append(aliasCarriers(vocabulary, readOnlyDeniedAliases), claudeSubAgentTools...))
+		denyAccessTools(spec, report, append(aliasCarriers(vocabulary, readOnlyDeniedAliases), claudeOutOfProcessTools...))
 		spec.Permissions.MCP.Disabled = true
 		report.MCPDisabled = true
 	}
@@ -158,8 +163,27 @@ func compileSandboxAccess(runtime Runtime, spec *Spec, state *AccessState, repor
 		report.MCPDisabled = true
 	}
 	report.Sandbox, report.Approval = string(CodexSandboxReadOnly), string(CodexApprovalNever)
+	if report.ExecPolicy, err = codexExecPolicyMechanism(runtime); err != nil {
+		return err
+	}
 	stripEnforcedDenies(runtime, spec, report, "enforced by the read-only sandbox")
 	return nil
+}
+
+// codexExecPolicyMechanism names how a read-only codex run keeps execpolicy
+// allow rules out: they run a matching command outside the sandbox even under
+// read-only with approval never. `codex exec` skips them with --ignore-rules;
+// the app-server and the TUI have no such switch, so they start in captain's
+// isolated CODEX_HOME, which has no rules (see pkg/codexhome).
+func codexExecPolicyMechanism(runtime Runtime) (string, error) {
+	if runtime.Mode == ModeCLI {
+		return "user and project rules ignored (--ignore-rules)", nil
+	}
+	home, err := codexhome.ReadOnlyHome()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("isolated CODEX_HOME=%s without user rules; project rules that allow a command are refused", home), nil
 }
 
 // codexCLIArgsPosture reads cmux's raw codex flags. They bypass the sandbox

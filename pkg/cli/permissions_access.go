@@ -141,6 +141,7 @@ func reportLines(report api.AccessReport) []string {
 	if report.MCPDisabled {
 		lines = append(lines, "mcp: disabled")
 	}
+	add("exec policy", report.ExecPolicy)
 	add("overridden", report.Overridden...)
 	add("equivalent", report.Equivalences...)
 	add("note", report.Notes...)

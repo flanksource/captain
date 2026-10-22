@@ -70,6 +70,7 @@ var _ = Describe("captain permissions explain", func() {
 		Expect(codex.Runtime).To(Equal("openai agent"))
 		Expect(codex.Report.Sandbox).To(Equal("read-only"))
 		Expect(codex.Report.Approval).To(Equal("never"))
+		Expect(codex.Report.ExecPolicy).To(ContainSubstring("isolated CODEX_HOME="))
 		Expect(result.Suggestion.Reason).To(Equal("permissions.access is already read-only"))
 	})
 })
