@@ -58,15 +58,7 @@ func runFakeServer() {
 		}
 		return raw
 	}
-	// Like the CLI, every settled turn is followed by an idle session state.
-	completed := func(resultText string) {
-		enc(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{
-			"success": true, "session_id": "fake-sess", "cost_usd": 0.01,
-			"result_text": resultText,
-			"usage":       map[string]any{"input_tokens": 10, "output_tokens": 5},
-		}})
-		enc(fakeSessionState("idle"))
-	}
+	results := &fakeResults{enc: enc}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -81,7 +73,7 @@ func runFakeServer() {
 			continue
 		}
 		if frame.Method == "" && len(frame.Result) > 0 {
-			completed("decision=" + string(frame.Result))
+			results.completed("decision=" + string(frame.Result))
 			continue
 		}
 		switch frame.Method {
@@ -91,6 +83,11 @@ func runFakeServer() {
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": fakeInitializeReply(mode)})
 		case "prompt":
 			promptCount++
+			var prompt struct {
+				UUID string `json:"uuid"`
+			}
+			_ = json.Unmarshal(frame.Params, &prompt)
+			results.unconsumed = append(results.unconsumed, prompt.UUID)
 			enc(map[string]any{"jsonrpc": "2.0", "id": id(frame.ID), "result": map[string]any{"accepted": true}})
 			// Like the SDK's system/init, the session announces itself inside the
 			// first query, never between initialize and the first prompt.
@@ -100,7 +97,7 @@ func runFakeServer() {
 				}})
 			}
 			enc(map[string]any{"jsonrpc": "2.0", "method": "message/text", "params": map[string]any{"text": "hi from fake"}})
-			runFakeTurn(mode, promptCount, initHadSchema, initialization, enc, completed)
+			runFakeTurn(mode, promptCount, initHadSchema, initialization, enc, results)
 		case "interrupt":
 			if marker != "" {
 				_ = os.WriteFile(marker, []byte("interrupted"), 0o644)
@@ -143,7 +140,7 @@ func runFakeTurn(
 	initHadSchema bool,
 	initialization fakeInitializeParams,
 	enc func(map[string]any),
-	completed func(string),
+	results *fakeResults,
 ) {
 	switch mode {
 	case "error-output":
@@ -152,9 +149,17 @@ func runFakeTurn(
 			"message": "Claude Code process exited with code 1",
 		}})
 	case "steer":
+		// The steered prompt reached the CLI as it went idle, so it runs as a
+		// turn of its own after an idle that must not end the captain turn.
 		if promptCount == 2 {
-			completed("first prompt complete")
-			completed("steered prompt complete")
+			results.result("first prompt complete", results.take(1))
+			results.idle()
+			results.completed("steered prompt complete")
+		}
+	case "steer-folded":
+		// Prompts steered into the running turn fold into its single result.
+		if promptCount == 3 {
+			results.completed("folded prompts complete")
 		}
 	case "approval":
 		enc(map[string]any{"jsonrpc": "2.0", "id": "perm-1", "method": "can_use_tool", "params": map[string]any{
@@ -173,23 +178,24 @@ func runFakeTurn(
 	case "structured":
 		enc(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{
 			"success": true, "session_id": "fake-sess", "cost_usd": 0.01, "subtype": "success",
-			"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
+			"usage":              map[string]any{"input_tokens": 10, "output_tokens": 5},
+			"user_message_uuids": results.take(len(results.unconsumed)),
 			"structured_output": map[string]any{
 				"company_name": "Anthropic", "founded_year": 2021, "received_schema": initHadSchema,
 			},
 		}})
 		enc(fakeSessionState("idle"))
 	case "background":
-		runFakeBackgroundAgent(enc)
+		runFakeBackgroundAgent(enc, results)
 	case "caller-tools":
-		if err := runFakeCallerTool(initialization, enc, completed); err != nil {
+		if err := runFakeCallerTool(initialization, enc, results); err != nil {
 			enc(map[string]any{"jsonrpc": "2.0", "method": "turn/error", "params": map[string]any{"message": err.Error()}})
 		}
 	default:
 		enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_use", "params": map[string]any{
 			"tool": "Read", "id": "t1", "input": map[string]any{"file_path": "/x"},
 		}})
-		completed("hi from fake")
+		results.completed("hi from fake")
 	}
 }
 
@@ -197,13 +203,44 @@ func fakeSessionState(state string) map[string]any {
 	return map[string]any{"jsonrpc": "2.0", "method": "session/state", "params": map[string]any{"state": state}}
 }
 
+// fakeResults settles prompts the way the SDK does: each result lists the
+// uuids of the prompts it consumed (user_message_uuids), so prompts that arrive
+// while a turn runs fold into that turn's one result.
+type fakeResults struct {
+	enc        func(map[string]any)
+	unconsumed []string
+}
+
+func (r *fakeResults) take(n int) []string {
+	taken := append([]string{}, r.unconsumed[:n]...)
+	r.unconsumed = r.unconsumed[n:]
+	return taken
+}
+
+func (r *fakeResults) result(text string, consumed []string) {
+	r.enc(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{
+		"success": true, "session_id": "fake-sess", "cost_usd": 0.01,
+		"result_text": text, "user_message_uuids": consumed,
+		"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
+	}})
+}
+
+func (r *fakeResults) idle() { r.enc(fakeSessionState("idle")) }
+
+// completed settles every unconsumed prompt and, like the CLI, idles.
+func (r *fakeResults) completed(text string) {
+	r.result(text, r.take(len(r.unconsumed)))
+	r.idle()
+}
+
 // runFakeBackgroundAgent replays the CLI's async Agent sequence: the Agent call
 // returns at once, the main turn settles while the subagent still works, and
-// the subagent's completion wakes a follow-up turn before the session idles.
-func runFakeBackgroundAgent(enc func(map[string]any)) {
-	result := func(cost float64) {
+// the subagent's completion wakes a follow-up turn, which consumes no prompt,
+// before the session idles.
+func runFakeBackgroundAgent(enc func(map[string]any), results *fakeResults) {
+	result := func(cost float64, consumed []string) {
 		enc(map[string]any{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{
-			"success": true, "session_id": "fake-sess", "cost_usd": cost,
+			"success": true, "session_id": "fake-sess", "cost_usd": cost, "user_message_uuids": consumed,
 			"usage": map[string]any{"input_tokens": 10, "output_tokens": 5},
 		}})
 	}
@@ -213,7 +250,7 @@ func runFakeBackgroundAgent(enc func(map[string]any)) {
 	enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_result", "params": map[string]any{
 		"id": "agent-1", "content": "Async agent launched successfully.",
 	}})
-	result(0.01)
+	result(0.01, results.take(len(results.unconsumed)))
 	enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_use", "params": map[string]any{
 		"tool": "Bash", "id": "sub-1", "input": map[string]any{"command": "ls"}, "parent_tool_use_id": "agent-1",
 	}})
@@ -221,14 +258,14 @@ func runFakeBackgroundAgent(enc func(map[string]any)) {
 		"id": "sub-1", "content": "ok", "parent_tool_use_id": "agent-1",
 	}})
 	enc(map[string]any{"jsonrpc": "2.0", "method": "message/text", "params": map[string]any{"text": "subagent reported"}})
-	result(0.03)
+	result(0.03, nil)
 	enc(fakeSessionState("idle"))
 }
 
 func runFakeCallerTool(
 	initialization fakeInitializeParams,
 	enc func(map[string]any),
-	completed func(string),
+	results *fakeResults,
 ) error {
 	server, ok := initialization.MCPServers["captain"]
 	if !ok || initialization.CallerToolUseIDKey == "" {
@@ -271,7 +308,7 @@ func runFakeCallerTool(
 	enc(map[string]any{"jsonrpc": "2.0", "method": "message/tool_result", "params": map[string]any{
 		"id": toolUseID, "content": string(content), "is_error": result.IsError,
 	}})
-	completed("caller tool complete")
+	results.completed("caller tool complete")
 	return nil
 }
 
