@@ -26,6 +26,12 @@
 -- or from how the execution ended (a chat interrupt), which the run alone does
 -- not carry. A new run going `running` still reopens such a session.
 --
+-- A chat turn (runtime->>'mode' = 'chat') settles without ending its
+-- sessions: the chat outlives the turn and awaits the next message, so its
+-- sessions stay `running` and go `idle`. The chat writes their terminal
+-- lifecycle itself when it ends (stopped, failed, or idle long enough to
+-- finish); a follower therefore keeps one stream open across its turns.
+--
 -- The UPDATE fires only when the lifecycle differs, so 51 advances
 -- state_version once and 83 notifies each session once per change.
 --
@@ -42,6 +48,7 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
   lifecycle public.captain_session_lifecycle_status;
+  settled boolean;
   terminal boolean;
   target uuid;
 BEGIN
@@ -53,6 +60,10 @@ BEGIN
     ELSE
       lifecycle := NEW.state::text::public.captain_session_lifecycle_status;
   END CASE;
+  settled := lifecycle <> 'running';
+  IF settled AND NEW.runtime ->> 'mode' = 'chat' THEN
+    lifecycle := 'running';
+  END IF;
   terminal := lifecycle <> 'running';
 
   FOREACH target IN ARRAY ARRAY[NEW.session_id, NEW.execution_session_id] LOOP
@@ -67,15 +78,16 @@ BEGIN
 
     UPDATE public.captain_sessions s
        SET lifecycle_status = lifecycle,
-           activity_state = CASE WHEN terminal THEN 'idle' ELSE s.activity_state END,
+           activity_state = CASE WHEN settled THEN 'idle' ELSE s.activity_state END,
            state_reason = CASE WHEN terminal THEN NULLIF(btrim(NEW.error), '') END,
            started_at = COALESCE(s.started_at, NEW.started_at),
            ended_at = CASE
              WHEN terminal THEN GREATEST(NEW.finished_at, COALESCE(s.started_at, NEW.started_at))
            END
      WHERE s.id = target
-       AND s.lifecycle_status IS DISTINCT FROM lifecycle
-       AND NOT (terminal AND s.lifecycle_status IN ('partial', 'interrupted'));
+       AND (s.lifecycle_status IS DISTINCT FROM lifecycle
+            OR (settled AND NOT terminal AND s.activity_state IS DISTINCT FROM 'idle'))
+       AND NOT (settled AND s.lifecycle_status IN ('partial', 'interrupted'));
   END LOOP;
 
   RETURN NULL;
@@ -94,14 +106,17 @@ REVOKE ALL ON FUNCTION public.captain_project_prompt_run_lifecycle() FROM PUBLIC
 -- each session still `created` or `running` whose latest started run (the
 -- trigger's ordering) is terminal takes that run's outcome, exactly as the
 -- trigger would have projected it. A session whose latest run is still running
--- is left alone -- the trigger projects its next change. Idempotent: a repaired
+-- is left alone -- the trigger projects its next change, as is one whose latest
+-- run is a chat turn: its chat owns the lifecycle. Idempotent: a repaired
 -- session is terminal and no longer matches.
 WITH run_sessions AS (
-  SELECT r.session_id AS target, r.id, r.state, r.error, r.created_at, r.started_at, r.finished_at
+  SELECT r.session_id AS target, r.id, r.state, r.error, r.created_at, r.started_at, r.finished_at,
+         r.runtime ->> 'mode' AS mode
     FROM public.captain_prompt_runs r
    WHERE r.state <> 'pending'
   UNION
-  SELECT r.execution_session_id, r.id, r.state, r.error, r.created_at, r.started_at, r.finished_at
+  SELECT r.execution_session_id, r.id, r.state, r.error, r.created_at, r.started_at, r.finished_at,
+         r.runtime ->> 'mode'
     FROM public.captain_prompt_runs r
    WHERE r.state <> 'pending'
      AND r.execution_session_id IS NOT NULL
@@ -119,4 +134,5 @@ UPDATE public.captain_sessions s
   FROM latest
  WHERE s.id = latest.target
    AND latest.state IN ('succeeded', 'failed', 'cancelled')
+   AND latest.mode IS DISTINCT FROM 'chat'
    AND s.lifecycle_status IN ('created', 'running');

@@ -1,0 +1,65 @@
+# `captain prompt run -i` at a real terminal: the form opens on the prompt id
+# (the optional positional the HTTP operation omits), listing the prompts from
+# the prompt entity's own list, and ctrl+c cancels without running anything.
+# --model's choices are the same shell completion the form's dropdown uses.
+#
+#   make build
+#   gavel fixtures pkg/cli/testdata/prompt-run-interactive.fixture.yaml
+kind: Fixture
+name: captain prompt run -i fills its arguments in a huh form
+defaults:
+  timeout: 90s
+env:
+  CAPTAIN_SESSION_DB_URL: "off"
+  CAPTAIN_MONITOR_HOOKS: "off"
+steps:
+  - id: workspace
+    kind: exec
+    script: |
+      set -eu
+      mkdir -p "{{.fixture.dir}}/../../../.tmp"
+      mktemp -d "{{.fixture.dir}}/../../../.tmp/prompt-run-interactive.XXXXXX" | tr -d '\n'
+    export:
+      CASE_DIR: "{{.outputs.stdout}}"
+      CAPTAIN_BIN: "{{.fixture.dir}}/../../../.bin/captain"
+    override: true
+
+  # The form is inline: one row per flag, only the focused one open. The id
+  # (the positional) is focused first; enter opens the built-in prompts with
+  # the highlighted one's description. Choosing proposal-review loads its
+  # input schema into --vars: its files, focus and rfp variables follow the
+  # id, and the first gets focus. The flags that do not fit on screen fold
+  # under Advanced.
+  - id: form
+    kind: exec
+    terminal: pty
+    cwd: "{{.env.CASE_DIR}}"
+    script: '"$CAPTAIN_BIN" prompt run -i'
+    input:
+      - { expect: "enter edit", keys: [enter, down] }
+      - { expect: "Review RFP responses", keys: [enter] }
+      - { expect: "› files", keys: [ctrl-c] }
+    exitCode: 1
+    cel: >-
+      stdout.contains('› id') && stdout.contains('commit') &&
+      stdout.contains('focus') && stdout.contains('rfp') &&
+      stdout.contains('▸ Advanced') && stdout.contains('prompt cancelled')
+
+  - id: model-choices
+    kind: exec
+    cwd: "{{.env.CASE_DIR}}"
+    script: '"$CAPTAIN_BIN" __complete prompt run --model ""'
+    cel: stdout.contains('claude-sonnet') && stdout.contains(':4')
+
+  # The flags that take a fixed set (or a catalog) of values offer them.
+  - id: flag-choices
+    kind: exec
+    cwd: "{{.env.CASE_DIR}}"
+    script: |
+      set -eu
+      for flag in permission-mode access sandbox preset perms fallback; do
+        "$CAPTAIN_BIN" __complete prompt run --$flag "" | head -1
+      done
+    cel: >-
+      stdout.contains('acceptEdits') && stdout.contains('full') && stdout.contains('docker') &&
+      stdout.contains('Edit') && stdout.contains('claude-')

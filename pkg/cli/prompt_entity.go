@@ -58,8 +58,9 @@ type PromptSummary struct {
 	Version string `json:"version,omitempty"`
 }
 
-func (p PromptSummary) GetID() string   { return p.ID }
-func (p PromptSummary) GetName() string { return p.Name }
+func (p PromptSummary) GetID() string          { return p.ID }
+func (p PromptSummary) GetName() string        { return p.Name }
+func (p PromptSummary) GetDescription() string { return p.Description }
 
 func (p PromptSummary) Columns() []clickyapi.ColumnDef {
 	return []clickyapi.ColumnDef{
@@ -114,7 +115,8 @@ type PromptRenderRequest struct {
 	Spec           *api.Spec   `json:"spec,omitempty"`
 	Runtimes       []api.Model `json:"runtimes,omitempty"`
 	Chat           bool        `json:"chat,omitempty"`
-	// Content, when set, is an unsaved draft rendered in place of the saved file.
+	// Content, when set, is an unsaved draft rendered in place of the saved file;
+	// without a prompt id it is a self-contained prompt, frontmatter included.
 	Content string `json:"content,omitempty"`
 	// Literal marks Content as caller data rather than an authored template, so
 	// the frontmatter split is skipped. CLI-only: an HTTP caller always names a
@@ -186,6 +188,7 @@ type promptRecord struct {
 	Path      string
 	Rel       string
 	UpdatedAt string
+	ReadPath  string
 }
 
 type promptRef struct {
@@ -217,12 +220,12 @@ func RegisterPromptEntity() {
 			CreateWithContext(createPrompt).
 			UpdateWithContext(updatePrompt).
 			DeleteWithContext(deletePrompt).
-			WithAction(clicky.ActionWithFlagsAndContext("render", PromptActionFlags{}, renderPromptAction).
+			WithAction(clicky.WithActionFilters(clicky.ActionWithFlagsAndContext("render", PromptActionFlags{}, renderPromptAction).
 				WithShort("Render a prompt (id, name, .prompt file, --prompt/-p, or stdin) without calling a model").
-				WithOptionalID()).
-			WithAction(clicky.ActionWithFlagsAndContext("run", PromptActionFlags{}, runPromptAction).
+				WithOptionalID(), aiFilters[PromptActionFlags]())).
+			WithAction(clicky.WithActionFlagSchema(clicky.WithActionFilters(clicky.ActionWithFlagsAndContext("run", PromptActionFlags{}, runPromptAction).
 				WithShort("Run a prompt (id, name, .prompt file, --prompt/-p, or stdin)").
-				WithOptionalID()).
+				WithOptionalID(), aiFilters[PromptActionFlags]()), "vars", promptVarsSchema)).
 			WithAction(clicky.ActionWithFlagsAndContext("observe", PromptObserveFlags{}, observePromptAction).
 				WithShort("Run exactly one runtime and emit a captain.observation/v1 JSON document").
 				WithOptionalID()).
@@ -399,7 +402,7 @@ func deletePrompt(ctx context.Context, id string) error {
 		return err
 	}
 	if !record.Source.Writable {
-		return fmt.Errorf("embedded prompts are read-only")
+		return fmt.Errorf("prompt source %q is read-only; use create to save a copy", record.Source.Label)
 	}
 	file, err := openLocalPromptFile(record, false)
 	if err != nil {
