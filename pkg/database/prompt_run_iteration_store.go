@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons/logger"
 	"github.com/google/uuid"
 	"gorm.io/gorm/clause"
 )
@@ -275,8 +276,7 @@ func (db *DB) latestPromptRunVerifications(ctx context.Context, runIDs []uuid.UU
 				record.PromptRunID, record.Iteration, err)
 		}
 		if err := report.Validate(); err != nil {
-			return nil, fmt.Errorf("verification result of Captain prompt run %s iteration %d is corrupt: %w",
-				record.PromptRunID, record.Iteration, err)
+			logger.Warnf("inconsistent verification result of Captain prompt run %s iteration %d: %v", record.PromptRunID, record.Iteration, err)
 		}
 		latest[record.PromptRunID] = promptRunVerification{Iteration: record.Iteration, Report: &report}
 	}

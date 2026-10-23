@@ -34,6 +34,11 @@ table "captain_runtime_presets" {
     type = enum.captain_spec_layer_scope
   }
   # The complete task Spec (api.RuntimePresetSpec) as JSON.
+  column "sort_order" {
+    null    = false
+    type    = bigint
+    default = 0
+  }
   column "spec" {
     null    = false
     type    = jsonb

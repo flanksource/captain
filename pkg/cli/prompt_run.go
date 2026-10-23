@@ -45,39 +45,25 @@ type PromptRunSummary struct {
 // prompt` is a deprecated alias.
 func runPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRunResult, error) {
 	_, isHTTP := clickyrpc.RequestFromContext(ctx)
-
-	var rendered PromptRenderResult
-	var opts AIPromptOptions
-	var chatRequested bool
-	if isHTTP {
-		req, err := readRenderRequest(ctx, flags)
+	if !isHTTP {
+		opts, err := actionFlagsToOptions(flags)
 		if err != nil {
 			return PromptRunResult{}, err
 		}
-		if rendered, err = renderPrompt(ctx, id, req); err != nil {
-			return PromptRunResult{}, err
-		}
-		chatRequested = req.Chat
-	} else {
-		var err error
-		if opts, err = actionFlagsToOptions(flags); err != nil {
-			return PromptRunResult{}, err
-		}
-		stdin, err := readStdinIfCLI(ctx)
-		if err != nil {
-			return PromptRunResult{}, err
-		}
-		if rendered, err = renderPromptCLI(ctx, id, opts, opts.Vars, stdin); err != nil {
-			return PromptRunResult{}, err
-		}
+		return RunPrompt(ctx, PromptInvocation{Reference: id, Options: opts})
+	}
+	req, err := readRenderRequest(ctx, flags)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	rendered, err := renderPrompt(ctx, id, req)
+	if err != nil {
+		return PromptRunResult{}, err
 	}
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
-	if !isHTTP {
-		logRuntimeWarnings(rendered.Resolution.Warnings)
-	}
-	if chatRequested {
+	if req.Chat {
 		if rendered.Input.Prompt.HasSchema() {
 			return PromptRunResult{}, errors.New("chat mode does not support structured-output prompts")
 		}
@@ -86,13 +72,10 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		}
 	}
 
-	if isHTTP {
-		if len(rendered.Runtimes) > 0 {
-			return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, chatRequested)
-		}
-		return launchAsyncRun(id, rendered, chatRequested)
+	if len(rendered.Runtimes) > 0 {
+		return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, req.Chat)
 	}
-	return executeSyncRun(ctx, rendered, opts)
+	return launchAsyncRun(id, rendered, req.Chat)
 }
 
 var executePromptRequestFunc = executePromptRequest
@@ -152,16 +135,26 @@ func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPro
 	return executeSyncRunSingle(ctx, rendered, opts)
 }
 
-func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
-	group := task.StartGroup[PromptRunResult](
-		"prompt "+rendered.Name,
+func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (result PromptRunResult, err error) {
+	ctx, renderer, err := attachPromptTerminal(ctx, &rendered)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	if renderer != nil {
+		defer func() { err = errors.Join(err, renderer.Flush()) }()
+	}
+	groupOptions := []task.TaskGroupOption{
 		task.WithKind("prompt"),
 		task.WithLabels(promptTaskLabels(rendered, "")),
-	)
+	}
+	if renderer != nil {
+		groupOptions = append(groupOptions, task.WithNoRender())
+	}
+	group := task.StartGroup[PromptRunResult]("prompt "+rendered.Name, groupOptions...)
 	run := group.Add("execute "+rendered.Mode+":"+rendered.Model, func(_ flanksourceContext.Context, t *task.Task) (PromptRunResult, error) {
 		taskCtx := ai.ContextWithLogger(t.Context(), t)
 		return executeSyncRunSingleDirect(taskCtx, t, rendered, opts, nil)
-	}, task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
+	}, task.WithContext(ctx), task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
 	return run.GetResult()
 }
 
@@ -173,6 +166,9 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
 	r, err := executeDirectPrompt(ctx, rendered, opts)
+	if err == nil {
+		err = unansweredPromptQuestions(r.TerminalOutcome)
+	}
 	recording := promptRecordingInput{Rendered: rendered, Binding: binding}
 	if recordErr := recordCompletedRun(ctx, recording, directRun(rendered, r, err)); err != nil || recordErr != nil {
 		return PromptRunResult{}, errors.Join(err, recordErr)

@@ -80,7 +80,7 @@ func runtimeRecordDirs(options DefaultCatalogOptions) ([]FileSourceOptions, erro
 		seen[key] = true
 		dirs = append(dirs, FileSourceOptions{Kind: kind, Dir: path, Label: path, Implicit: implicit})
 	}
-	configHome, err := captainConfigHome()
+	configHome, err := captainconfig.Home()
 	if err != nil {
 		return nil, err
 	}
@@ -172,15 +172,4 @@ func resolveRuntimeDir(raw, base string) (string, error) {
 		return "", fmt.Errorf("resolve runtime dir %s: %w", abs, err)
 	}
 	return filepath.Clean(resolved), nil
-}
-
-func captainConfigHome() (string, error) {
-	if base := os.Getenv("XDG_CONFIG_HOME"); base != "" {
-		return filepath.Join(base, "captain"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config", "captain"), nil
 }

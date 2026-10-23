@@ -190,17 +190,12 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		success    = true
 		sawResult  bool
 		lastErr    string
-		outcome    *ai.TerminalOutcome
+		outcome    ai.TerminalOutcomeTracker
 		outcomeErr error
 	)
 	for ev := range events {
 		if outcomeErr == nil {
-			parsed, parseErr := ai.TerminalOutcomeFromEvent(ev)
-			if parseErr != nil {
-				outcomeErr = parseErr
-			} else if parsed != nil {
-				outcome = parsed
-			}
+			outcomeErr = outcome.Observe(ev)
 		}
 		switch ev.Kind {
 		case ai.EventText:
@@ -245,12 +240,12 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		Runtime:         ai.RuntimeOf(ai.Anthropic, ai.ModeAgent),
 		Usage:           usage,
 		Duration:        time.Since(start),
-		TerminalOutcome: outcome,
+		TerminalOutcome: outcome.Outcome(),
 	}
 	if sessionID != "" {
 		resp.Raw = map[string]any{"session_id": sessionID}
 	}
-	if outcome != nil {
+	if outcome.Outcome() != nil {
 		return resp, nil
 	}
 	if req.Prompt.Schema != nil {
@@ -492,8 +487,11 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 	}
 
 	approvalMode := "auto"
+	disallowed := tools.DenyList()
 	if brokered {
 		approvalMode = "ask"
+	} else {
+		disallowed = append(disallowed, "AskUserQuestion")
 	}
 
 	resume := req.SessionID
@@ -514,9 +512,9 @@ func (p *Provider) initializeParams(req ai.Request) (initializeParams, error) {
 		Model:              bridgeModel(p.model),
 		Effort:             req.Effort,
 		SystemPrompt:       req.Prompt.System,
-		AppendSystemPrompt: req.Prompt.AppendSystem,
+		AppendSystemPrompt: strings.Join([]string{req.Prompt.AppendSystem, ai.QuestionInstructions("AskUserQuestion", brokered && tools["AskUserQuestion"] != api.ToolPolicyDeny)}, "\n\n"),
 		AllowedTools:       allowed,
-		DisallowedTools:    tools.DenyList(),
+		DisallowedTools:    disallowed,
 		AdditionalDirs:     req.Permissions.CleanDirectories(),
 		MaxTurns:           req.Budget.MaxTurns,
 		MaxBudgetUsd:       maxBudget,

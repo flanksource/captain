@@ -49,11 +49,18 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	start := time.Now()
 	acc := newPromptEventAccumulator(stream.publish, t, rendered.Model, rendered.Mode)
 	acc.cwd, acc.idPrefix, acc.verify, acc.session = req.Cwd(), runID, stream.setVerify, stream.setRunMetadata
+	onEvent := acc.handle
+	if renderer := promptEventRenderer(ctx); renderer != nil && !noStream {
+		onEvent = func(iteration int, event ai.Event) {
+			acc.handle(iteration, event)
+			renderer.Handle(iteration, event)
+		}
+	}
 	result, err := promptrun.Run(ctx, promptrun.Input{
 		Resolved: promptResolution(rendered, req),
 		Config:   rendered.Config,
 		Provider: remote,
-		OnEvent:  acc.handle,
+		OnEvent:  onEvent,
 		Timeout:  timeout,
 		NoStream: noStream,
 		Record:   rec,
@@ -107,6 +114,11 @@ func completedRunSummary(runID string, rendered PromptRenderResult, result promp
 	if err != nil {
 		return PromptRunSummary{}, err
 	}
+	questionErr := unansweredPromptQuestions(result.Response.TerminalOutcome)
+	failure := promptrun.FailureReason(result.Verdicts)
+	if questionErr != nil {
+		failure = questionErr.Error()
+	}
 	text, err := structuredOutputText(result.Response.Text, structured)
 	if err != nil {
 		return PromptRunSummary{}, err
@@ -125,10 +137,10 @@ func completedRunSummary(runID string, rendered PromptRenderResult, result promp
 		OutputTokens:     result.Usage.OutputTokens,
 		CostUSD:          result.CostUSD,
 		Duration:         elapsed.Round(time.Millisecond).String(),
-		Success:          result.Passed,
+		Success:          result.Passed && questionErr == nil,
 		Text:             text,
 		StructuredOutput: structured,
-		Error:            promptrun.FailureReason(result.Verdicts),
+		Error:            failure,
 	}, nil
 }
 

@@ -143,6 +143,7 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommandWithContext("tokens", sessionsCmd, cli.SessionTokensOptions{}, cli.RunSessionTokens).Short = "Size canonical transcript rows without changing recorded usage"
 
 	rootCmd.AddCommand(cli.NewBrowserCommand())
+	rootcmd.RegisterLintCommand(rootCmd, isStdinAvailable)
 
 	psCmd := clicky.AddNamedCommandWithContext("ps", rootCmd, cli.PSOptions{}, cli.RunPS)
 	psCmd.Short = "List live agent sessions, or inspect specific process IDs"
@@ -159,6 +160,10 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(permissionsCmd)
 	clicky.AddNamedCommand("matrix", permissionsCmd, cli.PermissionsMatrixOptions{}, cli.RunPermissionsMatrix).Short =
 		"Print the declared permission capability matrix (settings × runtimes)"
+	clicky.AddNamedCommandWithContext("explain", permissionsCmd, cli.PermissionsExplainOptions{}, cli.RunPermissionsExplain).Short =
+		"Show what a prompt's permissions compile to on each runtime, and the portable form"
+	clicky.AddNamedCommand("convert", permissionsCmd, cli.PermissionsConvertOptions{}, cli.RunPermissionsConvert).Short =
+		"Rewrite a prompt or preset's permissions as permissions.access when the conversion is exact or tighter"
 
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
@@ -342,6 +347,10 @@ func newRootCommand() *cobra.Command {
 	cli.RegisterRuntimeEntities()
 	cli.RegisterBudgetEntities()
 	clicky.GenerateCLI(rootCmd)
+	if err := cli.AttachPromptListOutput(rootCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach prompt list output: %v\n", err)
+		os.Exit(1)
+	}
 	if err := cli.AttachPromptSchemaFlag(rootCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to attach prompt schema flag: %v\n", err)
 		os.Exit(1)

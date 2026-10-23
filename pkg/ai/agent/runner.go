@@ -340,13 +340,10 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 		ws.SessionID = prev.SessionID
 	}
 	var text strings.Builder
+	var terminal ai.TerminalOutcomeTracker
 	for _, ev := range prev.Events {
-		outcome, err := ai.TerminalOutcomeFromEvent(ev)
-		if err != nil {
+		if err := terminal.Observe(ev); err != nil {
 			return fmt.Errorf("agent: invalid terminal outcome: %w", err)
-		}
-		if outcome != nil {
-			hc.Response.TerminalOutcome = outcome
 		}
 		switch ev.Kind {
 		case ai.EventText:
@@ -357,6 +354,7 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 			}
 		}
 	}
+	hc.Response.TerminalOutcome = terminal.Outcome()
 	hc.Response.Text = text.String()
 	hc.Response.Usage = prev.Usage
 	return nil

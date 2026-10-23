@@ -91,9 +91,7 @@ var (
 		EnvVars:       []string{"DEEPSEEK_API_KEY"},
 		DefaultMode:   ModeAPI,
 		modes: map[RuntimeMode]ModeCapabilities{
-			// DeepSeek selects reasoning by model id (deepseek-reasoner vs
-			// deepseek-chat) and ships no attachment support.
-			ModeAPI: {Streaming: true, CallerTools: true},
+			ModeAPI: {Streaming: true, CallerTools: true, MediaTypes: []string{"image/png", "image/jpeg", "image/gif", "image/webp"}},
 		},
 		claimPrefixes: []string{"deepseek"},
 		families:      []string{"deepseek"},

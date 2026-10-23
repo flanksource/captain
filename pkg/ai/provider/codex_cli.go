@@ -242,7 +242,9 @@ func buildCodexCLIArgs(cfg codexCLIConfig, req ai.Request) ([]string, func(), er
 	if req.Memory.SkipUser {
 		args = append(args, "--ignore-user-config")
 	}
-	if req.Memory.SkipProject || req.Memory.SkipHooks {
+	// Execpolicy allow rules run a matching command outside the sandbox even
+	// under read-only with approval never, so a read-only run skips them.
+	if req.Memory.SkipProject || req.Memory.SkipHooks || req.Permissions.EffectiveAccess().ReadOnly() {
 		args = append(args, "--ignore-rules")
 	}
 	if binary, ok := captainBinary(); ok && api.MonitorHooksEnabled(req) {

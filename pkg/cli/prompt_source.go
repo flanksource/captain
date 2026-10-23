@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
 
@@ -184,13 +186,16 @@ type promptVarsResult struct {
 	StdinBoundToVar bool
 }
 
-// promptVars builds the template data from --var key=value pairs and a --vars
+// ParsePromptVariables builds template data from --var key=value pairs and a --vars
 // JSON blob; unused stdin is exposed as {{input}}.
-func promptVars(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (promptVarsResult, error) {
+func ParsePromptVariables(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (promptVarsResult, error) {
 	data := map[string]any{}
 	if s := strings.TrimSpace(varsJSON); s != "" {
 		if err := json.Unmarshal([]byte(s), &data); err != nil {
 			return promptVarsResult{}, fmt.Errorf("parse --vars JSON: %w", err)
+		}
+		if data == nil {
+			return promptVarsResult{}, fmt.Errorf("--vars must be a JSON object, got null")
 		}
 	}
 	kv, boundStdin, err := parseVars(opts.Var, stdin)
@@ -220,12 +225,23 @@ func renderLoadedLayers(ctx context.Context, body promptBody, vars promptVarsRes
 		return nil, nil, err
 	}
 	presets := opts.Presets
-	if opts.PresetsSet && presets == nil {
+	if opts.NoPresets || (opts.PresetsSet && presets == nil) {
 		presets = []string{}
 	}
 	layers, warnings, err := renderLayers(ctx, body.Source, body.Text, frontmatter, PromptRenderRequest{Presets: presets, RuntimeProfile: opts.RuntimeProfile, Literal: body.Literal}, saved)
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(opts.RequiredPresets) > 0 {
+		required, _, err := selectRuntimePresets(ctx, runtimePresetSelection{Requested: opts.RequiredPresets, RequestedSet: true, Catalog: runtimeprofiles.DefaultCatalogOptions{Config: &saved}})
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, layer := range required.Layers {
+			if !slices.ContainsFunc(layers, func(existing api.SpecLayer) bool { return existing.ID == layer.ID }) {
+				layers = append(layers, layer)
+			}
+		}
 	}
 	promptFlags, err := opts.promptSpec()
 	if err != nil {

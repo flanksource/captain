@@ -26,10 +26,12 @@ func TestNewCodexAppServer_Defaults(t *testing.T) {
 func TestCodexAppServerProcessHonoursAPIURL(t *testing.T) {
 	process := newCodexAppServerProcess(ai.Config{
 		APIURL: "http://127.0.0.1:4020/v1", APIKey: "captain-mock",
-	})
+	}, "")
 	assert.Equal(t, "codex", process.Cmd)
 	assert.Equal(t, []string{
 		"app-server",
+		"-c", "tools.experimental_request_user_input.enabled=false",
+		"-c", "features.default_mode_request_user_input=false",
 		"-c", "model_provider=captain",
 		"-c", "model_providers.captain.name=captain",
 		"-c", "model_providers.captain.base_url=http://127.0.0.1:4020/v1",

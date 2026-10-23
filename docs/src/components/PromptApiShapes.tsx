@@ -60,6 +60,8 @@ const renderResult = {
   system: "You are a commit message generator. Analyze the diff below and produce a Conventional Commit message.",
   validationError: "",
   input: {
+    model: "claude-sonnet-4-6",
+    mode: "agent",
     prompt: {
       source: "commit.prompt",
       user: "DIFF INPUT:\\n\\n...\\n\\nREQUIREMENTS:\\n- type: one of feat|fix|perf|refactor|test|docs|build|ci|chore|revert\\n...",
@@ -80,7 +82,7 @@ export default function PromptApiShapes() {
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <MethodBadge method="GET" />
             <Badge variant="outline" tone="neutral" size="sm">
-              /api/v1/prompts
+              /api/v1/prompt
             </Badge>
           </div>
           <KeyValueList

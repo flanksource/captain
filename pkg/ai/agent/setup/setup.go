@@ -179,6 +179,14 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 	p.prepared = res
 	hc.Workspace().Cwd = res.Cwd
 	if !Relocates(checkout) {
+		workspace, err := InspectWorkspace(res.Cwd)
+		if err != nil {
+			return err
+		}
+		if workspace.Worktree != nil {
+			hc.Workspace().Worktree = workspace.Worktree
+			hc.Workspace().Repo = workspace.Worktree.Repo
+		}
 		return nil
 	}
 	p.relocation = &relocation{kind: "checkout", path: res.Cwd}

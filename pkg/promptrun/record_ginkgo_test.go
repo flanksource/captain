@@ -26,6 +26,7 @@ type eventsProvider struct {
 	calls  int
 	events []ai.Event
 	block  bool
+	before func()
 }
 
 func (p *eventsProvider) GetModel() string { return "claude-sonnet-5" }
@@ -36,6 +37,9 @@ func (p *eventsProvider) Execute(context.Context, ai.Request) (*ai.Response, err
 	return nil, errors.New("eventsProvider only streams")
 }
 func (p *eventsProvider) ExecuteStream(ctx context.Context, _ ai.Request) (<-chan ai.Event, error) {
+	if p.before != nil {
+		p.before()
+	}
 	p.mu.Lock()
 	p.calls++
 	p.mu.Unlock()
@@ -347,7 +351,7 @@ var _ = Describe("a recorded prompt run", func() {
 		Expect(messages).To(HaveLen(len(res.Response.Workspace.Notices)))
 	})
 
-	It("persists the run workspace on finish", func(ctx SpecContext) {
+	It("persists the run workspace before the first turn and on finish", func(ctx SpecContext) {
 		worktree := &api.WorktreeState{
 			Repo: cwd, Path: cwd + "/worktrees/shell-abc", Branch: "shell/abc",
 			Base: "1111111111111111111111111111111111111111", Setup: "2222222222222222222222222222222222222222",
@@ -356,13 +360,21 @@ var _ = Describe("a recorded prompt run", func() {
 		commit := api.CommitRecord{SHA: worktree.Head, Message: "feat: fix the build"}
 		hook := &workspaceHook{worktree: worktree, commit: commit}
 
+		rec := recording(nil)
+		rec.PromptRunID = uuid.New()
+		want := &api.WorkspaceRecord{Cwd: cwd, Worktree: worktree, Commits: []api.CommitRecord{commit}}
+		provider := &eventsProvider{events: answeredTurn(uuid.NewString()), before: func() {
+			running, err := db.GetPromptRun(ctx, rec.PromptRunID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(running.State).To(Equal(database.PromptRunStateRunning))
+			Expect(running.Workspace).To(Equal(want), "the workspace is visible before the first provider turn")
+		}}
 		res, err := promptrun.Run(ctx, promptrun.Input{
-			Resolved: resolved, Provider: &eventsProvider{events: answeredTurn(uuid.NewString())},
-			Timeout: testTimeout, Record: recording(nil), Hooks: []any{hook},
+			Resolved: resolved, Provider: provider,
+			Timeout: testTimeout, Record: rec, Hooks: []any{hook},
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		want := &api.WorkspaceRecord{Cwd: cwd, Worktree: worktree, Commits: []api.CommitRecord{commit}}
 		run, err := db.GetPromptRun(ctx, res.PromptRunID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(run.Workspace).To(Equal(want), "notices, diff and metadata stay off the durable record")
@@ -430,7 +442,7 @@ var _ = Describe("a recorded prompt run", func() {
 			recorder := promptrun.Track(ctx, rec, admitted, api.RuntimeOf(api.Anthropic, api.ModeAgent), resolved.Spec.Model, resolved.Spec, "")
 
 			spec := resolved.Spec
-			Expect(recorder.Start(&spec)).To(Succeed())
+			Expect(recorder.Start(&spec, nil)).To(Succeed())
 			run, err := db.GetPromptRun(ctx, admitted.ID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(run.State).To(Equal(database.PromptRunStateRunning))

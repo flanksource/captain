@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -102,7 +103,7 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	vars, err := promptVars(opts, varsJSON, stdin, body.UsedStdin)
+	vars, err := ParsePromptVariables(opts, varsJSON, stdin, body.UsedStdin)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
@@ -170,6 +171,12 @@ func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
 	}
 	result.Resolution.Warnings = append(input.Warnings, result.Resolution.Warnings...)
 	req, cfg := result.Request, result.Config
+	if len(req.Prompt.SchemaJSON) > 0 {
+		if err := json.Unmarshal(req.Prompt.SchemaJSON, &detail.OutputSchema); err != nil {
+			return PromptRenderResult{}, fmt.Errorf("decode resolved output schema: %w", err)
+		}
+		detail.OutputSchemaType = api.SchemaTypeJSONSchema
+	}
 	return PromptRenderResult{
 		ID: detail.ID, Name: detail.Name, Model: cfg.Model.Name, Provider: providerName(cfg.Model.Provider), Mode: string(cfg.Model.Mode),
 		User: req.Prompt.User, System: req.Prompt.System, Input: req, Config: cfg,

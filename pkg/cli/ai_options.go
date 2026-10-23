@@ -88,7 +88,7 @@ type AIRuntimeOptions struct {
 	// Effort and Temperature are NOT here: they describe the model and so live on
 	// the embedded aiflags.ModelFlags, promoted through AIProviderOptions.
 	// Redeclaring them would bind --effort twice and panic cobra at init.
-	MaxTokens int    `flag:"max-tokens" help:"Maximum output tokens (unset = saved default or 4096; 0 = provider default)"`
+	MaxTokens int    `flag:"max-tokens" help:"Maximum output tokens (unset = saved default, else the runtime's own default; 0 = runtime default)"`
 	MaxTurns  int    `flag:"max-turns" help:"Max agent turns 0-100, 0 = provider default (agent mode)"`
 	Resume    string `flag:"resume" help:"Resume an existing session by id (agent and cli modes)"`
 
@@ -96,6 +96,7 @@ type AIRuntimeOptions struct {
 	AllowedTools    []string `flag:"allowed-tools" help:"Override --edit's built-in allowlist (claude only)"`
 	DisallowedTools []string `flag:"disallowed-tools" help:"Tools to deny (claude only)"`
 	PermissionMode  string   `flag:"permission-mode" help:"acceptEdits|auto|bypassPermissions|default|plan"`
+	Access          string   `flag:"access" help:"Portable access contract compiled per runtime: read-only|full"`
 	// Perms is nil when --perms was not passed, which selects the host's
 	// AIRuntimeResolveOptions.DefaultPerms; a non-nil selection whose entries
 	// are all blank (`--perms ''`) selects none.
@@ -128,28 +129,26 @@ func validatePermissionMode(s string) error {
 type AIPromptOptions struct {
 	AIRuntimeOptions
 
-	// File is a positional .prompt template path rendered through pkg/ai/prompt.
-	// The frontmatter sets model + any ai.Request option; the body is the prompt.
-	File         string   `args:"true" help:"Path to a .prompt template to render"`
-	Prompt       string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text, or @file to load and render a .prompt template" short:"p"`
-	System       string   `flag:"system" help:"System prompt" short:"s"`
-	AppendSystem string   `flag:"append-system" help:"Append text to the default system prompt"`
-	Var          []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
-	Attach       []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
-	MultiModels  []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
-	Timeout      string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
-	NoStream     bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
-	Presets      []string
-	PresetsSet   bool
+	File            string   `args:"true" help:"Prompt name, ID, .prompt path, or - for stdin"`
+	Prompt          string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text, or @file to load and render a .prompt template" short:"p"`
+	System          string   `flag:"system" clicky:"cli-file-read" help:"System prompt" short:"s"`
+	AppendSystem    string   `flag:"append-system" clicky:"cli-file-read" help:"Append text to the default system prompt"`
+	Var             []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Attach          []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
+	MultiModels     []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
+	Timeout         string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
+	NoStream        bool     `flag:"no-stream" help:"Disable streaming; print only the final text to stdout"`
+	Presets         []string `flag:"preset" help:"Runtime preset layered into the prompt (repeatable)"`
+	NoPresets       bool     `flag:"no-presets" help:"Clear presets selected by prompt frontmatter"`
+	RequiredPresets []string `flag:"-" json:"-" yaml:"-"`
+	PresetsSet      bool
 
 	// RuntimeProfile is the catalog profile (id or name) `captain prompt
 	// run|render --runtime-profile` used to layer beneath the frontmatter. It is
 	// retained only to warn and no-op.
-	RuntimeProfile string
+	RuntimeProfile string `flag:"runtime-profile" help:"Deprecated and ignored; use --preset"`
 
-	// Vars is the --vars JSON object. Not a flag here for the same reason as
-	// RuntimeProfile.
-	Vars string
+	Vars string `flag:"vars" clicky:"cli-file-read" help:"JSON object of template variables (or @file.json)"`
 
 	// PromptRef is the raw --prompt/-p value as typed, before an @reference was
 	// expanded into the file's contents. The expansion is what makes `-p @file`
@@ -172,4 +171,6 @@ type AIPromptResult struct {
 	Output           int            `json:"outputTokens" pretty:"label=Output Tokens"`
 	CostUSD          float64        `json:"costUSD,omitempty" pretty:"label=Cost USD"`
 	Duration         string         `json:"duration" pretty:"label=Duration"`
+
+	TerminalOutcome *ai.TerminalOutcome `json:"-" pretty:"-"`
 }

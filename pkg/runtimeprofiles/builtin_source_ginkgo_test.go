@@ -54,7 +54,7 @@ var _ = Describe("Built-in source", func() {
 		Expect(NewBuiltinSource().Profiles()).To(BeNil())
 	})
 
-	It("ships Edit, Plan and Read-only as context presets with their permission postures", func(ctx SpecContext) {
+	It("ships lint output and permission presets", func(ctx SpecContext) {
 		presets, err := NewBuiltinSource().Presets().List(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		type posture struct {
@@ -73,6 +73,7 @@ var _ = Describe("Built-in source", func() {
 		}
 		Expect(actual).To(Equal([]posture{
 			{Key: "edit", Name: "Edit", Scope: api.SpecLayerContext, Mode: api.PermissionAcceptEdits, Presets: []api.Preset{api.PresetEdit}},
+			{Key: "lint", Name: "Lint", Scope: api.SpecLayerSurface},
 			{Key: "plan", Name: "Plan", Scope: api.SpecLayerContext, Mode: api.PermissionPlan, Tools: api.Tools{
 				"read": api.ToolPolicyAllow, "shell": api.ToolPolicyDeny,
 			}},
@@ -120,7 +121,7 @@ var _ = Describe("Catalog built-in overrides", func() {
 		listed, err := f.catalog.ListPresets(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(presetSummaries(listed)).To(Equal([][2]string{
-			{"db", org.Name}, {"builtin", "Edit"}, {"builtin", "Plan"}, {"builtin", "Read-only"},
+			{"db", org.Name}, {"builtin", "Edit"}, {"builtin", "Lint"}, {"builtin", "Plan"}, {"builtin", "Read-only"},
 		}))
 		plan, err := f.catalog.GetPreset(ctx, "Plan")
 		Expect(err).NotTo(HaveOccurred())
@@ -135,7 +136,7 @@ var _ = Describe("Catalog built-in overrides", func() {
 		listed, err := f.catalog.ListPresets(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(presetSummaries(listed)).To(Equal([][2]string{
-			{"file", "plan"}, {"builtin", "Edit"}, {"builtin", "Read-only"},
+			{"file", "plan"}, {"builtin", "Edit"}, {"builtin", "Lint"}, {"builtin", "Read-only"},
 		}))
 		override := listed[0]
 		Expect(f.catalog.GetPreset(ctx, "PLAN")).To(Equal(override))
@@ -157,7 +158,7 @@ var _ = Describe("Catalog built-in overrides", func() {
 		listed, err := f.catalog.ListPresets(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(presetSummaries(listed)).To(Equal([][2]string{
-			{"db", "Plan"}, {"builtin", "Edit"}, {"builtin", "Read-only"},
+			{"db", "Plan"}, {"builtin", "Edit"}, {"builtin", "Lint"}, {"builtin", "Read-only"},
 		}))
 		Expect(f.catalog.GetPreset(ctx, "plan")).To(Equal(override))
 		Expect(f.catalog.GetPreset(ctx, builtinPlanID)).To(Equal(override))

@@ -121,7 +121,7 @@ func (r *Recorder) transcribeAPIRun() {
 // Start marks the run running with the spec that actually runs — the one setup
 // already transformed — and the runtime it resolved to, then binds a provider
 // session known up front.
-func (r *Recorder) Start(spec *api.Spec) error {
+func (r *Recorder) Start(spec *api.Spec, workspace *api.Workspace) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rendered, err := SpecDocument(*spec)
@@ -131,7 +131,10 @@ func (r *Recorder) Start(spec *api.Spec) error {
 	run, err := r.updateRun(func(run *database.PromptRun) (database.UpdatePromptRunInput, bool) {
 		state, phase := database.PromptRunStateRunning, r.activePhase()
 		runtime := r.resolvedRuntime(run.Runtime, spec)
-		update := database.UpdatePromptRunInput{State: &state, Phase: &phase, Runtime: &runtime, RenderedSpec: &rendered}
+		update := database.UpdatePromptRunInput{
+			State: &state, Phase: &phase, Runtime: &runtime, RenderedSpec: &rendered,
+			Workspace: api.NewWorkspaceRecord(workspace),
+		}
 		if len(r.offered) > 0 {
 			update.Metadata = &map[string]any{"callerTools": r.offered}
 		}
@@ -464,7 +467,9 @@ type recordHook struct{ recorder *Recorder }
 
 func (h *recordHook) Name() string { return "promptrun-recorder" }
 
-func (h *recordHook) PreRun(hc *agent.HookContext) error { return h.recorder.Start(hc.Request) }
+func (h *recordHook) PreRun(hc *agent.HookContext) error {
+	return h.recorder.Start(hc.Request, hc.Workspace())
+}
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {

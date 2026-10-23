@@ -19,13 +19,15 @@ The prompts UI and Clicky operation surface are backed by a prompt entity. The e
 Captain discovers prompt sources in this order:
 
 1. Embedded examples from `pkg/ai/prompt/testdata`, exposed as a read-only source.
-2. Directories configured under `prompts.dirs` in `~/.captain.yaml`.
-3. Directories passed to `captain serve --prompt-dir`.
-4. An implicit writable local source at `.captain/prompts` when no other writable source exists.
+2. Built-in prompts from `pkg/ai/prompt/builtin` (source id `builtin`), exposed as a read-only source. These are the document review prompts `spec-internal-high`, `spec-internal-low`, `spec-public-high`, `spec-public-low` and `proposal-review`.
+3. Directories configured under `prompts.dirs` in `~/.captain.yaml`.
+4. Directories passed to `captain serve --prompt-dir`.
+5. An implicit writable local source at `.captain/prompts` when no other writable source exists.
+6. An implicit writable local source at `~/.config/captain/prompts`, or `$XDG_CONFIG_HOME/captain/prompts` when that variable is set. It is listed even when the directory does not exist yet, and it never replaces `.captain/prompts` as the default save target.
 
 Embedded prompts are read-only. Saving an embedded prompt from the workbench writes a local fork, stripping the embedded walk root so `testdata/commit.prompt` becomes `commit.prompt`.
 
-CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. Bare filenames are resolved across the discovered sources. An existing file in the current directory takes precedence; if more than one discovered source contains the same filename, Captain reports the ambiguity and requires an ID or explicit path.
+CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. Bare filenames are resolved across the discovered sources. An existing file in the current directory takes precedence. A local prompt shadows an embedded one with the same name, so copying `spec-internal-high.prompt` into `~/.config/captain/prompts/` customizes it everywhere. If more than one local source contains the same filename, Captain reports the ambiguity and requires an ID or explicit path.
 
 ## Entity records
 
@@ -42,7 +44,8 @@ CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare
   "writable": false,
   "model": "claude-sonnet-4-6",
   "variables": [
-    { "name": "diff", "type": "string" }
+    { "name": "patch", "type": "string", "required": true },
+    { "name": "maxBodyLines", "type": "integer", "required": true }
   ]
 }
 `} />
@@ -82,13 +85,12 @@ Rendering accepts template variables and an optional runtime `spec` overlay. It 
 <CodeExample client:load language="json" title="PromptRenderRequest" source={`
 {
   "variables": {
-    "diff": "diff --git a/README.md b/README.md"
+    "patch": "diff --git a/README.md b/README.md",
+    "maxBodyLines": 4
   },
   "spec": {
-    "model": {
-      "name": "claude-sonnet-4-6",
-      "mode": "agent"
-    },
+    "model": "claude-sonnet-4-6",
+    "mode": "agent",
     "budget": {
       "timeout": "2h",
       "maxTokens": 4096

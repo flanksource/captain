@@ -15,7 +15,7 @@ func (p *Provider) MediaTypesFor(mode RuntimeMode, model string) []string {
 		return []string{}
 	}
 	modelTypes := caps.MediaTypes
-	if m, found := p.Lookup(model); found && len(m.InputMediaTypes) > 0 {
+	if m, found := p.Lookup(model); found {
 		modelTypes = m.InputMediaTypes
 	}
 	return ClampMediaTypes(caps.MediaTypes, modelTypes)
