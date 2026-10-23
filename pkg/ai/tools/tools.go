@@ -329,7 +329,7 @@ func resolveDefinitionPolicies(definitions []api.ToolDefinition, opts ResolveOpt
 		if definition.Name == "" {
 			return nil, fmt.Errorf("caller tool name cannot be empty")
 		}
-		if !validCallerToolName(definition.Name) {
+		if !api.ValidToolName(definition.Name) {
 			return nil, fmt.Errorf("caller tool name %q contains unsupported characters", definition.Name)
 		}
 		if _, exists := policies[definition.Name]; exists {
@@ -345,18 +345,4 @@ func resolveDefinitionPolicies(definitions []api.ToolDefinition, opts ResolveOpt
 		policies[definition.Name] = policy
 	}
 	return policies, nil
-}
-
-func validCallerToolName(name string) bool {
-	for _, value := range name {
-		if value >= 'a' && value <= 'z' ||
-			value >= 'A' && value <= 'Z' ||
-			value >= '0' && value <= '9' ||
-			value == '-' ||
-			value == '_' {
-			continue
-		}
-		return false
-	}
-	return true
 }

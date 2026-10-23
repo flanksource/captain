@@ -36,7 +36,22 @@ var _ = Describe("Prompt validation", func() {
 		Entry("unknown schema field", "---\noutput: {scheam: {answer: string}}\n---\nbody\n", "promptfile/schema", "scheam"),
 		Entry("invalid input defaults", "---\ninput: {default: 42}\n---\nbody\n", "promptfile/schema", "default"),
 		Entry("invalid TypeSafe questions", "---\noutput:\n  schemaType: typesafe-schema\n  schema:\n    review: {type: choice}\n---\nbody\n", "promptfile/schema", "review"),
+		Entry("tools as a dotprompt name list", "---\ntools: [lookup]\n---\nbody\n", "promptfile/frontmatter", "tools must be a mapping"),
+		Entry("tool without exec", "---\ntools:\n  lookup: {description: d}\n---\nbody\n", "promptfile/spec", "tools.lookup: exec is required"),
+		Entry("tool readonly and destructive", "---\ntools:\n  lookup: {exec: 'true', readonly: true, destructive: true}\n---\nbody\n", "promptfile/spec", "mutually exclusive"),
+		Entry("tool with an invalid timeout", "---\ntools:\n  lookup: {exec: 'true', timeout: soon}\n---\nbody\n", "promptfile/spec", "invalid timeout"),
+		Entry("tool with an unknown field", "---\ntools:\n  lookup: {exec: 'true', retires: 3}\n---\nbody\n", "promptfile/frontmatter", "retires"),
+		Entry("tool with an invalid input schema", "---\ntools:\n  lookup:\n    exec: 'true'\n    input: {type: invalid}\n---\nbody\n", "promptfile/tools", "tools.lookup: input"),
+		Entry("tool with an invalid output schema", "---\ntools:\n  lookup:\n    exec: 'true'\n    output: {id: notatype}\n---\nbody\n", "promptfile/tools", "tools.lookup: output"),
 	)
+
+	It("warns that retrying a destructive tool re-runs its side effect", func() {
+		const source = "---\ntools:\n  drop: {exec: 'true', destructive: true, retry: {attempts: 2}}\n---\nbody\n"
+		Expect(Load(source).Validate(ValidationOptions{})).To(ConsistOf(And(
+			HaveField("Rule", "promptfile/tools"), HaveField("Severity", "warning"),
+			HaveField("Message", ContainSubstring("tools.drop")),
+		)))
+	})
 
 	DescribeTable("accepts reusable declarations without runtime configuration",
 		func(source string) {
@@ -50,6 +65,7 @@ var _ = Describe("Prompt validation", func() {
 		Entry("picoschema", "---\noutput:\n  schema:\n    answer: string\n---\nReview.\n"),
 		Entry("JSON Schema", "---\noutput:\n  schema: {type: object, properties: {answer: {type: string}}}\n---\nReview.\n"),
 		Entry("disabled hook", "---\nhook: {disabled: true}\n---\n"),
+		Entry("inline tool", "---\ntools:\n  lookup:\n    description: Fetch a ticket\n    input: {id: string}\n    output: {title: string}\n    exec: ./ticket.sh\n    readonly: true\n    timeout: 30s\n    retry: {attempts: 3, exitCodes: [75]}\n---\nReview.\n"),
 	)
 
 	It("warns with the missing frontmatter variables and still checks the body", func() {

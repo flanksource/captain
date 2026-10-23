@@ -27,6 +27,10 @@ Captain discovers prompt sources in this order:
 
 Embedded prompts are read-only. Saving an embedded prompt from the workbench writes a local fork, stripping the embedded walk root so `testdata/commit.prompt` becomes `commit.prompt`.
 
+Local sources discover ordinary directories recursively, excluding `.git`, `node_modules`, `vendor`, and `dist`. Symbolic links directly inside a source directory are also supported: a linked `.prompt` file is included, and a linked directory contributes only its immediate regular `.prompt` files. Subdirectories and further links inside a linked directory are not followed. Links nested inside ordinary subdirectories are not discovered. Broken links, resolution cycles, and unreadable targets produce errors identifying the path.
+
+Linked prompts retain their logical source paths and IDs and report `writable: false`. They support list, get, render, and run; update and delete refuse them without changing the link or its target. Use create to save an editable local copy. For example, `~/.config/captain/prompts/shared -> /path/to/shared-prompts` exposes `/path/to/shared-prompts/review.prompt` as `shared/review.prompt`, but excludes `/path/to/shared-prompts/nested/review.prompt`.
+
 CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. Bare filenames are resolved across the discovered sources. An existing file in the current directory takes precedence. A local prompt shadows an embedded one with the same name, so copying `spec-internal-high.prompt` into `~/.config/captain/prompts/` customizes it everywhere. If more than one local source contains the same filename, Captain reports the ambiguity and requires an ID or explicit path.
 
 ## Entity records
@@ -80,7 +84,7 @@ When `verify.fixtureRunner` is configured, the document also carries `fixtureSch
 
 ## Render request
 
-Rendering accepts template variables and an optional runtime `spec` overlay. It may also carry `content`: an unsaved draft that is rendered (or run) in place of the saved file. A `spec.model` that merely echoes the saved prompt's own frontmatter is ignored for a draft, so a draft that changes `model:` runs with the draft's model; any other override is kept. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
+Rendering accepts template variables and an optional runtime `spec` overlay. It may also carry `content`: an unsaved draft that is rendered (or run) in place of the saved file. Without a prompt id the draft is self-contained: its own frontmatter sets the model and runtime, as a saved `.prompt` file's would. A `spec.model` that merely echoes the saved prompt's own frontmatter is ignored for a draft, so a draft that changes `model:` runs with the draft's model; any other override is kept. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
 
 <CodeExample client:load language="json" title="PromptRenderRequest" source={`
 {

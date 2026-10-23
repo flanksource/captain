@@ -221,6 +221,13 @@ func decodeSpecFrontmatter(raw map[string]any, req *ai.Request) error {
 	if len(raw) == 0 {
 		return nil
 	}
+	// dotprompt spells tools as a list of registered tool names; captain declares
+	// them inline, and a list would otherwise fail as an opaque type mismatch.
+	if tools, ok := raw["tools"]; ok {
+		if _, isMap := tools.(map[string]any); !isMap {
+			return fmt.Errorf("tools must be a mapping of tool name to {description, input, output, exec}, got %T", tools)
+		}
+	}
 	specRaw := map[string]any{}
 	for key, value := range raw {
 		switch key {

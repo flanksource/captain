@@ -25,6 +25,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/ai/middleware"
+	"github.com/flanksource/captain/pkg/ai/tools/exectool"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/promptcontext"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
@@ -100,6 +101,10 @@ type Input struct {
 	// Resolved.Spec before admission, so what is recorded and every verify retry
 	// carry the enriched prompt. Empty leaves the prompt untouched.
 	ContextSources []promptcontext.Source
+
+	// inlineTools is the workspace the spec's inline tools run in, bound by
+	// bindInlineTools; Hooks orders its refresh after setup.
+	inlineTools *exectool.Workspace
 }
 
 type ApprovalOptions struct {
@@ -119,6 +124,9 @@ func Run(ctx context.Context, in Input) (Result, error) {
 		return Result{}, err
 	}
 	if err := applyContext(ctx, &in); err != nil {
+		return Result{}, err
+	}
+	if err := bindInlineTools(&in); err != nil {
 		return Result{}, err
 	}
 	if in.Record == nil {

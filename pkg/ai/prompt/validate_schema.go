@@ -8,6 +8,9 @@ import (
 
 	dp "github.com/google/dotprompt/go/dotprompt"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/flanksource/captain/pkg/ai/tools/exectool"
+	"github.com/flanksource/captain/pkg/api"
 )
 
 func validateSchemaSections(frontmatter map[string]any) error {
@@ -66,19 +69,48 @@ func validateDeclaredSchemas(source string) error {
 		if err != nil {
 			return fmt.Errorf("%s.schema: %w", section.name, err)
 		}
-		decoded, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-		if err != nil {
-			return fmt.Errorf("%s.schema: %w", section.name, err)
-		}
-		compiler := jsonschema.NewCompiler()
-		compiler.UseLoader(jsonschema.SchemeURLLoader{})
-		resource := "mem:///captain/prompt/" + section.name + ".json"
-		if err := compiler.AddResource(resource, decoded); err != nil {
-			return fmt.Errorf("%s.schema: %w", section.name, err)
-		}
-		if _, err := compiler.Compile(resource); err != nil {
+		if err := compileSchema(section.name, raw); err != nil {
 			return fmt.Errorf("%s.schema: %w", section.name, err)
 		}
 	}
 	return nil
+}
+
+// compileToolSchemas converts an inline tool's input and output exactly as
+// the run will, then compiles them like the prompt's own sections.
+func compileToolSchemas(tool api.InlineTool) error {
+	input, err := exectool.InputSchema(tool.Input)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return fmt.Errorf("input schema: %w", err)
+	}
+	if err := compileSchema("tool-input", raw); err != nil {
+		return fmt.Errorf("input schema: %w", err)
+	}
+	output, err := exectool.OutputSchema(tool.Output)
+	if err != nil || output == nil {
+		return err
+	}
+	if err := compileSchema("tool-output", output); err != nil {
+		return fmt.Errorf("output schema: %w", err)
+	}
+	return nil
+}
+
+func compileSchema(name string, raw []byte) error {
+	decoded, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.UseLoader(jsonschema.SchemeURLLoader{})
+	resource := "mem:///captain/prompt/" + name + ".json"
+	if err := compiler.AddResource(resource, decoded); err != nil {
+		return err
+	}
+	_, err = compiler.Compile(resource)
+	return err
 }

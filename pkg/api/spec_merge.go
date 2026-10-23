@@ -142,11 +142,21 @@ func (s Spec) WithoutSession() Spec {
 	s.SessionID = ""
 	s.ToolApproval = nil
 	s.Messages = nil
+	return s.WithoutExplicit("/sessionId", "/toolApproval", "/messages")
+}
+
+// WithoutExplicit drops the presence markers at and beneath each root. A caller
+// that clears a section must drop its markers too, or the codec is asked to
+// serialize an explicit field whose value no longer exists.
+func (s Spec) WithoutExplicit(roots ...string) Spec {
 	s.Explicit = s.Explicit.Clone()
-	for path := range s.Explicit {
-		for _, removed := range []string{"/sessionId", "/toolApproval", "/messages"} {
-			if path == removed || strings.HasPrefix(path, removed+"/") {
-				delete(s.Explicit, path)
+	s.Model.Explicit = s.Model.Explicit.Clone()
+	for _, fields := range []FieldPresence{s.Explicit, s.Model.Explicit} {
+		for path := range fields {
+			for _, root := range roots {
+				if path == root || strings.HasPrefix(path, root+"/") {
+					delete(fields, path)
+				}
 			}
 		}
 	}

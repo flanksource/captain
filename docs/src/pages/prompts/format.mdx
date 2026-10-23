@@ -48,6 +48,11 @@ A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt o
       <td>Decoded into `api.Spec` with strict field validation.</td>
     </tr>
     <tr>
+      <td><code>tools</code></td>
+      <td>Captain spec</td>
+      <td>A mapping of inline tools, each backed by a script. Replaces dotprompt's list of registered tool names, which Captain rejects. See <a href="#inline-tools">Inline tools</a>.</td>
+    </tr>
+    <tr>
       <td><code>runtimes</code></td>
       <td>Captain execution metadata</td>
       <td>Declares the default parallel runtime matrix without becoming part of the request sent to each model.</td>
@@ -109,6 +114,83 @@ You are a careful refactoring assistant.
 Refactor:
 {{target}}
 `} />
+
+## Inline tools
+
+`tools` declares tools the model can call, keyed by tool name. Each tool runs its `exec` script and returns the result to the model. Inline tools are caller tools: API runtimes call them in-process and agent runtimes reach them through Captain's caller-tool MCP endpoint. A runtime that cannot expose caller tools (for example `google cli`) refuses the run before the first model call.
+
+<CodeExample client:load language="yaml" title="A prompt that ships its own tool" source={`
+---
+model: agent:sonnet
+tools:
+  lookup_ticket:
+    description: Fetch a ticket by id
+    input: {id: string}
+    output: {title: string, status: string}
+    exec: |
+      #!/usr/bin/env python3
+      import json, sys
+      ticket = json.load(sys.stdin)
+      print(json.dumps({"title": "Ticket " + ticket["id"], "status": "open"}))
+    readonly: true
+    timeout: 30s
+    retry: {attempts: 3, delay: 1s, exitCodes: [75]}
+---
+Summarise ticket {{ticket}}.
+`} />
+
+<table className="docs-table">
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Behavior</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>exec</code></td>
+      <td>Required. The script to run. A shebang line picks the interpreter; otherwise it runs with <code>bash -c</code>, or <code>sh -c</code> when bash is missing. The tool input arrives on stdin as a JSON object.</td>
+    </tr>
+    <tr>
+      <td><code>description</code></td>
+      <td>Shown to the model.</td>
+    </tr>
+    <tr>
+      <td><code>input</code></td>
+      <td>Picoschema or JSON Schema for the arguments. Omit it to take an empty object.</td>
+    </tr>
+    <tr>
+      <td><code>output</code></td>
+      <td>Picoschema or JSON Schema. When set, stdout must be JSON that matches it, and the model gets the parsed document. Without it, the model gets stdout as text.</td>
+    </tr>
+    <tr>
+      <td><code>readonly</code>, <code>destructive</code></td>
+      <td>Safety hints. A <code>readonly</code> tool runs without approval. A <code>destructive</code> tool asks first. Declaring neither makes the tool ask, unless a policy rule allows it. The two are mutually exclusive.</td>
+    </tr>
+    <tr>
+      <td><code>permission</code></td>
+      <td><code>auto</code>, <code>ask</code>, <code>allow</code> or <code>deny</code>. Overrides the default derived from the hints. <code>toolPolicy</code> and <code>toolPreferences</code> rules still apply by tool name, as for any caller tool; <code>permissions.tools</code> does not govern caller tools.</td>
+    </tr>
+    <tr>
+      <td><code>timeout</code></td>
+      <td>Bounds each attempt. The default is <code>10m</code>. On timeout the script's whole process group is killed.</td>
+    </tr>
+    <tr>
+      <td><code>retry</code></td>
+      <td><code>attempts</code> counts every run, the first included. <code>delay</code> (default <code>1s</code>) grows by <code>backoff</code> (default <code>2</code>) up to <code>maxDelay</code> (default <code>30s</code>). A timed-out attempt is always retried. A non-zero exit is retried unless <code>exitCodes</code> is set, in which case only the listed codes are retried. Output that fails the <code>output</code> schema is never retried.</td>
+    </tr>
+    <tr>
+      <td><code>cwd</code>, <code>dotenv</code>, <code>envVars</code>, <code>connections</code></td>
+      <td>The same fields as <code>setup</code>, applied to this tool. A tool inherits the run's <code>setup</code> dotenv files, env vars and connections; its own dotenv files and env vars are added on top and win on conflict, and its own <code>connections</code> replace the run's. <code>cwd</code> defaults to the run's working directory, after any setup checkout or worktree. <code>checkout</code> is not allowed on a tool.</td>
+    </tr>
+  </tbody>
+</table>
+
+The script runs through the commons-db shell runner. Its environment contains only the allowlisted host variables plus the declared dotenv files, env vars and connection credentials. Values from `envVars`, `dotenv` and connections are redacted from the output and errors the model sees. A non-zero exit returns the exit code and the tail of stderr to the model as a tool error. In a sandboxed run, the script is confined by the same wrapper as `workflow.verify` commands.
+
+The frontmatter is rendered as Handlebars before it is decoded, so `exec` can use run variables, for example `--project {{shq project}}`. A literal `{{` in a script must be written as `\{{`. Tool arguments never pass through the template: they only arrive on stdin.
+
+A tool declared in a preset or request layer with the same name replaces the prompt's tool whole. Fields from the two layers are never mixed. `captain lint promptfile` compiles each tool's schemas. It warns when a `destructive` tool retries, because a failed attempt may already have taken effect.
 
 ## Runtime preset selection
 

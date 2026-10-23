@@ -228,6 +228,7 @@ func neutralize(s Spec) Spec {
 	// Maps that used to be replaced wholesale and now merge key-wise, because
 	// each key is an independent setting.
 	s.ToolPreferences = nil
+	s.Tools = nil
 	s.CLIArgs = nil
 	s.Labels = nil
 	s.Prompt.Metadata = nil

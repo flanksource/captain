@@ -142,6 +142,27 @@ var _ = Describe("promptrun.Preflight caller tools", func() {
 		expectRefused(`runtime "google cli" cannot expose caller tools`)
 	})
 
+	Context("declared inline in the spec", func() {
+		BeforeEach(func() { in.Config.Tools = nil })
+
+		It("admits a destructive inline tool like a host tool: refused without a broker", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"drop_table": {Exec: "true", Destructive: true}}
+			expectRefused("caller tools drop_table resolve to ask")
+		})
+
+		It("admits a readonly inline tool without a broker", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true}}
+			_, err := promptrun.Preflight(in)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("refuses inline tools on a runtime that cannot expose them", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true}}
+			in.Resolved.Spec.Model = api.Model{Name: "gemini-2.5-pro", Mode: api.ModeCLI}
+			expectRefused(`runtime "google cli" cannot expose caller tools`)
+		})
+	})
+
 	It("fires none of the caller-tool checks for a run with no caller tools", func() {
 		in.Config.Tools = nil
 		in.Resolved.Spec.Permissions.MCP.Disabled = true

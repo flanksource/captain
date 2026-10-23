@@ -74,6 +74,8 @@ A built-in only names the tools it has an opinion about, so layering one never l
 
 Tool keys such as `shell` and `edit` are portable aliases that each runtime translates to its own tool names (`Bash` on claude, `shell` on codex, `run_shell_command` on gemini). A `claude:Bash` prefix scopes a key to one provider. When keys collide on one tool, deny wins. On agent runtimes, a name that is neither an alias, an `mcp__` tool, nor any agent's built-in is ignored (caller tools are governed by `toolPolicy`, not `permissions.tools`). On runtimes that cannot filter tools (codex, gemini), an allow written as an alias, such as `shell: allow`, is inert, while a deny is refused loudly.
 
+Tools a prompt declares inline under `tools` (see [Inline tools](/prompts/format/#inline-tools)) are caller tools too. Their `readonly`, `destructive` and `permission` fields set the default authority, and `toolPolicy` and `toolPreferences` rules override it by tool name.
+
 Built-ins are read-only. To change one, create a preset with the same name in the database or a preset directory: `~/.config/captain/presets`, a `runtime.presetDirs` entry, or `<repo>/.captain/presets`. It overrides the built-in everywhere, including runs and profiles that stored the built-in's id, and deleting it brings the built-in back.
 
 <CodeExample client:load language="yaml" title="~/.config/captain/presets/plan.yaml" source={`
