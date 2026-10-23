@@ -39,5 +39,9 @@ var _ = Describe("adapter schema viewer API", func() {
 		Expect(spec.Paths).To(HaveKey("/api/captain/ai/adapter-schemas"))
 		operation := spec.Paths["/api/captain/ai/adapter-schemas"]["get"]
 		Expect(operation.OperationID).To(Equal("listAdapterSchemas"))
+		Expect(spec.Paths).To(HaveKey("/api/captain/ai/adapter-schemas/validate"))
+		validation := spec.Paths["/api/captain/ai/adapter-schemas/validate"]["post"]
+		Expect(validation.RequestBody.Content["application/json"].Schema.Required).To(ConsistOf("id", "value"))
+		Expect(validation.Responses).To(HaveKey("404"))
 	})
 })

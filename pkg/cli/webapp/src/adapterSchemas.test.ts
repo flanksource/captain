@@ -8,6 +8,7 @@ import {
 
 const DOCUMENTS: AdapterSchemaDocument[] = [
   {
+    id: "anthropic/api", kind: "execution",
     provider: "anthropic",
     mode: "api",
     title: "Anthropic API",
@@ -15,6 +16,7 @@ const DOCUMENTS: AdapterSchemaDocument[] = [
     schema: { type: "object" },
   },
   {
+    id: "openai/api", kind: "execution",
     provider: "openai",
     mode: "api",
     title: "OpenAI API",
@@ -22,6 +24,7 @@ const DOCUMENTS: AdapterSchemaDocument[] = [
     schema: { type: "object" },
   },
   {
+    id: "openai/cli", kind: "execution",
     provider: "openai",
     mode: "cli",
     title: "OpenAI CLI",
@@ -38,9 +41,9 @@ describe("adapter schema routes", () => {
     expect(parseAdapterSchemaPath(location)).toEqual({ provider: "openai", mode: "cli" });
   });
 
-  it("uses the first canonical schema when the route is incomplete or unknown", () => {
+  it("uses the canonical schema only at the catalog root and refuses unknown routes", () => {
     expect(selectAdapterSchema(DOCUMENTS, {})).toBe(DOCUMENTS[0]);
-    expect(selectAdapterSchema(DOCUMENTS, { provider: "unknown", mode: "api" })).toBe(DOCUMENTS[0]);
+    expect(selectAdapterSchema(DOCUMENTS, { provider: "unknown", mode: "api" })).toBeUndefined();
   });
 
   it("selects the exact provider and mode from a valid route", () => {
