@@ -58,6 +58,9 @@ func (s Spec) validateRuntimeFields() error {
 	if err := s.ToolPolicy.Validate(); err != nil {
 		return err
 	}
+	if err := s.Tools.Validate(); err != nil {
+		return err
+	}
 	if err := s.Workflow.Validate(); err != nil {
 		return fmt.Errorf("workflow: %w", err)
 	}

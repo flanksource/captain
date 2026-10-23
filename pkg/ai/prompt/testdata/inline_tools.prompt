@@ -1,0 +1,14 @@
+---
+model: agent:sonnet
+tools:
+  lookup_ticket:
+    description: Fetch a ticket by id
+    input: {id: string}
+    output: {title: string, status: string}
+    exec: ./hack/ticket.sh --project {{shq project}}
+    readonly: true
+    timeout: 30s
+    retry: {attempts: 3, delay: 1s, exitCodes: [75]}
+    dotenv: [.env]
+---
+Summarise ticket {{ticket}}.

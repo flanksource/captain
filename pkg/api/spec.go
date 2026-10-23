@@ -33,6 +33,8 @@ type Spec struct {
 	// evaluates one list, so the two shapes cannot disagree about a tool.
 	ToolPolicy   PermissionPolicy    `json:"toolPolicy,omitempty" yaml:"toolPolicy,omitempty" pretty:"-"`
 	ToolApproval *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty" pretty:"-"`
+	// Tools are caller tools declared inline, keyed by name; each runs a script.
+	Tools InlineTools `json:"tools,omitempty" yaml:"tools,omitempty" pretty:"-"`
 	Setup        *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 
 	// Sandbox selects the sandbox backend the run executes under. Absent = the
@@ -71,6 +73,7 @@ type specMarshal struct {
 	Preferences *ToolPreferences    `json:"toolPreferences,omitempty" yaml:"toolPreferences,omitempty"`
 	ToolPolicy  PermissionPolicy    `json:"toolPolicy,omitempty" yaml:"toolPolicy,omitempty"`
 	Approval    *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty"`
+	Tools       InlineTools         `json:"tools,omitempty" yaml:"tools,omitempty"`
 	Setup       *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 	Sandbox     *SandboxRef         `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
 	Workflow    *Workflow           `json:"workflow,omitempty" yaml:"workflow,omitempty"`
@@ -172,7 +175,8 @@ func (s Spec) marshalValue() specMarshal {
 		Preferences: omitEmptyValue(s.ToolPreferences),
 		ToolPolicy:  s.ToolPolicy,
 		Approval:    omitEmptyPointer(s.ToolApproval),
-		Setup:       omitEmptyPointer(s.Setup),
+		Tools:       s.Tools,
+		Setup:     omitEmptyPointer(s.Setup),
 		Sandbox:     omitEmptyPointer(s.Sandbox),
 		Workflow:    omitEmptyPointer(s.Workflow),
 		SessionID:   s.SessionID,
