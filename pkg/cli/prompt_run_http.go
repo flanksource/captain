@@ -17,7 +17,8 @@ import "net/http"
 //
 // A run is started by the prompt entity's `run` action (RegisterPromptEntity,
 // served by the host's clicky rpc executor: POST <prefix>/prompt/run?id=<prompt
-// id or bare name> with a PromptRenderRequest body), which answers a
+// id or bare name> with a PromptRenderRequest body, or no id and a
+// self-contained draft in its content), which answers a
 // PromptRunResult whose runId addresses this handler. The host must also run
 // StartSessionHost so finished runs are pruned and live chats stop with it.
 func PromptRunHandler() http.Handler {
@@ -26,7 +27,7 @@ func PromptRunHandler() http.Handler {
 	mux.Handle("GET /{runId}", handlePromptRunSnapshot(promptRuns))
 	mux.Handle("POST /{runId}/message", handlePromptRunMessage(promptChats))
 	mux.Handle("POST /{runId}/interrupt", handlePromptRunControl(promptChats, interruptChat))
-	mux.Handle("POST /{runId}/stop", handlePromptRunStop(promptRuns, promptChats))
+	mux.Handle("POST /{runId}/stop", handlePromptRunStop())
 	mux.Handle("POST /{runId}/permission-mode", handlePromptRunControl(promptChats, switchChatPermissionMode))
 	return mux
 }

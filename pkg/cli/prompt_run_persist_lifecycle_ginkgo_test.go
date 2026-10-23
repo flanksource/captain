@@ -41,7 +41,7 @@ var _ = Describe("persisted prompt run session lifecycle", func() {
 		}
 		Expect(recordCompletedRun(ctx, promptRecordingInput{
 			Rendered: rendered, RunID: "interrupted-member", Binding: promptBinding(batch, 0),
-		}, interrupted)).To(Succeed())
+		}, interrupted)).Error().To(Succeed())
 
 		admission, err := db.GetSession(ctx, member.SessionID)
 		Expect(err).NotTo(HaveOccurred())

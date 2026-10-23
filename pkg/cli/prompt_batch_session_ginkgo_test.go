@@ -109,7 +109,7 @@ var _ = Describe("prompt batch sessions", func() {
 
 		Expect(recordCompletedRun(GinkgoT().Context(),
 			promptRecordingInput{Rendered: rendered, RunID: "monitor-first-run", Binding: promptBinding(batch, 0)},
-			answeredRun(rendered, local.Runtime, providerSessionID, "done"))).To(Succeed())
+			answeredRun(rendered, local.Runtime, providerSessionID, "done"))).Error().To(Succeed())
 
 		admission, err := db.GetSession(GinkgoT().Context(), local.SessionID)
 		Expect(err).NotTo(HaveOccurred())
@@ -132,7 +132,7 @@ var _ = Describe("prompt batch sessions", func() {
 		apiRun := batch.Runs[1]
 		Expect(recordCompletedRun(GinkgoT().Context(),
 			promptRecordingInput{Rendered: rendered, RunID: "api-run", Binding: promptBinding(batch, 1)},
-			answeredRun(rendered, apiRun.Runtime, "", "done"))).To(Succeed())
+			answeredRun(rendered, apiRun.Runtime, "", "done"))).Error().To(Succeed())
 		apiRuns, err := db.ListPromptRuns(GinkgoT().Context(), database.PromptRunFilter{SessionID: &apiRun.SessionID})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(apiRuns).To(HaveLen(1))

@@ -35,7 +35,8 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	}
 	req := rendered.Input
 	if err := preparePromptRun(ctx, &req, rendered.Config); err != nil {
-		return failRun(t, stream, errors.Join(err, recordCompleted(ctx, rec, unstartedRun(rendered, err))))
+		_, recordErr := recordCompleted(ctx, rec, unstartedRun(rendered, err))
+		return failRun(t, stream, errors.Join(err, recordErr))
 	}
 	if rec != nil {
 		rec.Outcome = stoppedAsStopped(stream)
