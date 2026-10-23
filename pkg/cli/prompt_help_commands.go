@@ -8,6 +8,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const PromptLookupHelp = `- Embedded examples and built-in prompts ship with the binary (read-only).
+- Configured directories: prompts.dirs in ~/.captain.yaml; relative paths resolve from that config file's directory.
+- Caller-provided directories and embedded filesystems are also included when registered by a host application.
+- Project directory: ./.captain/prompts, used only when no configured or caller-provided writable source exists.
+- User directory: ~/.config/captain/prompts, or $XDG_CONFIG_HOME/captain/prompts when XDG_CONFIG_HOME is set; always included.
+- Links directly inside a prompt directory are read-only: linked .prompt files are included, and linked directories contribute only their immediate regular .prompt files (no subdirectories or further links).
+- Directories are searched recursively for .prompt files. Local files shadow embedded prompts of the same name; multiple local matches are ambiguous, so use a prompt ID or explicit path.`
+
 func promptCommandHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 	doc := api.Text{}.
 		Add(clicky.Heading(1, promptHelpText(cmd.CommandPath(), styled, "font-bold text-blue-600"))).
@@ -20,6 +28,10 @@ func promptCommandHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 		doc = doc.NewLine().NewLine().Add(clicky.Text(help.Description)).
 			NewLine().NewLine().Add(promptHelpHeading("Examples", styled)).NewLine().
 			Add(clicky.CodeBlock("bash", help.Examples))
+	}
+	if cmd.Name() == "list" {
+		doc = doc.NewLine().NewLine().Add(promptHelpHeading("Prompt lookup locations", styled)).
+			NewLine().Add(clicky.Text(PromptLookupHelp))
 	}
 	return doc.NewLine().NewLine().
 		Add(promptHelpHeading("Command usage and flags", styled)).NewLine().
@@ -45,11 +57,11 @@ var promptCommandHelp = map[string]struct {
 		Examples:    `captain prompt create name=hello 'content=Hello {{name}}'`,
 	},
 	"update": {
-		Description: "Replace a writable prompt's content after validation. Send the version returned by get as baseVersion to detect concurrent edits. Updating an embedded prompt is refused; create a local copy instead.",
+		Description: "Replace a writable prompt's content after validation. Send the version returned by get as baseVersion to detect concurrent edits. Embedded and linked prompts are read-only; create a local copy instead.",
 		Examples:    `captain prompt update .captain/prompts/hello.prompt 'content=Hello {{name}}!' baseVersion=VERSION_FROM_GET`,
 	},
 	"delete": {
-		Description: "Delete a writable local prompt file. Embedded and built-in prompts cannot be deleted. Removing a local override exposes the embedded prompt again.",
+		Description: "Delete a writable local prompt file. Embedded, built-in and linked prompts cannot be deleted. Removing a local override exposes the embedded prompt again.",
 		Examples:    "captain prompt delete .captain/prompts/hello.prompt",
 	},
 	"render": {
