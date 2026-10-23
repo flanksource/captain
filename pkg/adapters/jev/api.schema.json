@@ -1,72 +1,905 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "JevAPIOptions",
-  "description": "Native TypeSafe SystemOne evaluation request sent by Captain's Jev API runtime.",
-  "type": "object",
-  "additionalProperties": false,
-  "x-captain-adapter": {
-    "provider": "jev",
-    "mode": "api",
-    "sources": [
-      {"kind": "official-docs", "reference": "https://docs.typesafe.ai/api", "version": "retrieved 2026-10-18"},
-      {"kind": "implementation", "reference": "pkg/ai/provider/jev/provider.go and pkg/ai/middleware/jev_schema.go", "version": "working tree 2026-10-18 based on d95de3ed8c57a6dadd3978206615e1ec20c96e4e"}
-    ]
-  },
-  "required": ["model", "state", "questions"],
-  "properties": {
-    "model": {
-      "title": "Model", "description": "TypeSafe model that evaluates the questions.",
-      "type": "string", "minLength": 1, "x-clicky-section": "model", "x-clicky-order": 10,
-      "x-captain-option": {"nativeName": "model", "support": "mapped", "specPath": "model.name"}
-    },
-    "state": {
-      "title": "State", "description": "Text or structured data to evaluate against every question.",
-      "oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}],
-      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-      "x-clicky-section": "prompt", "x-clicky-order": 20,
-      "x-captain-option": {"nativeName": "state", "support": "mapped", "specPath": "prompt.user"}
-    },
-    "questions": {
-      "title": "Questions", "description": "Named Noul, Choice, or Score questions evaluated against the state.",
-      "type": "object", "minProperties": 1, "additionalProperties": {"oneOf": [
-        {"$ref": "#/$defs/JevAPINoulQuestion"},
-        {"$ref": "#/$defs/JevAPIChoiceQuestion"},
-        {"$ref": "#/$defs/JevAPIScoreQuestion"}
-      ]},
-      "goJSONSchema": {"type": "json.RawMessage", "imports": ["encoding/json"]},
-      "x-clicky-section": "prompt", "x-clicky-order": 30,
-      "x-captain-option": {"nativeName": "questions", "support": "mapped", "specPath": ["prompt.typeSafeQuestions", "prompt.schema", "prompt.schemaJSON"]}
-    }
-  },
   "$defs": {
-    "JevAPINoulQuestion": {
-      "type": "object", "additionalProperties": false, "required": ["type", "instructions"],
+    "JevAPIChoiceQuestion": {
+      "additionalProperties": false,
+      "description": "Jev APIChoice Question configuration. See the linked native reference for semantics and availability.",
       "properties": {
-        "type": {"const": "noul"},
-        "instructions": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
-        "criteria": {"type": "object", "additionalProperties": false, "properties": {
-          "true": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
-          "false": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]}
-        }}
+        "criteria": {
+          "additionalProperties": {
+            "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+            "goJSONSchema": {
+              "imports": [
+                "encoding/json"
+              ],
+              "type": "json.RawMessage"
+            },
+            "oneOf": [
+              {
+                "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+                "title": "Criteria value",
+                "type": "string",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              {
+                "additionalProperties": {
+                  "description": "Criteria value value configuration. See the linked native reference for semantics and availability.",
+                  "format": "json",
+                  "title": "Criteria value value",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                },
+                "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+                "title": "Criteria value",
+                "type": "object",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              {
+                "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+                "title": "Criteria value",
+                "type": "array",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              {
+                "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+                "title": "Criteria value",
+                "type": "null",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              }
+            ],
+            "title": "Criteria value",
+            "x-help": {
+              "links": [
+                {
+                  "href": "https://github.com/flanksource/captain",
+                  "label": "Documentation"
+                }
+              ]
+            }
+          },
+          "description": "Criteria configuration. See the linked native reference for semantics and availability.",
+          "maxProperties": 255,
+          "minProperties": 1,
+          "title": "Criteria",
+          "type": "object",
+          "x-clicky-order": 10,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        "instructions": {
+          "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+          "goJSONSchema": {
+            "imports": [
+              "encoding/json"
+            ],
+            "type": "json.RawMessage"
+          },
+          "oneOf": [
+            {
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "string",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            },
+            {
+              "additionalProperties": {
+                "description": "Instructions value configuration. See the linked native reference for semantics and availability.",
+                "format": "json",
+                "title": "Instructions value",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "object",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            },
+            {
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "array",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            }
+          ],
+          "title": "Instructions",
+          "x-clicky-order": 20,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        "type": {
+          "const": "choice",
+          "description": "Type configuration. See the linked native reference for semantics and availability.",
+          "title": "Type",
+          "x-clicky-order": 30,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "instructions",
+        "criteria"
+      ],
+      "title": "Jev APIChoice Question",
+      "type": "object",
+      "x-help": {
+        "links": [
+          {
+            "href": "https://github.com/flanksource/captain",
+            "label": "Documentation"
+          }
+        ]
       }
     },
-    "JevAPIChoiceQuestion": {
-      "type": "object", "additionalProperties": false, "required": ["type", "instructions", "criteria"],
+    "JevAPINoulQuestion": {
+      "additionalProperties": false,
+      "description": "Jev APINoul Question configuration. See the linked native reference for semantics and availability.",
       "properties": {
-        "type": {"const": "choice"},
-        "instructions": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
-        "criteria": {"type": "object", "minProperties": 1, "maxProperties": 255,
-          "additionalProperties": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}, {"type": "null"}]}}
+        "criteria": {
+          "additionalProperties": false,
+          "description": "Criteria configuration. See the linked native reference for semantics and availability.",
+          "properties": {
+            "false": {
+              "description": "False configuration. See the linked native reference for semantics and availability.",
+              "goJSONSchema": {
+                "imports": [
+                  "encoding/json"
+                ],
+                "type": "json.RawMessage"
+              },
+              "oneOf": [
+                {
+                  "description": "False configuration. See the linked native reference for semantics and availability.",
+                  "title": "False",
+                  "type": "string",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "additionalProperties": {
+                    "description": "False value configuration. See the linked native reference for semantics and availability.",
+                    "format": "json",
+                    "title": "False value",
+                    "x-help": {
+                      "links": [
+                        {
+                          "href": "https://github.com/flanksource/captain",
+                          "label": "Documentation"
+                        }
+                      ]
+                    }
+                  },
+                  "description": "False configuration. See the linked native reference for semantics and availability.",
+                  "title": "False",
+                  "type": "object",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "description": "False configuration. See the linked native reference for semantics and availability.",
+                  "title": "False",
+                  "type": "array",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "title": "False",
+              "x-clicky-order": 10,
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            },
+            "true": {
+              "description": "True configuration. See the linked native reference for semantics and availability.",
+              "goJSONSchema": {
+                "imports": [
+                  "encoding/json"
+                ],
+                "type": "json.RawMessage"
+              },
+              "oneOf": [
+                {
+                  "description": "True configuration. See the linked native reference for semantics and availability.",
+                  "title": "True",
+                  "type": "string",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "additionalProperties": {
+                    "description": "True value configuration. See the linked native reference for semantics and availability.",
+                    "format": "json",
+                    "title": "True value",
+                    "x-help": {
+                      "links": [
+                        {
+                          "href": "https://github.com/flanksource/captain",
+                          "label": "Documentation"
+                        }
+                      ]
+                    }
+                  },
+                  "description": "True configuration. See the linked native reference for semantics and availability.",
+                  "title": "True",
+                  "type": "object",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "description": "True configuration. See the linked native reference for semantics and availability.",
+                  "title": "True",
+                  "type": "array",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "title": "True",
+              "x-clicky-order": 20,
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            }
+          },
+          "title": "Criteria",
+          "type": "object",
+          "x-clicky-order": 10,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        "instructions": {
+          "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+          "goJSONSchema": {
+            "imports": [
+              "encoding/json"
+            ],
+            "type": "json.RawMessage"
+          },
+          "oneOf": [
+            {
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "string",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            },
+            {
+              "additionalProperties": {
+                "description": "Instructions value configuration. See the linked native reference for semantics and availability.",
+                "format": "json",
+                "title": "Instructions value",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "object",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            },
+            {
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "array",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            }
+          ],
+          "title": "Instructions",
+          "x-clicky-order": 20,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        "type": {
+          "const": "noul",
+          "description": "Type configuration. See the linked native reference for semantics and availability.",
+          "title": "Type",
+          "x-clicky-order": 30,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "instructions"
+      ],
+      "title": "Jev APINoul Question",
+      "type": "object",
+      "x-help": {
+        "links": [
+          {
+            "href": "https://github.com/flanksource/captain",
+            "label": "Documentation"
+          }
+        ]
       }
     },
     "JevAPIScoreQuestion": {
-      "type": "object", "additionalProperties": false, "required": ["type", "instructions", "criteria"],
+      "additionalProperties": false,
+      "description": "Jev APIScore Question configuration. See the linked native reference for semantics and availability.",
       "properties": {
-        "type": {"const": "score"},
-        "instructions": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]},
-        "criteria": {"type": "array", "minItems": 2, "maxItems": 10,
-          "items": {"oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]}}
+        "criteria": {
+          "description": "Criteria configuration. See the linked native reference for semantics and availability.",
+          "items": {
+            "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+            "goJSONSchema": {
+              "imports": [
+                "encoding/json"
+              ],
+              "type": "json.RawMessage"
+            },
+            "oneOf": [
+              {
+                "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+                "title": "Criteria value",
+                "type": "string",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              {
+                "additionalProperties": {
+                  "description": "Criteria value value configuration. See the linked native reference for semantics and availability.",
+                  "format": "json",
+                  "title": "Criteria value value",
+                  "x-help": {
+                    "links": [
+                      {
+                        "href": "https://github.com/flanksource/captain",
+                        "label": "Documentation"
+                      }
+                    ]
+                  }
+                },
+                "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+                "title": "Criteria value",
+                "type": "object",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              {
+                "description": "Criteria value configuration. See the linked native reference for semantics and availability.",
+                "title": "Criteria value",
+                "type": "array",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              }
+            ],
+            "title": "Criteria value",
+            "x-help": {
+              "links": [
+                {
+                  "href": "https://github.com/flanksource/captain",
+                  "label": "Documentation"
+                }
+              ]
+            }
+          },
+          "maxItems": 10,
+          "minItems": 2,
+          "title": "Criteria",
+          "type": "array",
+          "x-clicky-order": 10,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        "instructions": {
+          "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+          "goJSONSchema": {
+            "imports": [
+              "encoding/json"
+            ],
+            "type": "json.RawMessage"
+          },
+          "oneOf": [
+            {
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "string",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            },
+            {
+              "additionalProperties": {
+                "description": "Instructions value configuration. See the linked native reference for semantics and availability.",
+                "format": "json",
+                "title": "Instructions value",
+                "x-help": {
+                  "links": [
+                    {
+                      "href": "https://github.com/flanksource/captain",
+                      "label": "Documentation"
+                    }
+                  ]
+                }
+              },
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "object",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            },
+            {
+              "description": "Instructions configuration. See the linked native reference for semantics and availability.",
+              "title": "Instructions",
+              "type": "array",
+              "x-help": {
+                "links": [
+                  {
+                    "href": "https://github.com/flanksource/captain",
+                    "label": "Documentation"
+                  }
+                ]
+              }
+            }
+          ],
+          "title": "Instructions",
+          "x-clicky-order": 20,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        "type": {
+          "const": "score",
+          "description": "Type configuration. See the linked native reference for semantics and availability.",
+          "title": "Type",
+          "x-clicky-order": 30,
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "type",
+        "instructions",
+        "criteria"
+      ],
+      "title": "Jev APIScore Question",
+      "type": "object",
+      "x-help": {
+        "links": [
+          {
+            "href": "https://github.com/flanksource/captain",
+            "label": "Documentation"
+          }
+        ]
       }
     }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Native TypeSafe SystemOne evaluation request sent by Captain's Jev API runtime.",
+  "properties": {
+    "model": {
+      "description": "TypeSafe model that evaluates the questions.",
+      "minLength": 1,
+      "title": "Model",
+      "type": "string",
+      "x-captain-option": {
+        "nativeName": "model",
+        "specPath": "model.name",
+        "support": "mapped"
+      },
+      "x-clicky-order": 10,
+      "x-clicky-section": "model",
+      "x-help": {
+        "links": [
+          {
+            "href": "https://github.com/flanksource/captain",
+            "label": "Documentation"
+          }
+        ]
+      }
+    },
+    "questions": {
+      "additionalProperties": {
+        "description": "Questions value configuration. See the linked native reference for semantics and availability.",
+        "goJSONSchema": {
+          "imports": [
+            "encoding/json"
+          ],
+          "type": "json.RawMessage"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/JevAPINoulQuestion",
+            "description": "Questions value configuration. See the linked native reference for semantics and availability.",
+            "title": "Questions value",
+            "x-help": {
+              "links": [
+                {
+                  "href": "https://github.com/flanksource/captain",
+                  "label": "Documentation"
+                }
+              ]
+            }
+          },
+          {
+            "$ref": "#/$defs/JevAPIChoiceQuestion",
+            "description": "Questions value configuration. See the linked native reference for semantics and availability.",
+            "title": "Questions value",
+            "x-help": {
+              "links": [
+                {
+                  "href": "https://github.com/flanksource/captain",
+                  "label": "Documentation"
+                }
+              ]
+            }
+          },
+          {
+            "$ref": "#/$defs/JevAPIScoreQuestion",
+            "description": "Questions value configuration. See the linked native reference for semantics and availability.",
+            "title": "Questions value",
+            "x-help": {
+              "links": [
+                {
+                  "href": "https://github.com/flanksource/captain",
+                  "label": "Documentation"
+                }
+              ]
+            }
+          }
+        ],
+        "title": "Questions value",
+        "x-help": {
+          "links": [
+            {
+              "href": "https://github.com/flanksource/captain",
+              "label": "Documentation"
+            }
+          ]
+        }
+      },
+      "description": "Named Noul, Choice, or Score questions evaluated against the state.",
+      "goJSONSchema": {
+        "imports": [
+          "encoding/json"
+        ],
+        "type": "json.RawMessage"
+      },
+      "minProperties": 1,
+      "title": "Questions",
+      "type": "object",
+      "x-captain-option": {
+        "nativeName": "questions",
+        "specPath": [
+          "prompt.typeSafeQuestions",
+          "prompt.schema",
+          "prompt.schemaJSON"
+        ],
+        "support": "mapped"
+      },
+      "x-clicky-order": 30,
+      "x-clicky-section": "prompt",
+      "x-help": {
+        "links": [
+          {
+            "href": "https://github.com/flanksource/captain",
+            "label": "Documentation"
+          }
+        ]
+      }
+    },
+    "state": {
+      "description": "Text or structured data to evaluate against every question.",
+      "goJSONSchema": {
+        "imports": [
+          "encoding/json"
+        ],
+        "type": "json.RawMessage"
+      },
+      "oneOf": [
+        {
+          "description": "State configuration. See the linked native reference for semantics and availability.",
+          "title": "State",
+          "type": "string",
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        {
+          "additionalProperties": {
+            "description": "State value configuration. See the linked native reference for semantics and availability.",
+            "format": "json",
+            "title": "State value",
+            "x-help": {
+              "links": [
+                {
+                  "href": "https://github.com/flanksource/captain",
+                  "label": "Documentation"
+                }
+              ]
+            }
+          },
+          "description": "State configuration. See the linked native reference for semantics and availability.",
+          "title": "State",
+          "type": "object",
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        },
+        {
+          "description": "State configuration. See the linked native reference for semantics and availability.",
+          "title": "State",
+          "type": "array",
+          "x-help": {
+            "links": [
+              {
+                "href": "https://github.com/flanksource/captain",
+                "label": "Documentation"
+              }
+            ]
+          }
+        }
+      ],
+      "title": "State",
+      "x-captain-option": {
+        "nativeName": "state",
+        "specPath": "prompt.user",
+        "support": "mapped"
+      },
+      "x-clicky-order": 20,
+      "x-clicky-section": "prompt",
+      "x-help": {
+        "links": [
+          {
+            "href": "https://github.com/flanksource/captain",
+            "label": "Documentation"
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "model",
+    "state",
+    "questions"
+  ],
+  "title": "Jev API options",
+  "type": "object",
+  "x-captain-adapter": {
+    "mode": "api",
+    "provider": "jev",
+    "sources": [
+      {
+        "kind": "official-docs",
+        "reference": "https://docs.typesafe.ai/api",
+        "version": "retrieved 2026-10-18"
+      },
+      {
+        "kind": "implementation",
+        "reference": "pkg/ai/provider/jev/provider.go and pkg/ai/middleware/jev_schema.go",
+        "version": "working tree 2026-10-18 based on d95de3ed8c57a6dadd3978206615e1ec20c96e4e"
+      }
+    ]
+  },
+  "x-help": {
+    "links": [
+      {
+        "href": "https://github.com/flanksource/captain",
+        "label": "Documentation"
+      }
+    ]
   }
 }

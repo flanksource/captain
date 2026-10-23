@@ -4,19 +4,16 @@ package adapters
 
 import "encoding/json"
 
-// Up to sixteen string key-value pairs attached to the response.
-type Metadata map[string]string
-
 // Native OpenAI Responses API request options used by Captain's API runtime.
 type OpenAIAPIOptions struct {
 	// Whether OpenAI runs the response asynchronously in the background.
 	Background *bool `json:"background,omitempty,omitzero"`
 
 	// Additional response fields requested from the Responses API.
-	Include []string `json:"include,omitempty,omitzero"`
+	Include []OpenAIAPIOptionsIncludeElem `json:"include,omitempty,omitzero"`
 
 	// Text, image, file, conversation, and function-result items sent to the model.
-	Input json.RawMessage `json:"input"`
+	Input OpenaiAPIResponseNewParamsInputUnion `json:"input"`
 
 	// System or developer instructions inserted into the model context.
 	Instructions *string `json:"instructions,omitempty,omitzero"`
@@ -28,7 +25,7 @@ type OpenAIAPIOptions struct {
 	MaxToolCalls *int `json:"max_tool_calls,omitempty,omitzero"`
 
 	// Up to sixteen string key-value pairs attached to the response.
-	Metadata Metadata `json:"metadata,omitempty,omitzero"`
+	Metadata OpenAIAPIOptionsMetadata `json:"metadata,omitempty,omitzero"`
 
 	// OpenAI model identifier used to generate the response.
 	Model string `json:"model"`
@@ -40,13 +37,13 @@ type OpenAIAPIOptions struct {
 	PreviousResponseId *string `json:"previous_response_id,omitempty,omitzero"`
 
 	// Reusable OpenAI prompt template reference and variables.
-	Prompt *json.RawMessage `json:"prompt,omitempty,omitzero"`
+	Prompt *OpenaiAPIResponsePromptParam `json:"prompt,omitempty,omitzero"`
 
 	// Stable key used by OpenAI to improve prompt-cache routing.
 	PromptCacheKey *string `json:"prompt_cache_key,omitempty,omitzero"`
 
 	// Reasoning effort and summary configuration for reasoning models.
-	Reasoning *json.RawMessage `json:"reasoning,omitempty,omitzero"`
+	Reasoning *OpenaiAPIReasoningParam `json:"reasoning,omitempty,omitzero"`
 
 	// Stable hashed identifier used for abuse detection.
 	SafetyIdentifier *string `json:"safety_identifier,omitempty,omitzero"`
@@ -64,13 +61,13 @@ type OpenAIAPIOptions struct {
 	Temperature *float64 `json:"temperature,omitempty,omitzero"`
 
 	// Plain-text or JSON Schema output configuration.
-	Text *json.RawMessage `json:"text,omitempty,omitzero"`
+	Text *OpenaiAPIResponseTextConfigParam `json:"text,omitempty,omitzero"`
 
 	// Policy selecting whether and which tool the model should call.
-	ToolChoice *json.RawMessage `json:"tool_choice,omitempty,omitzero"`
+	ToolChoice *OpenaiAPIResponseNewParamsToolChoiceUnion `json:"tool_choice,omitempty,omitzero"`
 
 	// Native Responses API tool definitions derived from Captain caller tools.
-	Tools *json.RawMessage `json:"tools,omitempty,omitzero"`
+	Tools []OpenaiAPIToolUnionParam `json:"tools,omitempty,omitzero"`
 
 	// Number of likely tokens returned with log probabilities at each position.
 	TopLogprobs *int `json:"top_logprobs,omitempty,omitzero"`
@@ -86,6 +83,18 @@ type OpenAIAPIOptions struct {
 	User *string `json:"user,omitempty,omitzero"`
 }
 
+type OpenAIAPIOptionsIncludeElem string
+
+const OpenAIAPIOptionsIncludeElemCodeInterpreterCallOutputs OpenAIAPIOptionsIncludeElem = "code_interpreter_call.outputs"
+const OpenAIAPIOptionsIncludeElemComputerCallOutputOutputImageUrl OpenAIAPIOptionsIncludeElem = "computer_call_output.output.image_url"
+const OpenAIAPIOptionsIncludeElemFileSearchCallResults OpenAIAPIOptionsIncludeElem = "file_search_call.results"
+const OpenAIAPIOptionsIncludeElemMessageInputImageImageUrl OpenAIAPIOptionsIncludeElem = "message.input_image.image_url"
+const OpenAIAPIOptionsIncludeElemMessageOutputTextLogprobs OpenAIAPIOptionsIncludeElem = "message.output_text.logprobs"
+const OpenAIAPIOptionsIncludeElemReasoningEncryptedContent OpenAIAPIOptionsIncludeElem = "reasoning.encrypted_content"
+
+// Up to sixteen string key-value pairs attached to the response.
+type OpenAIAPIOptionsMetadata map[string]string
+
 type OpenAIAPIOptionsServiceTier string
 
 const OpenAIAPIOptionsServiceTierAuto OpenAIAPIOptionsServiceTier = "auto"
@@ -98,3 +107,2084 @@ type OpenAIAPIOptionsTruncation string
 
 const OpenAIAPIOptionsTruncationAuto OpenAIAPIOptionsTruncation = "auto"
 const OpenAIAPIOptionsTruncationDisabled OpenAIAPIOptionsTruncation = "disabled"
+
+// A filter used to compare a specified attribute key to a given value using a
+// defined comparison operation.
+//
+// The properties Key, Type, Value are required.
+type OpenaiAPIComparisonFilterParam struct {
+	// The key to compare against the value.
+	//
+	Key string `json:"key"`
+
+	// Specifies the comparison operator: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`.
+	//
+	// - `eq`: equals
+	// - `ne`: not equal
+	// - `gt`: greater than
+	// - `gte`: greater than or equal
+	// - `lt`: less than
+	// - `lte`: less than or equal
+	//
+	// Any of "eq", "ne", "gt", "gte", "lt", "lte".
+	//
+	Type OpenaiAPIComparisonFilterParamType `json:"type"`
+
+	// The value to compare against the attribute key; supports string, number, or
+	// boolean types.
+	//
+	Value OpenaiAPIComparisonFilterValueUnionParam `json:"value"`
+}
+
+type OpenaiAPIComparisonFilterParamType string
+
+const OpenaiAPIComparisonFilterParamTypeEq OpenaiAPIComparisonFilterParamType = "eq"
+const OpenaiAPIComparisonFilterParamTypeGt OpenaiAPIComparisonFilterParamType = "gt"
+const OpenaiAPIComparisonFilterParamTypeGte OpenaiAPIComparisonFilterParamType = "gte"
+const OpenaiAPIComparisonFilterParamTypeLt OpenaiAPIComparisonFilterParamType = "lt"
+const OpenaiAPIComparisonFilterParamTypeLte OpenaiAPIComparisonFilterParamType = "lte"
+const OpenaiAPIComparisonFilterParamTypeNe OpenaiAPIComparisonFilterParamType = "ne"
+
+// OpenAI APIComparison Filter Value Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIComparisonFilterValueUnionParam = json.RawMessage
+
+// Combine multiple filters using `and` or `or`.
+//
+// The properties Filters, Type are required.
+type OpenaiAPICompoundFilterParam struct {
+	// Array of filters to combine. Items can be `ComparisonFilter` or
+	// `CompoundFilter`.
+	//
+	Filters []OpenaiAPIComparisonFilterParam `json:"filters"`
+
+	// Type of operation: `and` or `or`.
+	//
+	// Any of "and", "or".
+	//
+	Type OpenaiAPICompoundFilterParamType `json:"type"`
+}
+
+type OpenaiAPICompoundFilterParamType string
+
+const OpenaiAPICompoundFilterParamTypeAnd OpenaiAPICompoundFilterParamType = "and"
+const OpenaiAPICompoundFilterParamTypeOr OpenaiAPICompoundFilterParamType = "or"
+
+// A tool that controls a virtual computer. Learn more about the
+// [computer tool](https://platform.openai.com/docs/guides/tools-computer-use).
+//
+// The properties DisplayHeight, DisplayWidth, Environment, Type are required.
+type OpenaiAPIComputerToolParam struct {
+	// The height of the computer display.
+	//
+	DisplayHeight int `json:"display_height"`
+
+	// The width of the computer display.
+	//
+	DisplayWidth int `json:"display_width"`
+
+	// The type of computer environment to control.
+	//
+	// Any of "windows", "mac", "linux", "ubuntu", "browser".
+	//
+	Environment OpenaiAPIComputerToolParamEnvironment `json:"environment"`
+
+	// The type of the computer use tool. Always `computer_use_preview`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "computer_use_preview".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIComputerToolParamEnvironment string
+
+const OpenaiAPIComputerToolParamEnvironmentBrowser OpenaiAPIComputerToolParamEnvironment = "browser"
+const OpenaiAPIComputerToolParamEnvironmentLinux OpenaiAPIComputerToolParamEnvironment = "linux"
+const OpenaiAPIComputerToolParamEnvironmentMac OpenaiAPIComputerToolParamEnvironment = "mac"
+const OpenaiAPIComputerToolParamEnvironmentUbuntu OpenaiAPIComputerToolParamEnvironment = "ubuntu"
+const OpenaiAPIComputerToolParamEnvironmentWindows OpenaiAPIComputerToolParamEnvironment = "windows"
+
+// OpenAI APIEasy Input Message Content Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIEasyInputMessageContentUnionParam = json.RawMessage
+
+// A message input to the model with a role indicating instruction following
+// hierarchy. Instructions given with the `developer` or `system` role take
+// precedence over instructions given with the `user` role. Messages with the
+// `assistant` role are presumed to have been generated by the model in previous
+// interactions.
+//
+// The properties Content, Role are required.
+type OpenaiAPIEasyInputMessageParam struct {
+	// Text, image, or audio input to the model, used to generate a response. Can also
+	// contain previous assistant responses.
+	//
+	Content OpenaiAPIEasyInputMessageContentUnionParam `json:"content"`
+
+	// The role of the message input. One of `user`, `assistant`, `system`, or
+	// `developer`.
+	//
+	// Any of "user", "assistant", "system", "developer".
+	//
+	Role OpenaiAPIEasyInputMessageParamRole `json:"role"`
+
+	// The type of the message input. Always `message`.
+	//
+	// Any of "message".
+	//
+	Type *OpenaiAPIEasyInputMessageParamType `json:"type,omitempty,omitzero"`
+}
+
+type OpenaiAPIEasyInputMessageParamRole string
+
+const OpenaiAPIEasyInputMessageParamRoleAssistant OpenaiAPIEasyInputMessageParamRole = "assistant"
+const OpenaiAPIEasyInputMessageParamRoleDeveloper OpenaiAPIEasyInputMessageParamRole = "developer"
+const OpenaiAPIEasyInputMessageParamRoleSystem OpenaiAPIEasyInputMessageParamRole = "system"
+const OpenaiAPIEasyInputMessageParamRoleUser OpenaiAPIEasyInputMessageParamRole = "user"
+
+type OpenaiAPIEasyInputMessageParamType string
+
+const OpenaiAPIEasyInputMessageParamTypeMessage OpenaiAPIEasyInputMessageParamType = "message"
+
+// OpenAI APIFile Search Tool Filters Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIFileSearchToolFiltersUnionParam = json.RawMessage
+
+// A tool that searches for relevant content from uploaded files. Learn more about
+// the
+// [file search tool](https://platform.openai.com/docs/guides/tools-file-search).
+//
+// The properties Type, VectorStoreIDs are required.
+type OpenaiAPIFileSearchToolParam struct {
+	// A filter to apply.
+	//
+	Filters *OpenaiAPIFileSearchToolFiltersUnionParam `json:"filters,omitempty,omitzero"`
+
+	// The maximum number of results to return. This number should be between 1 and 50
+	// inclusive.
+	//
+	MaxNumResults *int `json:"max_num_results,omitempty,omitzero"`
+
+	// Ranking options for search.
+	//
+	RankingOptions *OpenaiAPIFileSearchToolRankingOptionsParam `json:"ranking_options,omitempty,omitzero"`
+
+	// The type of the file search tool. Always `file_search`.
+	//
+	// This field can be elided, and will marshal its zero value as "file_search".
+	//
+	Type interface{} `json:"type"`
+
+	// The IDs of the vector stores to search.
+	//
+	VectorStoreIds []string `json:"vector_store_ids"`
+}
+
+// Ranking options for search.
+type OpenaiAPIFileSearchToolRankingOptionsParam struct {
+	// The ranker to use for the file search.
+	//
+	// Any of "auto", "default-2024-11-15".
+	//
+	Ranker *string `json:"ranker,omitempty,omitzero"`
+
+	// The score threshold for the file search, a number between 0 and 1. Numbers
+	// closer to 1 will attempt to return only the most relevant results, but may
+	// return fewer results.
+	//
+	ScoreThreshold *float64 `json:"score_threshold,omitempty,omitzero"`
+}
+
+// Defines a function in your own code the model can choose to call. Learn more
+// about
+// [function calling](https://platform.openai.com/docs/guides/function-calling).
+//
+// The properties Name, Parameters, Strict, Type are required.
+type OpenaiAPIFunctionToolParam struct {
+	// A description of the function. Used by the model to determine whether or not to
+	// call the function.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// The name of the function to call.
+	//
+	Name string `json:"name"`
+
+	// A JSON schema object describing the parameters of the function.
+	//
+	Parameters OpenaiAPIFunctionToolParamParameters `json:"parameters"`
+
+	// Whether to enforce strict parameter validation. Default `true`.
+	//
+	Strict bool `json:"strict"`
+
+	// The type of the function tool. Always `function`.
+	//
+	// This field can be elided, and will marshal its zero value as "function".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A JSON schema object describing the parameters of the function.
+type OpenaiAPIFunctionToolParamParameters map[string]interface{}
+
+// **o-series models only**
+//
+// Configuration options for
+// [reasoning models](https://platform.openai.com/docs/guides/reasoning).
+type OpenaiAPIReasoningParam struct {
+	// **o-series models only**
+	//
+	// Constrains effort on reasoning for
+	// [reasoning models](https://platform.openai.com/docs/guides/reasoning).
+	// Currently
+	// supported values are `low`, `medium`, and `high`. Reducing reasoning effort can
+	// result in faster responses and fewer tokens used on reasoning in a response.
+	//
+	// Any of "low", "medium", "high".
+	//
+	Effort *OpenaiAPIReasoningParamEffort `json:"effort,omitempty,omitzero"`
+
+	// **Deprecated:** use `summary` instead.
+	//
+	// A summary of the reasoning performed by the model. This can be useful for
+	// debugging and understanding the model's reasoning process. One of `auto`,
+	// `concise`, or `detailed`.
+	//
+	// Any of "auto", "concise", "detailed".
+	//
+	// Deprecated: deprecated
+	//
+	GenerateSummary *OpenaiAPIReasoningParamGenerateSummary `json:"generate_summary,omitempty,omitzero"`
+
+	// A summary of the reasoning performed by the model. This can be useful for
+	// debugging and understanding the model's reasoning process. One of `auto`,
+	// `concise`, or `detailed`.
+	//
+	// Any of "auto", "concise", "detailed".
+	//
+	Summary *OpenaiAPIReasoningParamSummary `json:"summary,omitempty,omitzero"`
+}
+
+type OpenaiAPIReasoningParamEffort string
+
+const OpenaiAPIReasoningParamEffortHigh OpenaiAPIReasoningParamEffort = "high"
+const OpenaiAPIReasoningParamEffortLow OpenaiAPIReasoningParamEffort = "low"
+const OpenaiAPIReasoningParamEffortMedium OpenaiAPIReasoningParamEffort = "medium"
+
+type OpenaiAPIReasoningParamGenerateSummary string
+
+const OpenaiAPIReasoningParamGenerateSummaryAuto OpenaiAPIReasoningParamGenerateSummary = "auto"
+const OpenaiAPIReasoningParamGenerateSummaryConcise OpenaiAPIReasoningParamGenerateSummary = "concise"
+const OpenaiAPIReasoningParamGenerateSummaryDetailed OpenaiAPIReasoningParamGenerateSummary = "detailed"
+
+type OpenaiAPIReasoningParamSummary string
+
+const OpenaiAPIReasoningParamSummaryAuto OpenaiAPIReasoningParamSummary = "auto"
+const OpenaiAPIReasoningParamSummaryConcise OpenaiAPIReasoningParamSummary = "concise"
+const OpenaiAPIReasoningParamSummaryDetailed OpenaiAPIReasoningParamSummary = "detailed"
+
+// The image output from the code interpreter.
+//
+// The properties Type, URL are required.
+type OpenaiAPIResponseCodeInterpreterToolCallOutputImageParam struct {
+	// The type of the output. Always 'image'.
+	//
+	// This field can be elided, and will marshal its zero value as "image".
+	//
+	Type interface{} `json:"type"`
+
+	// The URL of the image output from the code interpreter.
+	//
+	Url string `json:"url"`
+}
+
+// The logs output from the code interpreter.
+//
+// The properties Logs, Type are required.
+type OpenaiAPIResponseCodeInterpreterToolCallOutputLogsParam struct {
+	// The logs output from the code interpreter.
+	//
+	Logs string `json:"logs"`
+
+	// The type of the output. Always 'logs'.
+	//
+	// This field can be elided, and will marshal its zero value as "logs".
+	//
+	Type interface{} `json:"type"`
+}
+
+// OpenAI APIResponse Code Interpreter Tool Call Output Union Param configuration.
+// See the linked native reference for semantics and availability.
+type OpenaiAPIResponseCodeInterpreterToolCallOutputUnionParam = json.RawMessage
+
+// A tool call to run code.
+//
+// The properties ID, Code, ContainerID, Outputs, Status, Type are required.
+type OpenaiAPIResponseCodeInterpreterToolCallParam struct {
+	// The code to run, or null if not available.
+	//
+	Code string `json:"code"`
+
+	// The ID of the container used to run the code.
+	//
+	ContainerId string `json:"container_id"`
+
+	// The unique ID of the code interpreter tool call.
+	//
+	Id string `json:"id"`
+
+	// The outputs generated by the code interpreter, such as logs or images. Can be
+	// null if no outputs are available.
+	//
+	Outputs []OpenaiAPIResponseCodeInterpreterToolCallOutputUnionParam `json:"outputs"`
+
+	// The status of the code interpreter tool call. Valid values are `in_progress`,
+	// `completed`, `incomplete`, `interpreting`, and `failed`.
+	//
+	// Any of "in_progress", "completed", "incomplete", "interpreting", "failed".
+	//
+	Status OpenaiAPIResponseCodeInterpreterToolCallParamStatus `json:"status"`
+
+	// The type of the code interpreter tool call. Always `code_interpreter_call`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "code_interpreter_call".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIResponseCodeInterpreterToolCallParamStatus string
+
+const OpenaiAPIResponseCodeInterpreterToolCallParamStatusCompleted OpenaiAPIResponseCodeInterpreterToolCallParamStatus = "completed"
+const OpenaiAPIResponseCodeInterpreterToolCallParamStatusFailed OpenaiAPIResponseCodeInterpreterToolCallParamStatus = "failed"
+const OpenaiAPIResponseCodeInterpreterToolCallParamStatusInProgress OpenaiAPIResponseCodeInterpreterToolCallParamStatus = "in_progress"
+const OpenaiAPIResponseCodeInterpreterToolCallParamStatusIncomplete OpenaiAPIResponseCodeInterpreterToolCallParamStatus = "incomplete"
+const OpenaiAPIResponseCodeInterpreterToolCallParamStatusInterpreting OpenaiAPIResponseCodeInterpreterToolCallParamStatus = "interpreting"
+
+// A click action.
+//
+// The properties Button, Type, X, Y are required.
+type OpenaiAPIResponseComputerToolCallActionClickParam struct {
+	// Indicates which mouse button was pressed during the click. One of `left`,
+	// `right`, `wheel`, `back`, or `forward`.
+	//
+	// Any of "left", "right", "wheel", "back", "forward".
+	//
+	Button string `json:"button"`
+
+	// Specifies the event type. For a click action, this property is always set to
+	// `click`.
+	//
+	// This field can be elided, and will marshal its zero value as "click".
+	//
+	Type interface{} `json:"type"`
+
+	// The x-coordinate where the click occurred.
+	//
+	X int `json:"x"`
+
+	// The y-coordinate where the click occurred.
+	//
+	Y int `json:"y"`
+}
+
+// A double click action.
+//
+// The properties Type, X, Y are required.
+type OpenaiAPIResponseComputerToolCallActionDoubleClickParam struct {
+	// Specifies the event type. For a double click action, this property is always
+	// set
+	// to `double_click`.
+	//
+	// This field can be elided, and will marshal its zero value as "double_click".
+	//
+	Type interface{} `json:"type"`
+
+	// The x-coordinate where the double click occurred.
+	//
+	X int `json:"x"`
+
+	// The y-coordinate where the double click occurred.
+	//
+	Y int `json:"y"`
+}
+
+// A drag action.
+//
+// The properties Path, Type are required.
+type OpenaiAPIResponseComputerToolCallActionDragParam struct {
+	// An array of coordinates representing the path of the drag action. Coordinates
+	// will appear as an array of objects, eg
+	//
+	// ```
+	// [
+	//
+	// 	{ x: 100, y: 200 },
+	// 	{ x: 200, y: 300 }
+	//
+	// ]
+	// ```
+	//
+	Path []OpenaiAPIResponseComputerToolCallActionDragPathParam `json:"path"`
+
+	// Specifies the event type. For a drag action, this property is always set to
+	// `drag`.
+	//
+	// This field can be elided, and will marshal its zero value as "drag".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A series of x/y coordinate pairs in the drag path.
+//
+// The properties X, Y are required.
+type OpenaiAPIResponseComputerToolCallActionDragPathParam struct {
+	// The x-coordinate.
+	//
+	X int `json:"x"`
+
+	// The y-coordinate.
+	//
+	Y int `json:"y"`
+}
+
+// A collection of keypresses the model would like to perform.
+//
+// The properties Keys, Type are required.
+type OpenaiAPIResponseComputerToolCallActionKeypressParam struct {
+	// The combination of keys the model is requesting to be pressed. This is an array
+	// of strings, each representing a key.
+	//
+	Keys []string `json:"keys"`
+
+	// Specifies the event type. For a keypress action, this property is always set to
+	// `keypress`.
+	//
+	// This field can be elided, and will marshal its zero value as "keypress".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A mouse move action.
+//
+// The properties Type, X, Y are required.
+type OpenaiAPIResponseComputerToolCallActionMoveParam struct {
+	// Specifies the event type. For a move action, this property is always set to
+	// `move`.
+	//
+	// This field can be elided, and will marshal its zero value as "move".
+	//
+	Type interface{} `json:"type"`
+
+	// The x-coordinate to move to.
+	//
+	X int `json:"x"`
+
+	// The y-coordinate to move to.
+	//
+	Y int `json:"y"`
+}
+
+// A screenshot action.
+//
+// This struct has a constant value, construct it with
+// [NewResponseComputerToolCallActionScreenshotParam].
+type OpenaiAPIResponseComputerToolCallActionScreenshotParam struct {
+	// Specifies the event type. For a screenshot action, this property is always set
+	// to `screenshot`.
+	//
+	Type interface{} `json:"type"`
+}
+
+// A scroll action.
+//
+// The properties ScrollX, ScrollY, Type, X, Y are required.
+type OpenaiAPIResponseComputerToolCallActionScrollParam struct {
+	// The horizontal scroll distance.
+	//
+	ScrollX int `json:"scroll_x"`
+
+	// The vertical scroll distance.
+	//
+	ScrollY int `json:"scroll_y"`
+
+	// Specifies the event type. For a scroll action, this property is always set to
+	// `scroll`.
+	//
+	// This field can be elided, and will marshal its zero value as "scroll".
+	//
+	Type interface{} `json:"type"`
+
+	// The x-coordinate where the scroll occurred.
+	//
+	X int `json:"x"`
+
+	// The y-coordinate where the scroll occurred.
+	//
+	Y int `json:"y"`
+}
+
+// An action to type in text.
+//
+// The properties Text, Type are required.
+type OpenaiAPIResponseComputerToolCallActionTypeParam struct {
+	// The text to type.
+	//
+	Text string `json:"text"`
+
+	// Specifies the event type. For a type action, this property is always set to
+	// `type`.
+	//
+	// This field can be elided, and will marshal its zero value as "type".
+	//
+	Type interface{} `json:"type"`
+}
+
+// OpenAI APIResponse Computer Tool Call Action Union Param configuration. See the
+// linked native reference for semantics and availability.
+type OpenaiAPIResponseComputerToolCallActionUnionParam = json.RawMessage
+
+// A wait action.
+//
+// This struct has a constant value, construct it with
+// [NewResponseComputerToolCallActionWaitParam].
+type OpenaiAPIResponseComputerToolCallActionWaitParam struct {
+	// Specifies the event type. For a wait action, this property is always set to
+	// `wait`.
+	//
+	Type interface{} `json:"type"`
+}
+
+// A computer screenshot image used with the computer use tool.
+//
+// The property Type is required.
+type OpenaiAPIResponseComputerToolCallOutputScreenshotParam struct {
+	// The identifier of an uploaded file that contains the screenshot.
+	//
+	FileId *string `json:"file_id,omitempty,omitzero"`
+
+	// The URL of the screenshot image.
+	//
+	ImageUrl *string `json:"image_url,omitempty,omitzero"`
+
+	// Specifies the event type. For a computer screenshot, this property is always
+	// set
+	// to `computer_screenshot`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "computer_screenshot".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A tool call to a computer use tool. See the
+// [computer use guide](https://platform.openai.com/docs/guides/tools-computer-use)
+// for more information.
+//
+// The properties ID, Action, CallID, PendingSafetyChecks, Status, Type are
+// required.
+type OpenaiAPIResponseComputerToolCallParam struct {
+	// A click action.
+	//
+	Action OpenaiAPIResponseComputerToolCallActionUnionParam `json:"action"`
+
+	// An identifier used when responding to the tool call with output.
+	//
+	CallId string `json:"call_id"`
+
+	// The unique ID of the computer call.
+	//
+	Id string `json:"id"`
+
+	// The pending safety checks for the computer call.
+	//
+	PendingSafetyChecks []OpenaiAPIResponseComputerToolCallPendingSafetyCheckParam `json:"pending_safety_checks"`
+
+	// The status of the item. One of `in_progress`, `completed`, or `incomplete`.
+	// Populated when items are returned via API.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status OpenaiAPIResponseComputerToolCallParamStatus `json:"status"`
+
+	// The type of the computer call. Always `computer_call`.
+	//
+	// Any of "computer_call".
+	//
+	Type OpenaiAPIResponseComputerToolCallParamType `json:"type"`
+}
+
+type OpenaiAPIResponseComputerToolCallParamStatus string
+
+const OpenaiAPIResponseComputerToolCallParamStatusCompleted OpenaiAPIResponseComputerToolCallParamStatus = "completed"
+const OpenaiAPIResponseComputerToolCallParamStatusInProgress OpenaiAPIResponseComputerToolCallParamStatus = "in_progress"
+const OpenaiAPIResponseComputerToolCallParamStatusIncomplete OpenaiAPIResponseComputerToolCallParamStatus = "incomplete"
+
+type OpenaiAPIResponseComputerToolCallParamType string
+
+const OpenaiAPIResponseComputerToolCallParamTypeComputerCall OpenaiAPIResponseComputerToolCallParamType = "computer_call"
+
+// A pending safety check for the computer call.
+//
+// The properties ID, Code, Message are required.
+type OpenaiAPIResponseComputerToolCallPendingSafetyCheckParam struct {
+	// The type of the pending safety check.
+	//
+	Code string `json:"code"`
+
+	// The ID of the pending safety check.
+	//
+	Id string `json:"id"`
+
+	// Details about the pending safety check.
+	//
+	Message string `json:"message"`
+}
+
+// The results of a file search tool call. See the
+// [file search guide](https://platform.openai.com/docs/guides/tools-file-search)
+// for more information.
+//
+// The properties ID, Queries, Status, Type are required.
+type OpenaiAPIResponseFileSearchToolCallParam struct {
+	// The unique ID of the file search tool call.
+	//
+	Id string `json:"id"`
+
+	// The queries used to search for files.
+	//
+	Queries []string `json:"queries"`
+
+	// The results of the file search tool call.
+	//
+	Results []OpenaiAPIResponseFileSearchToolCallResultParam `json:"results,omitempty,omitzero"`
+
+	// The status of the file search tool call. One of `in_progress`, `searching`,
+	// `incomplete` or `failed`,
+	//
+	// Any of "in_progress", "searching", "completed", "incomplete", "failed".
+	//
+	Status OpenaiAPIResponseFileSearchToolCallParamStatus `json:"status"`
+
+	// The type of the file search tool call. Always `file_search_call`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "file_search_call".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIResponseFileSearchToolCallParamStatus string
+
+const OpenaiAPIResponseFileSearchToolCallParamStatusCompleted OpenaiAPIResponseFileSearchToolCallParamStatus = "completed"
+const OpenaiAPIResponseFileSearchToolCallParamStatusFailed OpenaiAPIResponseFileSearchToolCallParamStatus = "failed"
+const OpenaiAPIResponseFileSearchToolCallParamStatusInProgress OpenaiAPIResponseFileSearchToolCallParamStatus = "in_progress"
+const OpenaiAPIResponseFileSearchToolCallParamStatusIncomplete OpenaiAPIResponseFileSearchToolCallParamStatus = "incomplete"
+const OpenaiAPIResponseFileSearchToolCallParamStatusSearching OpenaiAPIResponseFileSearchToolCallParamStatus = "searching"
+
+// OpenAI APIResponse File Search Tool Call Result Attribute Union Param
+// configuration. See the linked native reference for semantics and availability.
+type OpenaiAPIResponseFileSearchToolCallResultAttributeUnionParam = json.RawMessage
+
+// OpenAI APIResponse File Search Tool Call Result Param configuration. See the
+// linked native reference for semantics and availability.
+type OpenaiAPIResponseFileSearchToolCallResultParam struct {
+	// Set of 16 key-value pairs that can be attached to an object. This can be useful
+	// for storing additional information about the object in a structured format, and
+	// querying for objects via API or the dashboard. Keys are strings with a maximum
+	// length of 64 characters. Values are strings with a maximum length of 512
+	// characters, booleans, or numbers.
+	//
+	Attributes OpenaiAPIResponseFileSearchToolCallResultParamAttributes `json:"attributes,omitempty,omitzero"`
+
+	// The unique ID of the file.
+	//
+	FileId *string `json:"file_id,omitempty,omitzero"`
+
+	// The name of the file.
+	//
+	Filename *string `json:"filename,omitempty,omitzero"`
+
+	// The relevance score of the file - a value between 0 and 1.
+	//
+	Score *float64 `json:"score,omitempty,omitzero"`
+
+	// The text that was retrieved from the file.
+	//
+	Text *string `json:"text,omitempty,omitzero"`
+}
+
+// Set of 16 key-value pairs that can be attached to an object. This can be useful
+// for storing additional information about the object in a structured format, and
+// querying for objects via API or the dashboard. Keys are strings with a maximum
+// length of 64 characters. Values are strings with a maximum length of 512
+// characters, booleans, or numbers.
+type OpenaiAPIResponseFileSearchToolCallResultParamAttributes map[string]OpenaiAPIResponseFileSearchToolCallResultAttributeUnionParam
+
+// JSON object response format. An older method of generating JSON responses. Using
+// `json_schema` is recommended for models that support it. Note that the model
+// will not generate JSON without a system or user message instructing it to do so.
+//
+// This struct has a constant value, construct it with
+// [NewResponseFormatJSONObjectParam].
+type OpenaiAPIResponseFormatJSONObjectParam struct {
+	// The type of response format being defined. Always `json_object`.
+	//
+	Type interface{} `json:"type"`
+}
+
+// OpenAI APIResponse Format Text Config Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIResponseFormatTextConfigUnionParam = json.RawMessage
+
+// JSON Schema response format. Used to generate structured JSON responses. Learn
+// more about
+// [Structured
+// Outputs](https://platform.openai.com/docs/guides/structured-outputs).
+//
+// The properties Name, Schema, Type are required.
+type OpenaiAPIResponseFormatTextJSONSchemaConfigParam struct {
+	// A description of what the response format is for, used by the model to
+	// determine
+	// how to respond in the format.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// The name of the response format. Must be a-z, A-Z, 0-9, or contain underscores
+	// and dashes, with a maximum length of 64.
+	//
+	Name string `json:"name"`
+
+	// The schema for the response format, described as a JSON Schema object. Learn
+	// how
+	// to build JSON schemas [here](https://json-schema.org/).
+	//
+	Schema OpenaiAPIResponseFormatTextJSONSchemaConfigParamSchema `json:"schema"`
+
+	// Whether to enable strict schema adherence when generating the output. If set to
+	// true, the model will always follow the exact schema defined in the `schema`
+	// field. Only a subset of JSON Schema is supported when `strict` is `true`. To
+	// learn more, read the
+	// [Structured Outputs
+	// guide](https://platform.openai.com/docs/guides/structured-outputs).
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// The type of response format being defined. Always `json_schema`.
+	//
+	// This field can be elided, and will marshal its zero value as "json_schema".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The schema for the response format, described as a JSON Schema object. Learn how
+// to build JSON schemas [here](https://json-schema.org/).
+type OpenaiAPIResponseFormatTextJSONSchemaConfigParamSchema map[string]interface{}
+
+// Default response format. Used to generate text responses.
+//
+// This struct has a constant value, construct it with
+// [NewResponseFormatTextParam].
+type OpenaiAPIResponseFormatTextParam struct {
+	// The type of response format being defined. Always `text`.
+	//
+	Type interface{} `json:"type"`
+}
+
+// A tool call to run a function. See the
+// [function calling
+// guide](https://platform.openai.com/docs/guides/function-calling)
+// for more information.
+//
+// The properties Arguments, CallID, Name, Type are required.
+type OpenaiAPIResponseFunctionToolCallParam struct {
+	// A JSON string of the arguments to pass to the function.
+	//
+	Arguments string `json:"arguments"`
+
+	// The unique ID of the function tool call generated by the model.
+	//
+	CallId string `json:"call_id"`
+
+	// The unique ID of the function tool call.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// The name of the function to run.
+	//
+	Name string `json:"name"`
+
+	// The status of the item. One of `in_progress`, `completed`, or `incomplete`.
+	// Populated when items are returned via API.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status *OpenaiAPIResponseFunctionToolCallParamStatus `json:"status,omitempty,omitzero"`
+
+	// The type of the function tool call. Always `function_call`.
+	//
+	// This field can be elided, and will marshal its zero value as "function_call".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIResponseFunctionToolCallParamStatus string
+
+const OpenaiAPIResponseFunctionToolCallParamStatusCompleted OpenaiAPIResponseFunctionToolCallParamStatus = "completed"
+const OpenaiAPIResponseFunctionToolCallParamStatusInProgress OpenaiAPIResponseFunctionToolCallParamStatus = "in_progress"
+const OpenaiAPIResponseFunctionToolCallParamStatusIncomplete OpenaiAPIResponseFunctionToolCallParamStatus = "incomplete"
+
+// Action type "find": Searches for a pattern within a loaded page.
+//
+// The properties Pattern, Type, URL are required.
+type OpenaiAPIResponseFunctionWebSearchActionFindParam struct {
+	// The pattern or text to search for within the page.
+	//
+	Pattern string `json:"pattern"`
+
+	// The action type.
+	//
+	// This field can be elided, and will marshal its zero value as "find".
+	//
+	Type interface{} `json:"type"`
+
+	// The URL of the page searched for the pattern.
+	//
+	Url string `json:"url"`
+}
+
+// Action type "open_page" - Opens a specific URL from search results.
+//
+// The properties Type, URL are required.
+type OpenaiAPIResponseFunctionWebSearchActionOpenPageParam struct {
+	// The action type.
+	//
+	// This field can be elided, and will marshal its zero value as "open_page".
+	//
+	Type interface{} `json:"type"`
+
+	// The URL opened by the model.
+	//
+	Url string `json:"url"`
+}
+
+// Action type "search" - Performs a web search query.
+//
+// The properties Query, Type are required.
+type OpenaiAPIResponseFunctionWebSearchActionSearchParam struct {
+	// The search query.
+	//
+	Query string `json:"query"`
+
+	// The action type.
+	//
+	// This field can be elided, and will marshal its zero value as "search".
+	//
+	Type interface{} `json:"type"`
+}
+
+// OpenAI APIResponse Function Web Search Action Union Param configuration. See the
+// linked native reference for semantics and availability.
+type OpenaiAPIResponseFunctionWebSearchActionUnionParam = json.RawMessage
+
+// The results of a web search tool call. See the
+// [web search guide](https://platform.openai.com/docs/guides/tools-web-search) for
+// more information.
+//
+// The properties ID, Action, Status, Type are required.
+type OpenaiAPIResponseFunctionWebSearchParam struct {
+	// An object describing the specific action taken in this web search call.
+	// Includes
+	// details on how the model used the web (search, open_page, find).
+	//
+	Action OpenaiAPIResponseFunctionWebSearchActionUnionParam `json:"action"`
+
+	// The unique ID of the web search tool call.
+	//
+	Id string `json:"id"`
+
+	// The status of the web search tool call.
+	//
+	// Any of "in_progress", "searching", "completed", "failed".
+	//
+	Status OpenaiAPIResponseFunctionWebSearchParamStatus `json:"status"`
+
+	// The type of the web search tool call. Always `web_search_call`.
+	//
+	// This field can be elided, and will marshal its zero value as "web_search_call".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIResponseFunctionWebSearchParamStatus string
+
+const OpenaiAPIResponseFunctionWebSearchParamStatusCompleted OpenaiAPIResponseFunctionWebSearchParamStatus = "completed"
+const OpenaiAPIResponseFunctionWebSearchParamStatusFailed OpenaiAPIResponseFunctionWebSearchParamStatus = "failed"
+const OpenaiAPIResponseFunctionWebSearchParamStatusInProgress OpenaiAPIResponseFunctionWebSearchParamStatus = "in_progress"
+const OpenaiAPIResponseFunctionWebSearchParamStatusSearching OpenaiAPIResponseFunctionWebSearchParamStatus = "searching"
+
+// OpenAI APIResponse Input Content Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIResponseInputContentUnionParam = json.RawMessage
+
+// A file input to the model.
+//
+// The property Type is required.
+type OpenaiAPIResponseInputFileParam struct {
+	// The content of the file to be sent to the model.
+	//
+	FileData *string `json:"file_data,omitempty,omitzero"`
+
+	// The ID of the file to be sent to the model.
+	//
+	FileId *string `json:"file_id,omitempty,omitzero"`
+
+	// The URL of the file to be sent to the model.
+	//
+	FileUrl *string `json:"file_url,omitempty,omitzero"`
+
+	// The name of the file to be sent to the model.
+	//
+	Filename *string `json:"filename,omitempty,omitzero"`
+
+	// The type of the input item. Always `input_file`.
+	//
+	// This field can be elided, and will marshal its zero value as "input_file".
+	//
+	Type interface{} `json:"type"`
+}
+
+// An image input to the model. Learn about
+// [image inputs](https://platform.openai.com/docs/guides/vision).
+//
+// The properties Detail, Type are required.
+type OpenaiAPIResponseInputImageParam struct {
+	// The detail level of the image to be sent to the model. One of `high`, `low`, or
+	// `auto`. Defaults to `auto`.
+	//
+	// Any of "low", "high", "auto".
+	//
+	Detail OpenaiAPIResponseInputImageParamDetail `json:"detail"`
+
+	// The ID of the file to be sent to the model.
+	//
+	FileId *string `json:"file_id,omitempty,omitzero"`
+
+	// The URL of the image to be sent to the model. A fully qualified URL or base64
+	// encoded image in a data URL.
+	//
+	ImageUrl *string `json:"image_url,omitempty,omitzero"`
+
+	// The type of the input item. Always `input_image`.
+	//
+	// This field can be elided, and will marshal its zero value as "input_image".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIResponseInputImageParamDetail string
+
+const OpenaiAPIResponseInputImageParamDetailAuto OpenaiAPIResponseInputImageParamDetail = "auto"
+const OpenaiAPIResponseInputImageParamDetailHigh OpenaiAPIResponseInputImageParamDetail = "high"
+const OpenaiAPIResponseInputImageParamDetailLow OpenaiAPIResponseInputImageParamDetail = "low"
+
+// A pending safety check for the computer call.
+//
+// The property ID is required.
+type OpenaiAPIResponseInputItemComputerCallOutputAcknowledgedSafetyCheckParam struct {
+	// The type of the pending safety check.
+	//
+	Code *string `json:"code,omitempty,omitzero"`
+
+	// The ID of the pending safety check.
+	//
+	Id string `json:"id"`
+
+	// Details about the pending safety check.
+	//
+	Message *string `json:"message,omitempty,omitzero"`
+}
+
+// The output of a computer tool call.
+//
+// The properties CallID, Output, Type are required.
+type OpenaiAPIResponseInputItemComputerCallOutputParam struct {
+	// The safety checks reported by the API that have been acknowledged by the
+	// developer.
+	//
+	AcknowledgedSafetyChecks []OpenaiAPIResponseInputItemComputerCallOutputAcknowledgedSafetyCheckParam `json:"acknowledged_safety_checks,omitempty,omitzero"`
+
+	// The ID of the computer tool call that produced the output.
+	//
+	CallId string `json:"call_id"`
+
+	// The ID of the computer tool call output.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// A computer screenshot image used with the computer use tool.
+	//
+	Output OpenaiAPIResponseComputerToolCallOutputScreenshotParam `json:"output"`
+
+	// The status of the message input. One of `in_progress`, `completed`, or
+	// `incomplete`. Populated when input items are returned via API.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status *string `json:"status,omitempty,omitzero"`
+
+	// The type of the computer tool call output. Always `computer_call_output`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "computer_call_output".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The output of a function tool call.
+//
+// The properties CallID, Output, Type are required.
+type OpenaiAPIResponseInputItemFunctionCallOutputParam struct {
+	// The unique ID of the function tool call generated by the model.
+	//
+	CallId string `json:"call_id"`
+
+	// The unique ID of the function tool call output. Populated when this item is
+	// returned via API.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// A JSON string of the output of the function tool call.
+	//
+	Output string `json:"output"`
+
+	// The status of the item. One of `in_progress`, `completed`, or `incomplete`.
+	// Populated when items are returned via API.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status *string `json:"status,omitempty,omitzero"`
+
+	// The type of the function tool call output. Always `function_call_output`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "function_call_output".
+	//
+	Type interface{} `json:"type"`
+}
+
+// An image generation request made by the model.
+//
+// The properties ID, Result, Status, Type are required.
+type OpenaiAPIResponseInputItemImageGenerationCallParam struct {
+	// The unique ID of the image generation call.
+	//
+	Id string `json:"id"`
+
+	// The generated image encoded in base64.
+	//
+	Result string `json:"result"`
+
+	// The status of the image generation call.
+	//
+	// Any of "in_progress", "completed", "generating", "failed".
+	//
+	Status string `json:"status"`
+
+	// The type of the image generation call. Always `image_generation_call`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "image_generation_call".
+	//
+	Type interface{} `json:"type"`
+}
+
+// An internal identifier for an item to reference.
+//
+// The property ID is required.
+type OpenaiAPIResponseInputItemItemReferenceParam struct {
+	// The ID of the item to reference.
+	//
+	Id string `json:"id"`
+
+	// The type of item to reference. Always `item_reference`.
+	//
+	// Any of "item_reference".
+	//
+	Type *string `json:"type,omitempty,omitzero"`
+}
+
+// Execute a shell command on the server.
+//
+// The properties Command, Env, Type are required.
+type OpenaiAPIResponseInputItemLocalShellCallActionParam struct {
+	// The command to run.
+	//
+	Command []string `json:"command"`
+
+	// Environment variables to set for the command.
+	//
+	Env OpenaiAPIResponseInputItemLocalShellCallActionParamEnv `json:"env"`
+
+	// Optional timeout in milliseconds for the command.
+	//
+	TimeoutMs *int `json:"timeout_ms,omitempty,omitzero"`
+
+	// The type of the local shell action. Always `exec`.
+	//
+	// This field can be elided, and will marshal its zero value as "exec".
+	//
+	Type interface{} `json:"type"`
+
+	// Optional user to run the command as.
+	//
+	User *string `json:"user,omitempty,omitzero"`
+
+	// Optional working directory to run the command in.
+	//
+	WorkingDirectory *string `json:"working_directory,omitempty,omitzero"`
+}
+
+// Environment variables to set for the command.
+type OpenaiAPIResponseInputItemLocalShellCallActionParamEnv map[string]string
+
+// The output of a local shell tool call.
+//
+// The properties ID, Output, Type are required.
+type OpenaiAPIResponseInputItemLocalShellCallOutputParam struct {
+	// The unique ID of the local shell tool call generated by the model.
+	//
+	Id string `json:"id"`
+
+	// A JSON string of the output of the local shell tool call.
+	//
+	Output string `json:"output"`
+
+	// The status of the item. One of `in_progress`, `completed`, or `incomplete`.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status *string `json:"status,omitempty,omitzero"`
+
+	// The type of the local shell tool call output. Always `local_shell_call_output`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "local_shell_call_output".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A tool call to run a command on the local shell.
+//
+// The properties ID, Action, CallID, Status, Type are required.
+type OpenaiAPIResponseInputItemLocalShellCallParam struct {
+	// Execute a shell command on the server.
+	//
+	Action OpenaiAPIResponseInputItemLocalShellCallActionParam `json:"action"`
+
+	// The unique ID of the local shell tool call generated by the model.
+	//
+	CallId string `json:"call_id"`
+
+	// The unique ID of the local shell call.
+	//
+	Id string `json:"id"`
+
+	// The status of the local shell call.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status string `json:"status"`
+
+	// The type of the local shell call. Always `local_shell_call`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "local_shell_call".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A request for human approval of a tool invocation.
+//
+// The properties ID, Arguments, Name, ServerLabel, Type are required.
+type OpenaiAPIResponseInputItemMcpApprovalRequestParam struct {
+	// A JSON string of arguments for the tool.
+	//
+	Arguments string `json:"arguments"`
+
+	// The unique ID of the approval request.
+	//
+	Id string `json:"id"`
+
+	// The name of the tool to run.
+	//
+	Name string `json:"name"`
+
+	// The label of the MCP server making the request.
+	//
+	ServerLabel string `json:"server_label"`
+
+	// The type of the item. Always `mcp_approval_request`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "mcp_approval_request".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A response to an MCP approval request.
+//
+// The properties ApprovalRequestID, Approve, Type are required.
+type OpenaiAPIResponseInputItemMcpApprovalResponseParam struct {
+	// The ID of the approval request being answered.
+	//
+	ApprovalRequestId string `json:"approval_request_id"`
+
+	// Whether the request was approved.
+	//
+	Approve bool `json:"approve"`
+
+	// The unique ID of the approval response
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// Optional reason for the decision.
+	//
+	Reason *string `json:"reason,omitempty,omitzero"`
+
+	// The type of the item. Always `mcp_approval_response`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "mcp_approval_response".
+	//
+	Type interface{} `json:"type"`
+}
+
+// An invocation of a tool on an MCP server.
+//
+// The properties ID, Arguments, Name, ServerLabel, Type are required.
+type OpenaiAPIResponseInputItemMcpCallParam struct {
+	// A JSON string of the arguments passed to the tool.
+	//
+	Arguments string `json:"arguments"`
+
+	// The error from the tool call, if any.
+	//
+	Error *string `json:"error,omitempty,omitzero"`
+
+	// The unique ID of the tool call.
+	//
+	Id string `json:"id"`
+
+	// The name of the tool that was run.
+	//
+	Name string `json:"name"`
+
+	// The output from the tool call.
+	//
+	Output *string `json:"output,omitempty,omitzero"`
+
+	// The label of the MCP server running the tool.
+	//
+	ServerLabel string `json:"server_label"`
+
+	// The type of the item. Always `mcp_call`.
+	//
+	// This field can be elided, and will marshal its zero value as "mcp_call".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A list of tools available on an MCP server.
+//
+// The properties ID, ServerLabel, Tools, Type are required.
+type OpenaiAPIResponseInputItemMcpListToolsParam struct {
+	// Error message if the server could not list tools.
+	//
+	Error *string `json:"error,omitempty,omitzero"`
+
+	// The unique ID of the list.
+	//
+	Id string `json:"id"`
+
+	// The label of the MCP server.
+	//
+	ServerLabel string `json:"server_label"`
+
+	// The tools available on the server.
+	//
+	Tools []OpenaiAPIResponseInputItemMcpListToolsToolParam `json:"tools"`
+
+	// The type of the item. Always `mcp_list_tools`.
+	//
+	// This field can be elided, and will marshal its zero value as "mcp_list_tools".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A tool available on an MCP server.
+//
+// The properties InputSchema, Name are required.
+type OpenaiAPIResponseInputItemMcpListToolsToolParam struct {
+	// Additional annotations about the tool.
+	//
+	Annotations interface{} `json:"annotations,omitempty,omitzero"`
+
+	// The description of the tool.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// The JSON schema describing the tool's input.
+	//
+	InputSchema interface{} `json:"input_schema"`
+
+	// The name of the tool.
+	//
+	Name string `json:"name"`
+}
+
+// A message input to the model with a role indicating instruction following
+// hierarchy. Instructions given with the `developer` or `system` role take
+// precedence over instructions given with the `user` role.
+//
+// The properties Content, Role are required.
+type OpenaiAPIResponseInputItemMessageParam struct {
+	// A list of one or many input items to the model, containing different content
+	// types.
+	//
+	Content []OpenaiAPIResponseInputContentUnionParam `json:"content"`
+
+	// The role of the message input. One of `user`, `system`, or `developer`.
+	//
+	// Any of "user", "system", "developer".
+	//
+	Role string `json:"role"`
+
+	// The status of item. One of `in_progress`, `completed`, or `incomplete`.
+	// Populated when items are returned via API.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status *string `json:"status,omitempty,omitzero"`
+
+	// The type of the message input. Always set to `message`.
+	//
+	// Any of "message".
+	//
+	Type *string `json:"type,omitempty,omitzero"`
+}
+
+// OpenAI APIResponse Input Item Union Param configuration. See the linked native
+// reference for semantics and availability.
+type OpenaiAPIResponseInputItemUnionParam = json.RawMessage
+
+// A text input to the model.
+//
+// The properties Text, Type are required.
+type OpenaiAPIResponseInputTextParam struct {
+	// The text input to the model.
+	//
+	Text string `json:"text"`
+
+	// The type of the input item. Always `input_text`.
+	//
+	// This field can be elided, and will marshal its zero value as "input_text".
+	//
+	Type interface{} `json:"type"`
+}
+
+// OpenAI APIResponse New Params Input Union configuration. See the linked native
+// reference for semantics and availability.
+type OpenaiAPIResponseNewParamsInputUnion = json.RawMessage
+
+// OpenAI APIResponse New Params Tool Choice Union configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIResponseNewParamsToolChoiceUnion = json.RawMessage
+
+// OpenAI APIResponse Output Message Content Union Param configuration. See the
+// linked native reference for semantics and availability.
+type OpenaiAPIResponseOutputMessageContentUnionParam = json.RawMessage
+
+// An output message from the model.
+//
+// The properties ID, Content, Role, Status, Type are required.
+type OpenaiAPIResponseOutputMessageParam struct {
+	// The content of the output message.
+	//
+	Content []OpenaiAPIResponseOutputMessageContentUnionParam `json:"content"`
+
+	// The unique ID of the output message.
+	//
+	Id string `json:"id"`
+
+	// The role of the output message. Always `assistant`.
+	//
+	// This field can be elided, and will marshal its zero value as "assistant".
+	//
+	Role interface{} `json:"role"`
+
+	// The status of the message input. One of `in_progress`, `completed`, or
+	// `incomplete`. Populated when input items are returned via API.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status OpenaiAPIResponseOutputMessageParamStatus `json:"status"`
+
+	// The type of the output message. Always `message`.
+	//
+	// This field can be elided, and will marshal its zero value as "message".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIResponseOutputMessageParamStatus string
+
+const OpenaiAPIResponseOutputMessageParamStatusCompleted OpenaiAPIResponseOutputMessageParamStatus = "completed"
+const OpenaiAPIResponseOutputMessageParamStatusInProgress OpenaiAPIResponseOutputMessageParamStatus = "in_progress"
+const OpenaiAPIResponseOutputMessageParamStatusIncomplete OpenaiAPIResponseOutputMessageParamStatus = "incomplete"
+
+// A refusal from the model.
+//
+// The properties Refusal, Type are required.
+type OpenaiAPIResponseOutputRefusalParam struct {
+	// The refusal explanation from the model.
+	//
+	Refusal string `json:"refusal"`
+
+	// The type of the refusal. Always `refusal`.
+	//
+	// This field can be elided, and will marshal its zero value as "refusal".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A citation for a container file used to generate a model response.
+//
+// The properties ContainerID, EndIndex, FileID, Filename, StartIndex, Type are
+// required.
+type OpenaiAPIResponseOutputTextAnnotationContainerFileCitationParam struct {
+	// The ID of the container file.
+	//
+	ContainerId string `json:"container_id"`
+
+	// The index of the last character of the container file citation in the message.
+	//
+	EndIndex int `json:"end_index"`
+
+	// The ID of the file.
+	//
+	FileId string `json:"file_id"`
+
+	// The filename of the container file cited.
+	//
+	Filename string `json:"filename"`
+
+	// The index of the first character of the container file citation in the message.
+	//
+	StartIndex int `json:"start_index"`
+
+	// The type of the container file citation. Always `container_file_citation`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "container_file_citation".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A citation to a file.
+//
+// The properties FileID, Filename, Index, Type are required.
+type OpenaiAPIResponseOutputTextAnnotationFileCitationParam struct {
+	// The ID of the file.
+	//
+	FileId string `json:"file_id"`
+
+	// The filename of the file cited.
+	//
+	Filename string `json:"filename"`
+
+	// The index of the file in the list of files.
+	//
+	Index int `json:"index"`
+
+	// The type of the file citation. Always `file_citation`.
+	//
+	// This field can be elided, and will marshal its zero value as "file_citation".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A path to a file.
+//
+// The properties FileID, Index, Type are required.
+type OpenaiAPIResponseOutputTextAnnotationFilePathParam struct {
+	// The ID of the file.
+	//
+	FileId string `json:"file_id"`
+
+	// The index of the file in the list of files.
+	//
+	Index int `json:"index"`
+
+	// The type of the file path. Always `file_path`.
+	//
+	// This field can be elided, and will marshal its zero value as "file_path".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A citation for a web resource used to generate a model response.
+//
+// The properties EndIndex, StartIndex, Title, Type, URL are required.
+type OpenaiAPIResponseOutputTextAnnotationURLCitationParam struct {
+	// The index of the last character of the URL citation in the message.
+	//
+	EndIndex int `json:"end_index"`
+
+	// The index of the first character of the URL citation in the message.
+	//
+	StartIndex int `json:"start_index"`
+
+	// The title of the web resource.
+	//
+	Title string `json:"title"`
+
+	// The type of the URL citation. Always `url_citation`.
+	//
+	// This field can be elided, and will marshal its zero value as "url_citation".
+	//
+	Type interface{} `json:"type"`
+
+	// The URL of the web resource.
+	//
+	Url string `json:"url"`
+}
+
+// OpenAI APIResponse Output Text Annotation Union Param configuration. See the
+// linked native reference for semantics and availability.
+type OpenaiAPIResponseOutputTextAnnotationUnionParam = json.RawMessage
+
+// The log probability of a token.
+//
+// The properties Token, Bytes, Logprob, TopLogprobs are required.
+type OpenaiAPIResponseOutputTextLogprobParam struct {
+	// Bytes configuration. See the linked native reference for semantics and
+	// availability.
+	Bytes []int `json:"bytes"`
+
+	// Logprob configuration. See the linked native reference for semantics and
+	// availability.
+	Logprob float64 `json:"logprob"`
+
+	// Token configuration. See the linked native reference for semantics and
+	// availability.
+	Token string `json:"token"`
+
+	// Top logprobs configuration. See the linked native reference for semantics and
+	// availability.
+	TopLogprobs []OpenaiAPIResponseOutputTextLogprobTopLogprobParam `json:"top_logprobs"`
+}
+
+// The top log probability of a token.
+//
+// The properties Token, Bytes, Logprob are required.
+type OpenaiAPIResponseOutputTextLogprobTopLogprobParam struct {
+	// Bytes configuration. See the linked native reference for semantics and
+	// availability.
+	Bytes []int `json:"bytes"`
+
+	// Logprob configuration. See the linked native reference for semantics and
+	// availability.
+	Logprob float64 `json:"logprob"`
+
+	// Token configuration. See the linked native reference for semantics and
+	// availability.
+	Token string `json:"token"`
+}
+
+// A text output from the model.
+//
+// The properties Annotations, Text, Type are required.
+type OpenaiAPIResponseOutputTextParam struct {
+	// The annotations of the text output.
+	//
+	Annotations []OpenaiAPIResponseOutputTextAnnotationUnionParam `json:"annotations"`
+
+	// Logprobs configuration. See the linked native reference for semantics and
+	// availability.
+	Logprobs []OpenaiAPIResponseOutputTextLogprobParam `json:"logprobs,omitempty,omitzero"`
+
+	// The text output from the model.
+	//
+	Text string `json:"text"`
+
+	// The type of the output text. Always `output_text`.
+	//
+	// This field can be elided, and will marshal its zero value as "output_text".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Reference to a prompt template and its variables.
+// [Learn
+// more](https://platform.openai.com/docs/guides/text?api-mode=responses#reusable-prompts).
+//
+// The property ID is required.
+type OpenaiAPIResponsePromptParam struct {
+	// The unique identifier of the prompt template to use.
+	//
+	Id string `json:"id"`
+
+	// Optional map of values to substitute in for variables in your prompt. The
+	// substitution values can either be strings, or other Response input types like
+	// images or files.
+	//
+	Variables OpenaiAPIResponsePromptParamVariables `json:"variables,omitempty,omitzero"`
+
+	// Optional version of the prompt template.
+	//
+	Version *string `json:"version,omitempty,omitzero"`
+}
+
+// Optional map of values to substitute in for variables in your prompt. The
+// substitution values can either be strings, or other Response input types like
+// images or files.
+type OpenaiAPIResponsePromptParamVariables map[string]OpenaiAPIResponsePromptVariableUnionParam
+
+// OpenAI APIResponse Prompt Variable Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIResponsePromptVariableUnionParam = json.RawMessage
+
+// A description of the chain of thought used by a reasoning model while generating
+// a response. Be sure to include these items in your `input` to the Responses API
+// for subsequent turns of a conversation if you are manually
+// [managing context](https://platform.openai.com/docs/guides/conversation-state).
+//
+// The properties ID, Summary, Type are required.
+type OpenaiAPIResponseReasoningItemParam struct {
+	// The encrypted content of the reasoning item - populated when a response is
+	// generated with `reasoning.encrypted_content` in the `include` parameter.
+	//
+	EncryptedContent *string `json:"encrypted_content,omitempty,omitzero"`
+
+	// The unique identifier of the reasoning content.
+	//
+	Id string `json:"id"`
+
+	// The status of the item. One of `in_progress`, `completed`, or `incomplete`.
+	// Populated when items are returned via API.
+	//
+	// Any of "in_progress", "completed", "incomplete".
+	//
+	Status *OpenaiAPIResponseReasoningItemParamStatus `json:"status,omitempty,omitzero"`
+
+	// Reasoning text contents.
+	//
+	Summary []OpenaiAPIResponseReasoningItemSummaryParam `json:"summary"`
+
+	// The type of the object. Always `reasoning`.
+	//
+	// This field can be elided, and will marshal its zero value as "reasoning".
+	//
+	Type interface{} `json:"type"`
+}
+
+type OpenaiAPIResponseReasoningItemParamStatus string
+
+const OpenaiAPIResponseReasoningItemParamStatusCompleted OpenaiAPIResponseReasoningItemParamStatus = "completed"
+const OpenaiAPIResponseReasoningItemParamStatusInProgress OpenaiAPIResponseReasoningItemParamStatus = "in_progress"
+const OpenaiAPIResponseReasoningItemParamStatusIncomplete OpenaiAPIResponseReasoningItemParamStatus = "incomplete"
+
+// The properties Text, Type are required.
+type OpenaiAPIResponseReasoningItemSummaryParam struct {
+	// A short summary of the reasoning used by the model when generating the
+	// response.
+	//
+	Text string `json:"text"`
+
+	// The type of the object. Always `summary_text`.
+	//
+	// This field can be elided, and will marshal its zero value as "summary_text".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Configuration options for a text response from the model. Can be plain text or
+// structured JSON data. Learn more:
+//
+// - [Text inputs and outputs](https://platform.openai.com/docs/guides/text)
+// - [Structured
+// Outputs](https://platform.openai.com/docs/guides/structured-outputs)
+type OpenaiAPIResponseTextConfigParam struct {
+	// An object specifying the format that the model must output.
+	//
+	// Configuring `{ "type": "json_schema" }` enables Structured Outputs, which
+	// ensures the model will match your supplied JSON schema. Learn more in the
+	// [Structured Outputs
+	// guide](https://platform.openai.com/docs/guides/structured-outputs).
+	//
+	// The default format is `{ "type": "text" }` with no additional options.
+	//
+	// **Not recommended for gpt-4o and newer models:**
+	//
+	// Setting to `{ "type": "json_object" }` enables the older JSON mode, which
+	// ensures the message the model generates is valid JSON. Using `json_schema` is
+	// preferred for models that support it.
+	//
+	Format *OpenaiAPIResponseFormatTextConfigUnionParam `json:"format,omitempty,omitzero"`
+}
+
+// Use this option to force the model to call a specific function.
+//
+// The properties Name, Type are required.
+type OpenaiAPIToolChoiceFunctionParam struct {
+	// The name of the function to call.
+	//
+	Name string `json:"name"`
+
+	// For function calling, the type is always `function`.
+	//
+	// This field can be elided, and will marshal its zero value as "function".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Use this option to force the model to call a specific tool on a remote MCP
+// server.
+//
+// The properties ServerLabel, Type are required.
+type OpenaiAPIToolChoiceMcpParam struct {
+	// The name of the tool to call on the server.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// The label of the MCP server to use.
+	//
+	ServerLabel string `json:"server_label"`
+
+	// For MCP tools, the type is always `mcp`.
+	//
+	// This field can be elided, and will marshal its zero value as "mcp".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Indicates that the model should use a built-in tool to generate a response.
+// [Learn more about built-in
+// tools](https://platform.openai.com/docs/guides/tools).
+//
+// The property Type is required.
+type OpenaiAPIToolChoiceTypesParam struct {
+	// The type of hosted tool the model should to use. Learn more about
+	// [built-in tools](https://platform.openai.com/docs/guides/tools).
+	//
+	// Allowed values are:
+	//
+	// - `file_search`
+	// - `web_search_preview`
+	// - `computer_use_preview`
+	// - `code_interpreter`
+	// - `image_generation`
+	//
+	// Any of "file_search", "web_search_preview", "computer_use_preview",
+	// "web_search_preview_2025_03_11", "image_generation", "code_interpreter".
+	//
+	Type OpenaiAPIToolChoiceTypesParamType `json:"type"`
+}
+
+type OpenaiAPIToolChoiceTypesParamType string
+
+const OpenaiAPIToolChoiceTypesParamTypeCodeInterpreter OpenaiAPIToolChoiceTypesParamType = "code_interpreter"
+const OpenaiAPIToolChoiceTypesParamTypeComputerUsePreview OpenaiAPIToolChoiceTypesParamType = "computer_use_preview"
+const OpenaiAPIToolChoiceTypesParamTypeFileSearch OpenaiAPIToolChoiceTypesParamType = "file_search"
+const OpenaiAPIToolChoiceTypesParamTypeImageGeneration OpenaiAPIToolChoiceTypesParamType = "image_generation"
+const OpenaiAPIToolChoiceTypesParamTypeWebSearchPreview OpenaiAPIToolChoiceTypesParamType = "web_search_preview"
+const OpenaiAPIToolChoiceTypesParamTypeWebSearchPreview20250311 OpenaiAPIToolChoiceTypesParamType = "web_search_preview_2025_03_11"
+
+// Configuration for a code interpreter container. Optionally specify the IDs of
+// the files to run the code on.
+//
+// The property Type is required.
+type OpenaiAPIToolCodeInterpreterContainerCodeInterpreterContainerAutoParam struct {
+	// An optional list of uploaded files to make available to your code.
+	//
+	FileIds []string `json:"file_ids,omitempty,omitzero"`
+
+	// Always `auto`.
+	//
+	// This field can be elided, and will marshal its zero value as "auto".
+	//
+	Type interface{} `json:"type"`
+}
+
+// OpenAI APITool Code Interpreter Container Union Param configuration. See the
+// linked native reference for semantics and availability.
+type OpenaiAPIToolCodeInterpreterContainerUnionParam = json.RawMessage
+
+// A tool that runs Python code to help generate a response to a prompt.
+//
+// The properties Container, Type are required.
+type OpenaiAPIToolCodeInterpreterParam struct {
+	// The code interpreter container. Can be a container ID or an object that
+	// specifies uploaded file IDs to make available to your code.
+	//
+	Container OpenaiAPIToolCodeInterpreterContainerUnionParam `json:"container"`
+
+	// The type of the code interpreter tool. Always `code_interpreter`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "code_interpreter".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Optional mask for inpainting. Contains `image_url` (string, optional) and
+// `file_id` (string, optional).
+type OpenaiAPIToolImageGenerationInputImageMaskParam struct {
+	// File ID for the mask image.
+	//
+	FileId *string `json:"file_id,omitempty,omitzero"`
+
+	// Base64-encoded mask image.
+	//
+	ImageUrl *string `json:"image_url,omitempty,omitzero"`
+}
+
+// A tool that generates images using a model like `gpt-image-1`.
+//
+// The property Type is required.
+type OpenaiAPIToolImageGenerationParam struct {
+	// Background type for the generated image. One of `transparent`, `opaque`, or
+	// `auto`. Default: `auto`.
+	//
+	// Any of "transparent", "opaque", "auto".
+	//
+	Background *string `json:"background,omitempty,omitzero"`
+
+	// Control how much effort the model will exert to match the style and features,
+	// especially facial features, of input images. This parameter is only supported
+	// for `gpt-image-1`. Supports `high` and `low`. Defaults to `low`.
+	//
+	// Any of "high", "low".
+	//
+	InputFidelity *string `json:"input_fidelity,omitempty,omitzero"`
+
+	// Optional mask for inpainting. Contains `image_url` (string, optional) and
+	// `file_id` (string, optional).
+	//
+	InputImageMask *OpenaiAPIToolImageGenerationInputImageMaskParam `json:"input_image_mask,omitempty,omitzero"`
+
+	// The image generation model to use. Default: `gpt-image-1`.
+	//
+	// Any of "gpt-image-1".
+	//
+	Model *string `json:"model,omitempty,omitzero"`
+
+	// Moderation level for the generated image. Default: `auto`.
+	//
+	// Any of "auto", "low".
+	//
+	Moderation *string `json:"moderation,omitempty,omitzero"`
+
+	// Compression level for the output image. Default: 100.
+	//
+	OutputCompression *int `json:"output_compression,omitempty,omitzero"`
+
+	// The output format of the generated image. One of `png`, `webp`, or `jpeg`.
+	// Default: `png`.
+	//
+	// Any of "png", "webp", "jpeg".
+	//
+	OutputFormat *string `json:"output_format,omitempty,omitzero"`
+
+	// Number of partial images to generate in streaming mode, from 0 (default value)
+	// to 3.
+	//
+	PartialImages *int `json:"partial_images,omitempty,omitzero"`
+
+	// The quality of the generated image. One of `low`, `medium`, `high`, or `auto`.
+	// Default: `auto`.
+	//
+	// Any of "low", "medium", "high", "auto".
+	//
+	Quality *string `json:"quality,omitempty,omitzero"`
+
+	// The size of the generated image. One of `1024x1024`, `1024x1536`, `1536x1024`,
+	// or `auto`. Default: `auto`.
+	//
+	// Any of "1024x1024", "1024x1536", "1536x1024", "auto".
+	//
+	Size *string `json:"size,omitempty,omitzero"`
+
+	// The type of the image generation tool. Always `image_generation`.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "image_generation".
+	//
+	Type interface{} `json:"type"`
+}
+
+// A tool that allows the model to execute shell commands in a local environment.
+//
+// This struct has a constant value, construct it with [NewToolLocalShellParam].
+type OpenaiAPIToolLocalShellParam struct {
+	// The type of the local shell tool. Always `local_shell`.
+	//
+	Type interface{} `json:"type"`
+}
+
+// A filter object to specify which tools are allowed.
+type OpenaiAPIToolMcpAllowedToolsMcpAllowedToolsFilterParam struct {
+	// List of allowed tool names.
+	//
+	ToolNames []string `json:"tool_names,omitempty,omitzero"`
+}
+
+// OpenAI APITool MCP Allowed Tools Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIToolMcpAllowedToolsUnionParam = json.RawMessage
+
+// Give the model access to additional tools via remote Model Context Protocol
+// (MCP) servers.
+// [Learn more about
+// MCP](https://platform.openai.com/docs/guides/tools-remote-mcp).
+//
+// The properties ServerLabel, ServerURL, Type are required.
+type OpenaiAPIToolMcpParam struct {
+	// List of allowed tool names or a filter object.
+	//
+	AllowedTools *OpenaiAPIToolMcpAllowedToolsUnionParam `json:"allowed_tools,omitempty,omitzero"`
+
+	// Optional HTTP headers to send to the MCP server. Use for authentication or
+	// other
+	// purposes.
+	//
+	Headers OpenaiAPIToolMcpParamHeaders `json:"headers,omitempty,omitzero"`
+
+	// Specify which of the MCP server's tools require approval.
+	//
+	RequireApproval *OpenaiAPIToolMcpRequireApprovalUnionParam `json:"require_approval,omitempty,omitzero"`
+
+	// Optional description of the MCP server, used to provide more context.
+	//
+	ServerDescription *string `json:"server_description,omitempty,omitzero"`
+
+	// A label for this MCP server, used to identify it in tool calls.
+	//
+	ServerLabel string `json:"server_label"`
+
+	// The URL for the MCP server.
+	//
+	ServerUrl string `json:"server_url"`
+
+	// The type of the MCP tool. Always `mcp`.
+	//
+	// This field can be elided, and will marshal its zero value as "mcp".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Optional HTTP headers to send to the MCP server. Use for authentication or other
+// purposes.
+type OpenaiAPIToolMcpParamHeaders map[string]string
+
+// A list of tools that always require approval.
+type OpenaiAPIToolMcpRequireApprovalMcpToolApprovalFilterAlwaysParam struct {
+	// List of tools that require approval.
+	//
+	ToolNames []string `json:"tool_names,omitempty,omitzero"`
+}
+
+// A list of tools that never require approval.
+type OpenaiAPIToolMcpRequireApprovalMcpToolApprovalFilterNeverParam struct {
+	// List of tools that do not require approval.
+	//
+	ToolNames []string `json:"tool_names,omitempty,omitzero"`
+}
+
+// OpenAI APITool MCP Require Approval MCP Tool Approval Filter Param
+// configuration. See the linked native reference for semantics and availability.
+type OpenaiAPIToolMcpRequireApprovalMcpToolApprovalFilterParam struct {
+	// A list of tools that always require approval.
+	//
+	Always *OpenaiAPIToolMcpRequireApprovalMcpToolApprovalFilterAlwaysParam `json:"always,omitempty,omitzero"`
+
+	// A list of tools that never require approval.
+	//
+	Never *OpenaiAPIToolMcpRequireApprovalMcpToolApprovalFilterNeverParam `json:"never,omitempty,omitzero"`
+}
+
+// OpenAI APITool MCP Require Approval Union Param configuration. See the linked
+// native reference for semantics and availability.
+type OpenaiAPIToolMcpRequireApprovalUnionParam = json.RawMessage
+
+// OpenAI APITool Union Param configuration. See the linked native reference for
+// semantics and availability.
+type OpenaiAPIToolUnionParam = json.RawMessage
+
+// This tool searches the web for relevant results to use in a response. Learn more
+// about the
+// [web search tool](https://platform.openai.com/docs/guides/tools-web-search).
+//
+// The property Type is required.
+type OpenaiAPIWebSearchToolParam struct {
+	// High level guidance for the amount of context window space to use for the
+	// search. One of `low`, `medium`, or `high`. `medium` is the default.
+	//
+	// Any of "low", "medium", "high".
+	//
+	SearchContextSize *OpenaiAPIWebSearchToolParamSearchContextSize `json:"search_context_size,omitempty,omitzero"`
+
+	// The type of the web search tool. One of `web_search_preview` or
+	// `web_search_preview_2025_03_11`.
+	//
+	// Any of "web_search_preview", "web_search_preview_2025_03_11".
+	//
+	Type OpenaiAPIWebSearchToolParamType `json:"type"`
+
+	// The user's location.
+	//
+	UserLocation *OpenaiAPIWebSearchToolUserLocationParam `json:"user_location,omitempty,omitzero"`
+}
+
+type OpenaiAPIWebSearchToolParamSearchContextSize string
+
+const OpenaiAPIWebSearchToolParamSearchContextSizeHigh OpenaiAPIWebSearchToolParamSearchContextSize = "high"
+const OpenaiAPIWebSearchToolParamSearchContextSizeLow OpenaiAPIWebSearchToolParamSearchContextSize = "low"
+const OpenaiAPIWebSearchToolParamSearchContextSizeMedium OpenaiAPIWebSearchToolParamSearchContextSize = "medium"
+
+type OpenaiAPIWebSearchToolParamType string
+
+const OpenaiAPIWebSearchToolParamTypeWebSearchPreview OpenaiAPIWebSearchToolParamType = "web_search_preview"
+const OpenaiAPIWebSearchToolParamTypeWebSearchPreview20250311 OpenaiAPIWebSearchToolParamType = "web_search_preview_2025_03_11"
+
+// The user's location.
+//
+// The property Type is required.
+type OpenaiAPIWebSearchToolUserLocationParam struct {
+	// Free text input for the city of the user, e.g. `San Francisco`.
+	//
+	City *string `json:"city,omitempty,omitzero"`
+
+	// The two-letter [ISO country code](https://en.wikipedia.org/wiki/ISO_3166-1) of
+	// the user, e.g. `US`.
+	//
+	Country *string `json:"country,omitempty,omitzero"`
+
+	// Free text input for the region of the user, e.g. `California`.
+	//
+	Region *string `json:"region,omitempty,omitzero"`
+
+	// The [IANA timezone](https://timeapi.io/documentation/iana-timezones) of the
+	// user, e.g. `America/Los_Angeles`.
+	//
+	Timezone *string `json:"timezone,omitempty,omitzero"`
+
+	// The type of location approximation. Always `approximate`.
+	//
+	// This field can be elided, and will marshal its zero value as "approximate".
+	//
+	Type interface{} `json:"type"`
+}
