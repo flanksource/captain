@@ -3,13 +3,13 @@ package rootcmd
 import (
 	"fmt"
 
+	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/commons/help"
 	"github.com/spf13/cobra"
 )
 
-// InstallRootHelp appends commons' documentation of the runtime knobs captain
-// inherits to the root command without changing subcommand help.
+// InstallRootHelp appends prompt locations and inherited runtime knobs to root help.
 func InstallRootHelp(root *cobra.Command) {
 	cobraHelp := root.HelpFunc()
 	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
@@ -17,6 +17,7 @@ func InstallRootHelp(root *cobra.Command) {
 		if cmd != root {
 			return
 		}
+		fmt.Fprintf(cmd.OutOrStdout(), "\nPrompt lookup locations\n%s\n", cli.PromptLookupHelp)
 		text := help.Help()
 		out := text.ANSI()
 		if clicky.Flags.NoColor {

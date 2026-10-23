@@ -82,8 +82,8 @@ func promptHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 			"Print the generated JSON schemas, catalogs, enum values, and backend-specific cliArgs: captain prompt --schema",
 		)).
 		NewLine().NewLine().
-		Add(promptHelpHeading("File format", styled)).NewLine().
-		Add(clicky.Text("Put YAML frontmatter between the opening and closing --- lines. Everything after it is the Handlebars body; a body without frontmatter is also valid.")).
+		Add(promptHelpHeading("Annotated .prompt example", styled)).NewLine().
+		Add(clicky.Text("Put YAML frontmatter between the opening and closing --- lines. Comments explain each section; omit optional sections you do not need. Everything after the closing --- is the Handlebars body; a body without frontmatter is also valid.")).
 		NewLine().NewLine().
 		Add(clicky.CodeBlock("yaml", strings.TrimSpace(promptHelpExample))).
 		NewLine().NewLine().
@@ -106,6 +106,7 @@ func promptHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 		NewLine().NewLine().
 		Add(promptHelpHeading("Prompt source selection", styled)).NewLine().
 		Add(promptHelpBullets(styled,
+			"Links directly inside a prompt directory are read-only. Linked .prompt files are included; linked directories contribute immediate regular .prompt files only, without following subdirectories or further links.",
 			"Pass a prompt ID, catalog name, or .prompt path as the positional source, or - to read the body from stdin.",
 			"Use -p/--prompt for inline text. If neither a positional source nor -p is supplied, Captain reads the prompt body from stdin.",
 			"-p, -s/--system, --append-system and --vars accept @file or @url to load the value; credential stores, private keys and kernel state are refused.",
