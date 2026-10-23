@@ -103,6 +103,23 @@ func validateDeclarations(source string) []Diagnostic {
 	} else if err := validateDeclaredSchemas(source); err != nil {
 		diagnostics = append(diagnostics, validationError("promptfile/schema", err, offset))
 	}
+	return append(diagnostics, validateInlineTools(document.Spec.Tools)...)
+}
+
+// validateInlineTools compiles each tool's schemas and flags a retried
+// destructive tool, whose every retry repeats the side effect.
+func validateInlineTools(tools api.InlineTools) []Diagnostic {
+	var diagnostics []Diagnostic
+	for _, name := range tools.Names() {
+		tool := tools[name]
+		if err := compileToolSchemas(tool); err != nil {
+			diagnostics = append(diagnostics, Diagnostic{Rule: "promptfile/tools", Severity: "error", Message: fmt.Sprintf("tools.%s: %s", name, err)})
+		}
+		if tool.Destructive && tool.Retry != nil && tool.Retry.Attempts > 1 {
+			diagnostics = append(diagnostics, Diagnostic{Rule: "promptfile/tools", Severity: "warning",
+				Message: fmt.Sprintf("tools.%s is destructive and retried: a failed attempt may already have had its effect", name)})
+		}
+	}
 	return diagnostics
 }
 
