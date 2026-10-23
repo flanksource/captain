@@ -60,6 +60,19 @@ func IsSyntheticEventTool(name string) bool {
 	}
 }
 
+// ConversationalMessages keeps the conversational messages, in order. It is the
+// one projection of a parsed transcript into messages, shared by ingestion, the
+// session read and the live follow, so all three key the same ids.
+func ConversationalMessages(messages []Message) []Message {
+	kept := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		if IsConversationalMessage(message) {
+			kept = append(kept, message)
+		}
+	}
+	return kept
+}
+
 // IsConversationalMessage reports whether a message carries conversational
 // content worth persisting as a transcript message: any text/reasoning/file
 // part, or a tool part that is a real tool call rather than a synthetic event.

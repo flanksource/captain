@@ -195,6 +195,28 @@ var _ = Describe("prompt run session lifecycle", Ordered, func() {
 		}))
 	})
 
+	// A chat turn is one run, but the chat outlives it: between turns the chat
+	// awaits the next message, and only the chat knows when it has ended.
+	DescribeTable("leaves a live chat's sessions running and idle when a turn settles",
+		func(ctx SpecContext, state string) {
+			admission, execution := insertSession(ctx, "captain"), insertSession(ctx, "claude")
+			run := insertRun(ctx, admission, &execution, 0)
+			_, err := db.ExecContext(ctx, `UPDATE captain_prompt_runs SET runtime = '{"mode":"chat"}' WHERE id = $1`, run)
+			Expect(err).NotTo(HaveOccurred())
+			startRun(ctx, run, time.Minute)
+			_, err = db.ExecContext(ctx, `UPDATE captain_sessions SET activity_state = 'working' WHERE id IN ($1, $2)`, admission, execution)
+			Expect(err).NotTo(HaveOccurred())
+
+			finishRun(ctx, run, state, "", 5*time.Minute)
+
+			awaiting := sessionLifecycle{Lifecycle: "running", Activity: "idle", StateVersion: 3}
+			Expect(lifecycleOf(ctx, admission)).To(Equal(awaiting))
+			Expect(lifecycleOf(ctx, execution)).To(Equal(awaiting))
+		},
+		Entry("an answered turn", "succeeded"),
+		Entry("an interrupted turn", "cancelled"),
+	)
+
 	// A batch's runs are booked against its member sessions; the root's partial
 	// verdict is Go's, derived from all of them.
 	It("leaves a batch root's partial verdict and its version untouched by its members' runs", func(ctx SpecContext) {
