@@ -31,6 +31,9 @@ hack/
 !hack/
 hack/*
 !hack/gitagent_empirical.sh
+!hack/adapterresources/
+!hack/adapterdto/
+!hack/adapterbrowser/
 .ok/
 .okignore
 .ginkgo/
