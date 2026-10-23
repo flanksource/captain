@@ -12,10 +12,10 @@ import (
 var _ = Describe("Claude Agent interruption", func() {
 	It("does not queue a terminal result while an interrupt is in progress", func() {
 		turn := &turnState{
-			inbox:   make(chan ai.Event, 1),
-			term:    make(chan struct{}),
-			quit:    make(chan struct{}),
-			pending: 1,
+			inbox:     make(chan ai.Event, 1),
+			term:      make(chan struct{}),
+			quit:      make(chan struct{}),
+			unsettled: map[string]bool{},
 		}
 		turn.interrupting.Store(true)
 		provider := &Provider{model: testModel}

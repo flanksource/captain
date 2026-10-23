@@ -54,6 +54,15 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 			Add(icons.Error).
 			Append(" "+identity, "text-red-600 font-medium").
 			Append(fmt.Sprintf(" failed after %v: %v", duration.Round(time.Millisecond), err), "text-red-500"))
+		// A reply rejected as unparseable rides back with the error; the parse
+		// error names only the first bad byte, so show the reply itself.
+		if log.IsDebugEnabled() && resp != nil && resp.Text != "" {
+			log.Debugf("%v", clicky.Text("").
+				Add(icons.ArrowDown).
+				Append(" rejected response", "text-gray-500").
+				NewLine().
+				Append(resp.Text, "text-gray-600"))
+		}
 		return resp, err
 	}
 
