@@ -6,53 +6,78 @@ type promptHelpField struct {
 }
 
 const promptHelpExample = `---
+# Catalog metadata shown by captain prompt list.
 name: Release notes
 description: Summarize a change as structured release notes
+
+# Default target: mode:model[:effort]. Modes: api, cli, agent, cmux.
 model: agent:sonnet
-effort: high
+effort: high # Reasoning effort; support depends on the selected runtime.
+# Ordered alternatives when the primary model has an eligible failure.
 fallbacks:
   - api:gemini-3.5-flash:high
+
+# Per-call generation options; these override equivalent top-level fields.
 config:
-  maxOutputTokens: 2000
+  maxOutputTokens: 2000 # Overrides budget.maxTokens.
   temperature: 0.2
+
+# Template variables: pass change with -V change='Describe your change'.
 input:
   schema:
     type: object
     required: [change]
     properties:
       change: {type: string}
+      audience: {type: string}
   default:
-    audience: operators
+    audience: operators # Used when no audience variable is supplied.
+
+# Structured response contract, separate from the template input schema.
 output:
   schema:
     type: object
     required: [summary]
     properties:
       summary: {type: string}
+
+# Optional parallel targets; omit to run only the default model above.
+# Repeated -M flags replace these defaults at execution time.
 runtimes:
   - agent:sonnet:high
   - model: gemini-3.5-flash
     mode: api
     effort: high
+
+# Run limits; zero cost means no spend ceiling, zero turns uses the default.
 budget:
-  cost: 0.50
-  maxTokens: 2000
-  maxTurns: 4
-  timeout: 20m
+  cost: 0.50 # USD.
+  maxTokens: 2000 # Per-call output limit; config.maxOutputTokens wins.
+  maxTurns: 4 # Agent turns, not model tokens.
+  timeout: 20m # Overall run duration.
+
+# Permission posture and native tool filters, independent of the sandbox.
+# Unsupported restrictions fail before dispatch.
 permissions:
   mode: acceptEdits
   tools:
     Read: allow
     Edit: allow
+
+# Control ambient instructions; other memory settings remain unchanged.
 memory:
   skipUser: true
+
+# Prepare the execution directory before running the prompt.
 setup:
   cwd: .
+
+# Optional sandbox backend and file submission policy.
 sandbox:
   backend: srt
   policy:
-    paths: ["pkg/**", "!secrets/**"]
-    maxAttempts: 2
+    paths: ["pkg/**", "!secrets/**"] # ! excludes a path pattern.
+    maxAttempts: 2 # Maximum submit attempts.
 ---
 {{role "system"}}
 Write concise release notes for {{audience}}.

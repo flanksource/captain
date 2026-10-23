@@ -123,6 +123,15 @@ var _ = Describe("prompt help", func() {
 		Expect(output.String()).NotTo(ContainSubstring("style="))
 	})
 
+	It("documents prompt lookup locations in list help", func() {
+		output, err := renderPromptHelp(&cobra.Command{Use: "list"}, promptHelpRenderOptions{LLMSession: true})
+
+		Expect(err).NotTo(HaveOccurred())
+		for _, location := range []string{"Prompt lookup locations", "~/.captain.yaml", "prompts.dirs", ".captain/prompts", "~/.config/captain/prompts", "$XDG_CONFIG_HOME/captain/prompts"} {
+			Expect(output).To(ContainSubstring(location))
+		}
+	})
+
 	DescribeTable("renders help throughout the prompt command tree", func(name string, llm, noColor bool) {
 		clearSessionMarkers()
 		if llm {

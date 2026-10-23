@@ -9,6 +9,7 @@ import (
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/clicky"
+	"github.com/flanksource/clicky/extensions"
 	"github.com/flanksource/clicky/flags"
 	"github.com/flanksource/clicky/mcp"
 	"github.com/flanksource/commons/properties"
@@ -400,6 +401,7 @@ func newRootCommand() *cobra.Command {
 	portKillCmd.Short = "Kill the process listening on a TCP port"
 	portKillCmd.Long = "Find the process bound to the specified TCP port using lsof and kill it with SIGKILL. Reports the process name and PID before killing."
 
+	extensions.CobraExtensions(rootCmd).Interactive()
 	return rootCmd
 }
 

@@ -16,25 +16,27 @@ import (
 // renderPrompt is the HTTP/Spec render path: the caller's structured api.Spec
 // (the web UI's runtime overrides) is the last layer over the selected runtime
 // presets and the rendered frontmatter. A non-empty Content renders that draft
-// instead of the saved file.
+// instead of the saved file; without an id that draft is self-contained, its
+// own frontmatter included.
 func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest) (PromptRenderResult, error) {
-	if strings.TrimSpace(id) == "" {
+	hasDraft := strings.TrimSpace(renderReq.Content) != ""
+	if strings.TrimSpace(id) == "" && !hasDraft {
 		return renderEphemeralPrompt(ctx, renderReq)
 	}
 	saved, err := loadSavedConfig()
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: id, Config: &saved})
-	if err != nil {
-		return PromptRenderResult{}, err
-	}
-	content, err := readPromptContent(record)
-	if err != nil {
-		return PromptRenderResult{}, err
-	}
-	if strings.TrimSpace(renderReq.Content) != "" {
-		content = renderReq.Content
+	record, content := draftPromptRecord(), renderReq.Content
+	if strings.TrimSpace(id) != "" {
+		if record, err = resolvePromptRecord(ctx, promptRecordOptions{ID: id, Config: &saved}); err != nil {
+			return PromptRenderResult{}, err
+		}
+		if !hasDraft {
+			if content, err = readPromptContent(record); err != nil {
+				return PromptRenderResult{}, err
+			}
+		}
 	}
 	vars := renderReq.Variables
 	if vars == nil {
@@ -69,6 +71,15 @@ func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (
 		return PromptRenderResult{}, err
 	}
 	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
+}
+
+// draftPromptRecord names an unsaved draft posted without a saved prompt id.
+func draftPromptRecord() promptRecord {
+	return promptRecord{
+		Source: promptSource{Kind: "draft", ID: "draft", Label: "Draft"},
+		Path:   "<draft>",
+		Rel:    "draft.prompt",
+	}
 }
 
 func ephemeralPromptContent() string {

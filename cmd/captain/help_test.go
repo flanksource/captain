@@ -48,6 +48,16 @@ var _ = Describe("root help", func() {
 		Expect(out.String()).ToNot(ContainSubstring(commonsMarker))
 	})
 
+	It("documents prompt lookup locations in root help", func() {
+		root, _, out := newRoot()
+		root.SetArgs([]string{"--help"})
+
+		Expect(root.Execute()).To(Succeed())
+		for _, location := range []string{"Prompt lookup locations", "~/.captain.yaml", "prompts.dirs", ".captain/prompts", "~/.config/captain/prompts", "$XDG_CONFIG_HOME/captain/prompts"} {
+			Expect(out.String()).To(ContainSubstring(location))
+		}
+	})
+
 	It("drops ANSI escapes when --no-color is set", func() {
 		defer func(previous bool) { clicky.Flags.NoColor = previous }(clicky.Flags.NoColor)
 		clicky.Flags.NoColor = true
