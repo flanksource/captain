@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
+	"github.com/google/uuid"
 )
 
 // turnState carries the channels a single in-flight turn uses to receive mapped
@@ -41,8 +43,15 @@ type turnState struct {
 	planMode bool
 
 	promptMu sync.Mutex
-	pending  int
-	ended    bool
+	// unsettled holds the uuids of the prompts this turn sent that no SDK result
+	// has reported consuming yet. The SDK folds a prompt that arrives mid-turn
+	// into the running turn, so one result can settle several prompts; it names
+	// them in user_message_uuids.
+	unsettled map[string]bool
+	// idleWaiting records an idle that arrived while a prompt was unsettled, so
+	// withdrawing that prompt can end the turn without waiting for another idle.
+	idleWaiting bool
+	ended       bool
 	// result is the captain turn's result, merged across every SDK result the
 	// turn settled before the session went idle.
 	result *ai.Event
@@ -51,6 +60,9 @@ type turnState struct {
 }
 
 type promptParams struct {
+	// UUID stamps the SDK user message, so the result that consumes the prompt
+	// can name it.
+	UUID        string             `json:"uuid"`
 	Text        string             `json:"text"`
 	Attachments []promptAttachment `json:"attachments,omitempty"`
 }
@@ -65,8 +77,8 @@ func composePrompt(req ai.Request) string {
 	return req.Prompt.User
 }
 
-func buildPromptParams(req ai.Request) (promptParams, error) {
-	params := promptParams{Text: composePrompt(req), Attachments: make([]promptAttachment, 0, len(req.Prompt.Attachments))}
+func buildPromptParams(req ai.Request, promptID string) (promptParams, error) {
+	params := promptParams{UUID: promptID, Text: composePrompt(req), Attachments: make([]promptAttachment, 0, len(req.Prompt.Attachments))}
 	for i, attachment := range req.Prompt.Attachments {
 		content, ok := attachment.PreparedContent()
 		if !ok {
@@ -106,8 +118,10 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		onApproval: p.cfg.OnApproval,
 		toolPolicy: aitools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy},
 		planMode:   req.Permissions.Mode == api.PermissionPlan,
-		pending:    1,
+		unsettled:  map[string]bool{},
 	}
+	promptID := uuid.NewString()
+	ts.unsettled[promptID] = true
 	p.setActive(ts)
 	defer func() {
 		close(ts.quit)
@@ -118,7 +132,7 @@ func (p *Provider) runTurn(ctx context.Context, req ai.Request, events chan ai.E
 		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
 		return
 	}
-	params, err := buildPromptParams(req)
+	params, err := buildPromptParams(req, promptID)
 	if err != nil {
 		emit(ctx, events, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
 		return
@@ -172,31 +186,59 @@ func (p *Provider) onNotification(method string, params json.RawMessage) {
 		// A settled turn is not the end of the captain turn: background agents
 		// may still be running and wake a follow-up turn. Hold the result until
 		// the session goes idle.
-		ts.settled(ev, ok && !ts.interrupting.Load())
+		consumed, err := consumedPrompts(params)
+		if err != nil {
+			p.deliver(ts, ai.Event{Kind: ai.EventError, Error: err.Error(), Model: p.model})
+			ts.abort()
+			return
+		}
+		ts.settled(ev, ok && !ts.interrupting.Load(), consumed)
 		return
 	case notifySessionState:
 		if sessionState(params) != sessionIdle {
 			return
 		}
-		result, done := ts.idle()
-		if !done {
-			return
+		if result, done := ts.idle(); done {
+			p.endTurn(ts, result)
 		}
-		if result != nil {
-			p.deliver(ts, *result)
-		}
-		close(ts.term)
 		return
 	case notifyTurnError:
+		// The SDK query loop died: no prompt it held will settle.
 		if ok && !ts.interrupting.Load() {
 			p.deliver(ts, ev)
 		}
-		ts.completePrompt()
+		ts.abort()
 		return
 	}
 	if ok {
 		p.deliver(ts, ev)
 	}
+}
+
+// endTurn delivers the turn's held result, if any, then drains it.
+func (p *Provider) endTurn(ts *turnState, result *ai.Event) {
+	if result != nil {
+		p.deliver(ts, *result)
+	}
+	close(ts.term)
+}
+
+// consumedPrompts reads the uuids of the prompts an SDK result consumed. A
+// result names every prompt it folded in (user_message_uuids); an error result
+// may carry only the one that triggered it (user_message_uuid). A follow-up
+// turn a background agent woke consumed none.
+func consumedPrompts(params json.RawMessage) ([]string, error) {
+	var result struct {
+		UUIDs []string `json:"user_message_uuids"`
+		UUID  string   `json:"user_message_uuid"`
+	}
+	if err := json.Unmarshal(params, &result); err != nil {
+		return nil, fmt.Errorf("claude-agent: decode the prompts a turn/completed consumed: %w", err)
+	}
+	if result.UUID != "" && !slices.Contains(result.UUIDs, result.UUID) {
+		result.UUIDs = append(result.UUIDs, result.UUID)
+	}
+	return result.UUIDs, nil
 }
 
 // deliver hands ev to the turn without blocking past the turn's or the
@@ -313,19 +355,23 @@ func (p *Provider) Steer(ctx context.Context, req api.Spec) error {
 	p.activeMu.Lock()
 	ts := p.active
 	p.activeMu.Unlock()
-	if ts == nil || !ts.addPrompt() {
+	promptID := uuid.NewString()
+	if ts == nil || !ts.addPrompt(promptID) {
 		return fmt.Errorf("claude-agent: no active turn to steer")
 	}
-	params, err := buildPromptParams(req)
+	params, err := buildPromptParams(req, promptID)
+	if err == nil {
+		_, err = p.rpc.Call(ctx, methodPrompt, params)
+		if err != nil {
+			err = fmt.Errorf("claude-agent steer failed: %w", err)
+		}
+	}
 	if err != nil {
-		ts.completePrompt()
-		return err
+		if result, done := ts.withdraw(promptID); done {
+			p.endTurn(ts, result)
+		}
 	}
-	if _, err := p.rpc.Call(ctx, methodPrompt, params); err != nil {
-		ts.completePrompt()
-		return fmt.Errorf("claude-agent steer failed: %w", err)
-	}
-	return nil
+	return err
 }
 
 func (p *Provider) Interrupt(ctx context.Context) error {
@@ -395,12 +441,12 @@ func (p *Provider) rememberSession(id string) {
 	p.sessMu.Unlock()
 }
 
-// summary projects the turn for a task snapshot. It reads pending under the
-// same lock that maintains it, because the snapshot path runs concurrently with
-// the turn it is describing.
+// summary projects the turn for a task snapshot. It reads the unsettled
+// prompts under the same lock that maintains them, because the snapshot path
+// runs concurrently with the turn it is describing.
 func (ts *turnState) summary() *ai.AgentTurn {
 	ts.promptMu.Lock()
-	pending := ts.pending
+	pending := len(ts.unsettled)
 	ts.promptMu.Unlock()
 	return &ai.AgentTurn{
 		PlanMode:     ts.planMode,
@@ -409,27 +455,29 @@ func (ts *turnState) summary() *ai.AgentTurn {
 	}
 }
 
-func (ts *turnState) addPrompt() bool {
+// addPrompt holds the turn open for a steered prompt until a result names it.
+// An idle seen before it says nothing about it, so the turn awaits a new one.
+func (ts *turnState) addPrompt(promptID string) bool {
 	ts.promptMu.Lock()
 	defer ts.promptMu.Unlock()
 	if ts.ended {
 		return false
 	}
-	ts.pending++
+	ts.unsettled[promptID] = true
+	ts.idleWaiting = false
 	return true
 }
 
-// settled records one SDK result, and when keep is set folds its event into the
-// result held for the captain turn. A follow-up turn woken by a background
-// agent answers no prompt, so pending never drops below zero.
-func (ts *turnState) settled(ev ai.Event, keep bool) {
+// settled records one SDK result: the prompts it consumed are settled, and
+// when keep is set its event folds into the result held for the captain turn.
+func (ts *turnState) settled(ev ai.Event, keep bool, consumed []string) {
 	ts.promptMu.Lock()
 	defer ts.promptMu.Unlock()
 	if ts.ended {
 		return
 	}
-	if ts.pending > 0 {
-		ts.pending--
+	for _, promptID := range consumed {
+		delete(ts.unsettled, promptID)
 	}
 	if keep {
 		merged := mergeResult(ts.result, ev)
@@ -437,15 +485,35 @@ func (ts *turnState) settled(ev ai.Event, keep bool) {
 	}
 }
 
-// idle ends the turn once every accepted prompt has settled, returning the
-// held result to deliver (nil when an interrupt dropped it). The caller closes
-// term after delivering it, so the result is queued before the turn drains.
+// idle ends the turn once every prompt it sent has settled, returning the held
+// result to deliver (nil when an interrupt dropped it). The caller closes term
+// after delivering it, so the result is queued before the turn drains.
 func (ts *turnState) idle() (*ai.Event, bool) {
 	ts.promptMu.Lock()
 	defer ts.promptMu.Unlock()
-	if ts.ended || ts.pending > 0 {
+	if ts.ended {
 		return nil, false
 	}
+	if len(ts.unsettled) > 0 {
+		ts.idleWaiting = true
+		return nil, false
+	}
+	return ts.endLocked()
+}
+
+// withdraw forgets a steered prompt the bridge never accepted. When an idle
+// was only waiting on it, the turn ends now: no further idle is coming.
+func (ts *turnState) withdraw(promptID string) (*ai.Event, bool) {
+	ts.promptMu.Lock()
+	defer ts.promptMu.Unlock()
+	delete(ts.unsettled, promptID)
+	if ts.ended || len(ts.unsettled) > 0 || !ts.idleWaiting {
+		return nil, false
+	}
+	return ts.endLocked()
+}
+
+func (ts *turnState) endLocked() (*ai.Event, bool) {
 	ts.ended = true
 	if ts.interrupting.Load() {
 		return nil, true
@@ -453,14 +521,11 @@ func (ts *turnState) idle() (*ai.Event, bool) {
 	return ts.result, true
 }
 
-func (ts *turnState) completePrompt() {
+// abort ends the turn at once: the SDK query loop died, so no prompt settles.
+func (ts *turnState) abort() {
 	ts.promptMu.Lock()
 	defer ts.promptMu.Unlock()
 	if ts.ended {
-		return
-	}
-	ts.pending--
-	if ts.pending > 0 {
 		return
 	}
 	ts.ended = true

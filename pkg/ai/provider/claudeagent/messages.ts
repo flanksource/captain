@@ -164,6 +164,12 @@ export function handleMessage(
         result_text: (message as { result?: string }).result,
         structured_output: (message as { structured_output?: unknown })
           .structured_output,
+        // The prompts this result consumed: every one the SDK folded into the
+        // turn. The host's turn waits for each prompt it sent to be named.
+        user_message_uuids: (message as { user_message_uuids?: string[] })
+          .user_message_uuids,
+        user_message_uuid: (message as { user_message_uuid?: string })
+          .user_message_uuid,
       });
       break;
   }

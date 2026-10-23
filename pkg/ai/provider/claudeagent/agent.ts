@@ -8,7 +8,7 @@
 //                 allowedTools, maxTurns, maxBudgetUsd, permissionMode, resume, approvalMode,
 //                 outputSchema, mcpServers}
 //                 -> reply {ok:true, protocolVersion}
-//     prompt {text, attachments?} -> reply {accepted:true}
+//     prompt {uuid, text, attachments?} -> reply {accepted:true}
 //     interrupt          -> reply {}
 //     set_permission_mode {mode} -> reply {} (applies to the live query)
 //     shutdown           -> reply {} then exit
@@ -19,9 +19,12 @@
 //     message/tool_use {tool, input, id, parent_tool_use_id}
 //     message/tool_result {id, content, is_error, parent_tool_use_id}
 //     turn/completed {success, subtype, session_id, cost_usd, usage, num_turns,
-//                     result_text, structured_output}
+//                     result_text, structured_output, user_message_uuids,
+//                     user_message_uuid}  (the prompt uuids the result
+//                                 consumed; prompts sent mid-turn fold into it)
 //     session/state  {state}     (idle | running | requires_action; idle ends
-//                                 the host's turn, after background agents)
+//                                 the host's turn once every prompt it sent
+//                                 has been consumed, after background agents)
 //     turn/error     {message}
 //   server -> client requests (only when approvalMode === "ask"):
 //     can_use_tool {tool, input, tool_use_id}
