@@ -60,22 +60,32 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 	if err != nil {
 		return PromptRunResult{}, err
 	}
+	return launchRendered(ctx, id, rendered, req.Chat)
+}
+
+// launchRendered validates a rendered prompt and starts it as an async run (or
+// a batch of runs, one per runtime). It is the one launch path the HTTP action
+// and LaunchPrompt share.
+func launchRendered(ctx context.Context, id string, rendered PromptRenderResult, chat bool) (PromptRunResult, error) {
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
-	if req.Chat {
+	if chat {
 		if rendered.Input.Prompt.HasSchema() {
 			return PromptRunResult{}, errors.New("chat mode does not support structured-output prompts")
 		}
 		if workflowConfigured(rendered.Input.Workflow) {
 			return PromptRunResult{}, errors.New("chat mode does not support workflow-backed prompts")
 		}
+		if len(rendered.Input.Tools) > 0 {
+			return PromptRunResult{}, errors.New("chat mode does not support prompts with inline tools")
+		}
 	}
 
 	if len(rendered.Runtimes) > 0 {
-		return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, req.Chat)
+		return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, chat)
 	}
-	return launchAsyncRun(id, rendered, req.Chat)
+	return launchAsyncRun(id, rendered, chat)
 }
 
 var executePromptRequestFunc = executePromptRequest
@@ -126,6 +136,12 @@ func workflowConfigured(workflow *api.Workflow) bool {
 	return workflow != nil && (workflow.Verify != nil || len(workflow.Commits) > 0 || len(workflow.After) > 0 || workflow.AutoVerifyWithoutFixture)
 }
 
+// requiresRunner reports a spec the direct provider call cannot honour: its
+// workflow's hooks and its inline tools are only built by promptrun.
+func requiresRunner(spec api.Spec) bool {
+	return workflowConfigured(spec.Workflow) || len(spec.Tools) > 0
+}
+
 // executeSyncRun runs the prompt in-process (CLI) — live output to stderr, final
 // result returned — and persists the realized prompt for the launched session.
 func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
@@ -159,10 +175,11 @@ func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts
 }
 
 func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered PromptRenderResult, opts AIPromptOptions, binding *promptSessionBinding) (PromptRunResult, error) {
-	// A configured workflow must go through the runner-backed path: the direct
-	// provider call below never constructs verify/commit/judge hooks, so taking
-	// it would complete the run with every declared check silently skipped.
-	if workflowConfigured(rendered.Input.Workflow) {
+	// A configured workflow or inline tools must go through the runner-backed
+	// path: the direct provider call below never constructs verify/commit/judge
+	// hooks or binds inline tools, so taking it would complete the run with the
+	// declared checks skipped and the declared tools missing.
+	if requiresRunner(rendered.Input) {
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
 	r, err := executeDirectPrompt(ctx, rendered, opts)
@@ -170,7 +187,7 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 		err = unansweredPromptQuestions(r.TerminalOutcome)
 	}
 	recording := promptRecordingInput{Rendered: rendered, Binding: binding}
-	if recordErr := recordCompletedRun(ctx, recording, directRun(rendered, r, err)); err != nil || recordErr != nil {
+	if _, recordErr := recordCompletedRun(ctx, recording, directRun(rendered, r, err)); err != nil || recordErr != nil {
 		return PromptRunResult{}, errors.Join(err, recordErr)
 	}
 	return PromptRunResult{

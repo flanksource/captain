@@ -37,7 +37,8 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	req := rendered.Input
 	remote, err := preparePromptRun(ctx, &req, rendered.Config)
 	if err != nil {
-		return failRun(t, stream, errors.Join(err, recordCompleted(ctx, rec, unstartedRun(rendered, err))))
+		_, recordErr := recordCompleted(ctx, rec, unstartedRun(rendered, err))
+		return failRun(t, stream, errors.Join(err, recordErr))
 	}
 	if remote != nil {
 		defer closeProvider(remote)

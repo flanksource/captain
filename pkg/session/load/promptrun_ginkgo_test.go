@@ -33,7 +33,7 @@ var _ = Describe("PromptRun", func() {
 		// The defect: a transcript made loadSessionDetail skip sessionFromPromptRun
 		// entirely, dropping the run's prompt, structured output and error event.
 		result, failures := load.Load(context.Background(),
-			load.Transcript(&session.Session{Messages: []session.Message{{ID: "transcript-m1"}}}),
+			load.Transcript(&session.Session{Messages: []session.Message{{ID: "transcript-m1", Parts: []session.Part{{Type: session.PartText, Text: "answer"}}}}}),
 			load.PromptRun(run))
 
 		Expect(failures).To(BeEmpty())

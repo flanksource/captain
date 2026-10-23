@@ -91,6 +91,9 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	if workflowConfigured(rendered.Input.Workflow) {
 		return api.RuntimeObservation{}, errors.New("prompt observe v1 does not support workflow-backed prompts")
 	}
+	if len(rendered.Input.Tools) > 0 {
+		return api.RuntimeObservation{}, errors.New("prompt observe v1 does not support prompts with inline tools")
+	}
 
 	runtime := rendered.Config.Model
 	if err := runtime.Validate(); err != nil {

@@ -70,32 +70,7 @@ func listPromptRecordsFromSource(source promptSource) ([]promptRecord, error) {
 		return records, err
 	}
 
-	err := filepath.WalkDir(source.Root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if name == ".git" || name == "node_modules" || name == "vendor" || name == "dist" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 || !strings.HasSuffix(name, ".prompt") {
-			return nil
-		}
-		rel, err := filepath.Rel(source.Root, path)
-		if err != nil {
-			return err
-		}
-		info, _ := d.Info()
-		add(rel, info)
-		return nil
-	})
-	if errors.Is(err, fs.ErrNotExist) && source.Implicit {
-		return records, nil
-	}
-	return records, err
+	return listLocalPromptRecords(source)
 }
 
 type promptRecordOptions struct {
@@ -123,6 +98,9 @@ func resolvePromptRecord(ctx context.Context, options promptRecordOptions) (prom
 		for _, source := range sources {
 			if source.Kind != ref.Kind || source.ID != ref.SourceID {
 				continue
+			}
+			if source.FS == nil {
+				return localPromptRecord(source, ref.RelPath)
 			}
 			path := ref.RelPath
 			if source.Root != "" {
@@ -189,20 +167,12 @@ func filePromptRecord(id string) (promptRecord, error) {
 	if err != nil {
 		return promptRecord{}, err
 	}
-	info, err := os.Stat(abs)
+	record, err := localPromptRecord(promptSource{Kind: "file", ID: "file", Label: "File", Root: filepath.Dir(abs)}, filepath.Base(abs))
 	if err != nil {
 		return promptRecord{}, fmt.Errorf("prompt file %s: %w", id, err)
 	}
-	if info.IsDir() {
-		return promptRecord{}, fmt.Errorf("%s is a directory, not a .prompt file", id)
-	}
-	return promptRecord{
-		Source:    promptSource{Kind: "file", ID: "file", Label: "File", Root: filepath.Dir(abs)},
-		ID:        id,
-		Path:      abs,
-		Rel:       filepath.Base(abs),
-		UpdatedAt: modTimeString(info),
-	}, nil
+	record.ID = id
+	return record, nil
 }
 
 func promptSummary(record promptRecord) (PromptSummary, error) {
@@ -357,7 +327,7 @@ func readPromptContent(record promptRecord) (string, error) {
 		}
 		return string(data), nil
 	}
-	file, err := openLocalPromptFile(record, false)
+	file, err := openPromptReadFile(record)
 	if err != nil {
 		return "", err
 	}
