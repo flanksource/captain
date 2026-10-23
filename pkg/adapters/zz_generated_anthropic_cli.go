@@ -60,6 +60,9 @@ type AnthropicCLIOptions struct {
 	// Path receiving Claude Code diagnostic logs.
 	DebugFile *string `json:"debugFile,omitempty,omitzero"`
 
+	// Open a continued or resumed session in the Claude Desktop application.
+	Desktop *bool `json:"desktop,omitempty,omitzero"`
+
 	// Whether skills and slash commands are disabled.
 	DisableSlashCommands *bool `json:"disableSlashCommands,omitempty,omitzero"`
 

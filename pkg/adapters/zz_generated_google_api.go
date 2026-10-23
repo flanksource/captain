@@ -3,6 +3,1067 @@
 package adapters
 
 import "encoding/json"
+import "time"
+
+// The generic reusable API auth config. Deprecated. Please use AuthConfig
+// (google/cloud/aiplatform/master/auth.proto)
+// instead. This data type is not supported in Gemini API.
+type GoogleAPIAPIAuth struct {
+	// The API secret.
+	//
+	ApiKeyConfig *GoogleAPIAPIAuthAPIKeyConfig `json:"apiKeyConfig,omitempty,omitzero"`
+}
+
+// The API secret. This data type is not supported in Gemini API.
+type GoogleAPIAPIAuthAPIKeyConfig struct {
+	// Required. The SecretManager secret version resource name storing API key. e.g.
+	// projects/{project}/secrets/{secret}/versions/{version}
+	//
+	ApiKeySecretVersion *string `json:"apiKeySecretVersion,omitempty,omitzero"`
+
+	// The API key string. Either this or `api_key_secret_version` must be set.
+	//
+	ApiKeyString *string `json:"apiKeyString,omitempty,omitzero"`
+}
+
+// Config for authentication with API key. This data type is not supported in
+// Gemini
+// API.
+type GoogleAPIAPIKeyConfig struct {
+	// Optional. The name of the SecretManager secret version resource storing the API
+	// key.
+	// Format: `projects/{project}/secrets/{secrete}/versions/{version}` - If both
+	// `api_key_secret`
+	// and `api_key_string` are specified, this field takes precedence over
+	// `api_key_string`.
+	// - If specified, the `secretmanager.versions.access` permission should be
+	// granted
+	// to Vertex AI Extension Service Agent
+	// (https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents)
+	// on the specified resource.
+	//
+	ApiKeySecret *string `json:"apiKeySecret,omitempty,omitzero"`
+
+	// Optional. The API key to be used in the request directly.
+	//
+	ApiKeyString *string `json:"apiKeyString,omitempty,omitzero"`
+
+	// Optional. The location of the API key.
+	//
+	HttpElementLocation *GoogleAPIAPIKeyConfigHttpElementLocation `json:"httpElementLocation,omitempty,omitzero"`
+
+	// Optional. The parameter name of the API key. E.g. If the API request is
+	// "https://example.com/act?api_key=",
+	// "api_key" would be the parameter name.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+}
+
+type GoogleAPIAPIKeyConfigHttpElementLocation string
+
+const GoogleAPIAPIKeyConfigHttpElementLocationHTTPINBODY GoogleAPIAPIKeyConfigHttpElementLocation = "HTTP_IN_BODY"
+const GoogleAPIAPIKeyConfigHttpElementLocationHTTPINCOOKIE GoogleAPIAPIKeyConfigHttpElementLocation = "HTTP_IN_COOKIE"
+const GoogleAPIAPIKeyConfigHttpElementLocationHTTPINHEADER GoogleAPIAPIKeyConfigHttpElementLocation = "HTTP_IN_HEADER"
+const GoogleAPIAPIKeyConfigHttpElementLocationHTTPINPATH GoogleAPIAPIKeyConfigHttpElementLocation = "HTTP_IN_PATH"
+const GoogleAPIAPIKeyConfigHttpElementLocationHTTPINQUERY GoogleAPIAPIKeyConfigHttpElementLocation = "HTTP_IN_QUERY"
+const GoogleAPIAPIKeyConfigHttpElementLocationHTTPINUNSPECIFIED GoogleAPIAPIKeyConfigHttpElementLocation = "HTTP_IN_UNSPECIFIED"
+
+// The authentication config to access the API.
+type GoogleAPIAuthConfig struct {
+	// Optional. The authentication config to access the API. Only API key is
+	// supported.
+	// This field is not supported in Gemini API.
+	//
+	ApiKey *string `json:"apiKey,omitempty,omitzero"`
+
+	// Config for API key auth.
+	//
+	ApiKeyConfig *GoogleAPIAPIKeyConfig `json:"apiKeyConfig,omitempty,omitzero"`
+
+	// Type of auth scheme.
+	//
+	AuthType *GoogleAPIAuthConfigAuthType `json:"authType,omitempty,omitzero"`
+
+	// Config for Google Service Account auth.
+	//
+	GoogleServiceAccountConfig *GoogleAPIAuthConfigGoogleServiceAccountConfig `json:"googleServiceAccountConfig,omitempty,omitzero"`
+
+	// Config for HTTP Basic auth.
+	//
+	HttpBasicAuthConfig *GoogleAPIAuthConfigHTTPBasicAuthConfig `json:"httpBasicAuthConfig,omitempty,omitzero"`
+
+	// Config for user oauth.
+	//
+	OauthConfig *GoogleAPIAuthConfigOauthConfig `json:"oauthConfig,omitempty,omitzero"`
+
+	// Config for user OIDC auth.
+	//
+	OidcConfig *GoogleAPIAuthConfigOidcConfig `json:"oidcConfig,omitempty,omitzero"`
+}
+
+type GoogleAPIAuthConfigAuthType string
+
+const GoogleAPIAuthConfigAuthTypeAPIKEYAUTH GoogleAPIAuthConfigAuthType = "API_KEY_AUTH"
+const GoogleAPIAuthConfigAuthTypeAUTHTYPEUNSPECIFIED GoogleAPIAuthConfigAuthType = "AUTH_TYPE_UNSPECIFIED"
+const GoogleAPIAuthConfigAuthTypeGOOGLESERVICEACCOUNTAUTH GoogleAPIAuthConfigAuthType = "GOOGLE_SERVICE_ACCOUNT_AUTH"
+const GoogleAPIAuthConfigAuthTypeHTTPBASICAUTH GoogleAPIAuthConfigAuthType = "HTTP_BASIC_AUTH"
+const GoogleAPIAuthConfigAuthTypeNOAUTH GoogleAPIAuthConfigAuthType = "NO_AUTH"
+const GoogleAPIAuthConfigAuthTypeOAUTH GoogleAPIAuthConfigAuthType = "OAUTH"
+const GoogleAPIAuthConfigAuthTypeOIDCAUTH GoogleAPIAuthConfigAuthType = "OIDC_AUTH"
+
+// Config for Google Service Account Authentication. This data type is not
+// supported
+// in Gemini API.
+type GoogleAPIAuthConfigGoogleServiceAccountConfig struct {
+	// Optional. The service account that the extension execution service runs as. -
+	// If
+	// the service account is specified, the `iam.serviceAccounts.getAccessToken`
+	// permission
+	// should be granted to Vertex AI Extension Service Agent
+	// (https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents)
+	// on the specified service account. - If not specified, the Vertex AI Extension
+	// Service
+	// Agent will be used to execute the Extension.
+	//
+	ServiceAccount *string `json:"serviceAccount,omitempty,omitzero"`
+}
+
+// Config for HTTP Basic Authentication. This data type is not supported in Gemini
+// API.
+type GoogleAPIAuthConfigHTTPBasicAuthConfig struct {
+	// Required. The name of the SecretManager secret version resource storing the
+	// base64
+	// encoded credentials. Format:
+	// `projects/{project}/secrets/{secrete}/versions/{version}`
+	// - If specified, the `secretmanager.versions.access` permission should be
+	// granted
+	// to Vertex AI Extension Service Agent
+	// (https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents)
+	// on the specified resource.
+	//
+	CredentialSecret *string `json:"credentialSecret,omitempty,omitzero"`
+}
+
+// Config for user oauth. This data type is not supported in Gemini API.
+type GoogleAPIAuthConfigOauthConfig struct {
+	// Access token for extension endpoint. Only used to propagate token from
+	// [[ExecuteExtensionRequest.runtime_auth_config]]
+	// at request time.
+	//
+	AccessToken *string `json:"accessToken,omitempty,omitzero"`
+
+	// The service account used to generate access tokens for executing the Extension.
+	// -
+	// If the service account is specified, the `iam.serviceAccounts.getAccessToken`
+	// permission
+	// should be granted to Vertex AI Extension Service Agent
+	// (https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents)
+	// on the provided service account.
+	//
+	ServiceAccount *string `json:"serviceAccount,omitempty,omitzero"`
+}
+
+// Config for user OIDC auth. This data type is not supported in Gemini API.
+type GoogleAPIAuthConfigOidcConfig struct {
+	// OpenID Connect formatted ID token for extension endpoint. Only used to
+	// propagate
+	// token from [[ExecuteExtensionRequest.runtime_auth_config]] at request time.
+	//
+	IdToken *string `json:"idToken,omitempty,omitzero"`
+
+	// The service account used to generate an OpenID Connect (OIDC)-compatible JWT
+	// token
+	// signed by the Google OIDC Provider (accounts.google.com) for extension endpoint
+	// (https://cloud.google.com/iam/docs/create-short-lived-credentials-direct#sa-credentials-oidc).
+	// - The audience for the token will be set to the URL in the server URL defined
+	// in
+	// the OpenAPI spec. - If the service account is provided, the service account
+	// should
+	// grant `iam.serviceAccounts.getOpenIDToken` permission to Vertex AI Extension
+	// Service
+	// Agent
+	// (https://cloud.google.com/vertex-ai/docs/general/access-control#service-agents).
+	//
+	ServiceAccount *string `json:"serviceAccount,omitempty,omitzero"`
+}
+
+// A content blob. A Blob contains data of a specific media type. It is used to
+// represent
+// images, audio, and video.
+type GoogleAPIBlob struct {
+	// Required. The raw bytes of the data.
+	//
+	Data *string `json:"data,omitempty,omitzero"`
+
+	// Optional. The display name of the blob. Used to provide a label or filename to
+	// distinguish
+	// blobs. This field is only returned in `PromptMessage` for prompt management. It
+	// is
+	// used in the Gemini calls only when server-side tools (`code_execution`,
+	// `google_search`,
+	// and `url_context`) are enabled. This field is not supported in Gemini API.
+	//
+	DisplayName *string `json:"displayName,omitempty,omitzero"`
+
+	// Required. The IANA standard MIME type of the source data.
+	//
+	MimeType *string `json:"mimeType,omitempty,omitzero"`
+}
+
+// Result of executing the `ExecutableCode`.
+// Generated only when the `CodeExecution` tool is used.
+type GoogleAPICodeExecutionResult struct {
+	// Optional. The identifier of the `ExecutableCode` part this result is for. Only
+	// populated
+	// if the corresponding `ExecutableCode` has an id.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// Required. Outcome of the code execution.
+	//
+	Outcome *GoogleAPICodeExecutionResultOutcome `json:"outcome,omitempty,omitzero"`
+
+	// Optional. Contains stdout when code execution is successful, stderr or other
+	// description
+	// otherwise.
+	//
+	Output *string `json:"output,omitempty,omitzero"`
+}
+
+type GoogleAPICodeExecutionResultOutcome string
+
+const GoogleAPICodeExecutionResultOutcomeOUTCOMEDEADLINEEXCEEDED GoogleAPICodeExecutionResultOutcome = "OUTCOME_DEADLINE_EXCEEDED"
+const GoogleAPICodeExecutionResultOutcomeOUTCOMEFAILED GoogleAPICodeExecutionResultOutcome = "OUTCOME_FAILED"
+const GoogleAPICodeExecutionResultOutcomeOUTCOMEOK GoogleAPICodeExecutionResultOutcome = "OUTCOME_OK"
+const GoogleAPICodeExecutionResultOutcomeOUTCOMEUNSPECIFIED GoogleAPICodeExecutionResultOutcome = "OUTCOME_UNSPECIFIED"
+
+// Tool to support computer use.
+type GoogleAPIComputerUse struct {
+	// Optional. Required. The environment being operated.
+	//
+	Environment *GoogleAPIComputerUseEnvironment `json:"environment,omitempty,omitzero"`
+
+	// Optional. By default, predefined functions are included in the final model
+	// call.
+	// Some of them can be explicitly excluded from being automatically included.
+	// This can serve two purposes:
+	// 1. Using a more restricted / different action space.
+	// 2. Improving the definitions / instructions of predefined functions.
+	//
+	ExcludedPredefinedFunctions []string `json:"excludedPredefinedFunctions,omitempty,omitzero"`
+}
+
+type GoogleAPIComputerUseEnvironment string
+
+const GoogleAPIComputerUseEnvironmentENVIRONMENTBROWSER GoogleAPIComputerUseEnvironment = "ENVIRONMENT_BROWSER"
+const GoogleAPIComputerUseEnvironmentENVIRONMENTUNSPECIFIED GoogleAPIComputerUseEnvironment = "ENVIRONMENT_UNSPECIFIED"
+
+// Contains the multi-part content of a message.
+type GoogleAPIContent struct {
+	// Optional. List of parts that constitute a single message. Each part may have
+	// a different IANA MIME type.
+	//
+	Parts []GoogleAPIPart `json:"parts,omitempty,omitzero"`
+
+	// Optional. The producer of the content. Must be either 'user' or 'model'. If not
+	// set,
+	// the service will default to 'user'.
+	//
+	Role *string `json:"role,omitempty,omitzero"`
+}
+
+// Describes the options to customize dynamic retrieval.
+type GoogleAPIDynamicRetrievalConfig struct {
+	// Optional. The threshold to be used in dynamic retrieval. If empty, a system
+	// default
+	// value is used.
+	//
+	DynamicThreshold *float64 `json:"dynamicThreshold,omitempty,omitzero"`
+
+	// The mode of the predictor to be used in dynamic retrieval.
+	//
+	Mode *GoogleAPIDynamicRetrievalConfigMode `json:"mode,omitempty,omitzero"`
+}
+
+type GoogleAPIDynamicRetrievalConfigMode string
+
+const GoogleAPIDynamicRetrievalConfigModeMODEDYNAMIC GoogleAPIDynamicRetrievalConfigMode = "MODE_DYNAMIC"
+const GoogleAPIDynamicRetrievalConfigModeMODEUNSPECIFIED GoogleAPIDynamicRetrievalConfigMode = "MODE_UNSPECIFIED"
+
+// Tool to search public web data, powered by Vertex AI Search and Sec4 compliance.
+// This data type is not supported in Gemini API.
+type GoogleAPIEnterpriseWebSearch struct {
+	// Optional. Sites with confidence level chosen & above this value will be blocked
+	// from
+	// the search results.
+	//
+	BlockingConfidence *GoogleAPIEnterpriseWebSearchBlockingConfidence `json:"blockingConfidence,omitempty,omitzero"`
+
+	// Optional. List of domains to be excluded from the search results. The default
+	// limit
+	// is 2000 domains.
+	//
+	ExcludeDomains []string `json:"excludeDomains,omitempty,omitzero"`
+}
+
+type GoogleAPIEnterpriseWebSearchBlockingConfidence string
+
+const GoogleAPIEnterpriseWebSearchBlockingConfidenceBLOCKHIGHANDABOVE GoogleAPIEnterpriseWebSearchBlockingConfidence = "BLOCK_HIGH_AND_ABOVE"
+const GoogleAPIEnterpriseWebSearchBlockingConfidenceBLOCKHIGHERANDABOVE GoogleAPIEnterpriseWebSearchBlockingConfidence = "BLOCK_HIGHER_AND_ABOVE"
+const GoogleAPIEnterpriseWebSearchBlockingConfidenceBLOCKLOWANDABOVE GoogleAPIEnterpriseWebSearchBlockingConfidence = "BLOCK_LOW_AND_ABOVE"
+const GoogleAPIEnterpriseWebSearchBlockingConfidenceBLOCKMEDIUMANDABOVE GoogleAPIEnterpriseWebSearchBlockingConfidence = "BLOCK_MEDIUM_AND_ABOVE"
+const GoogleAPIEnterpriseWebSearchBlockingConfidenceBLOCKONLYEXTREMELYHIGH GoogleAPIEnterpriseWebSearchBlockingConfidence = "BLOCK_ONLY_EXTREMELY_HIGH"
+const GoogleAPIEnterpriseWebSearchBlockingConfidenceBLOCKVERYHIGHANDABOVE GoogleAPIEnterpriseWebSearchBlockingConfidence = "BLOCK_VERY_HIGH_AND_ABOVE"
+const GoogleAPIEnterpriseWebSearchBlockingConfidencePHISHBLOCKTHRESHOLDUNSPECIFIED GoogleAPIEnterpriseWebSearchBlockingConfidence = "PHISH_BLOCK_THRESHOLD_UNSPECIFIED"
+
+// Model-generated code executed server-side, results returned to the model.
+// Only generated when using the `CodeExecution` tool, in which the code will
+// be automatically executed, and a corresponding `CodeExecutionResult` will
+// also be generated.
+type GoogleAPIExecutableCode struct {
+	// Required. The code to be executed.
+	//
+	Code *string `json:"code,omitempty,omitzero"`
+
+	// Optional. Unique identifier of the `ExecutableCode` part. The server returns
+	// the
+	// `CodeExecutionResult` with the matching `id`.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// Required. Programming language of the `code`.
+	//
+	Language *GoogleAPIExecutableCodeLanguage `json:"language,omitempty,omitzero"`
+}
+
+type GoogleAPIExecutableCodeLanguage string
+
+const GoogleAPIExecutableCodeLanguageLANGUAGEUNSPECIFIED GoogleAPIExecutableCodeLanguage = "LANGUAGE_UNSPECIFIED"
+const GoogleAPIExecutableCodeLanguagePYTHON GoogleAPIExecutableCodeLanguage = "PYTHON"
+
+// Retrieve from data source powered by external API for grounding. The external
+// API
+// is not owned by Google, but need to follow the pre-defined API spec. This data
+// type
+// is not supported in Gemini API.
+type GoogleAPIExternalAPI struct {
+	// The authentication config to access the API. Deprecated. Please use auth_config
+	// instead.
+	//
+	ApiAuth *GoogleAPIAPIAuth `json:"apiAuth,omitempty,omitzero"`
+
+	// The API spec that the external API implements.
+	//
+	ApiSpec *GoogleAPIExternalAPIApiSpec `json:"apiSpec,omitempty,omitzero"`
+
+	// The authentication config to access the API.
+	//
+	AuthConfig *GoogleAPIAuthConfig `json:"authConfig,omitempty,omitzero"`
+
+	// Parameters for the elastic search API.
+	//
+	ElasticSearchParams *GoogleAPIExternalAPIElasticSearchParams `json:"elasticSearchParams,omitempty,omitzero"`
+
+	// The endpoint of the external API. The system will call the API at this endpoint
+	// to
+	// retrieve the data for grounding. Example: https://acme.com:443/search
+	//
+	Endpoint *string `json:"endpoint,omitempty,omitzero"`
+
+	// Parameters for the simple search API.
+	//
+	SimpleSearchParams *GoogleAPIExternalAPISimpleSearchParams `json:"simpleSearchParams,omitempty,omitzero"`
+}
+
+type GoogleAPIExternalAPIApiSpec string
+
+const GoogleAPIExternalAPIApiSpecAPISPECUNSPECIFIED GoogleAPIExternalAPIApiSpec = "API_SPEC_UNSPECIFIED"
+const GoogleAPIExternalAPIApiSpecELASTICSEARCH GoogleAPIExternalAPIApiSpec = "ELASTIC_SEARCH"
+const GoogleAPIExternalAPIApiSpecSIMPLESEARCH GoogleAPIExternalAPIApiSpec = "SIMPLE_SEARCH"
+
+// The search parameters to use for the ELASTIC_SEARCH spec. This data type is not
+// supported
+// in Gemini API.
+type GoogleAPIExternalAPIElasticSearchParams struct {
+	// The ElasticSearch index to use.
+	//
+	Index *string `json:"index,omitempty,omitzero"`
+
+	// Optional. Number of hits (chunks) to request. When specified, it is passed to
+	// Elasticsearch
+	// as the `num_hits` param.
+	//
+	NumHits *int `json:"numHits,omitempty,omitzero"`
+
+	// The ElasticSearch search template to use.
+	//
+	SearchTemplate *string `json:"searchTemplate,omitempty,omitzero"`
+}
+
+// The search parameters to use for SIMPLE_SEARCH spec. This data type is not
+// supported
+// in Gemini API.
+type GoogleAPIExternalAPISimpleSearchParams map[string]interface{}
+
+// URI-based data. A FileData message contains a URI pointing to data of a specific
+// media type. It is used to represent images, audio, and video stored in Google
+// Cloud
+// Storage.
+type GoogleAPIFileData struct {
+	// Optional. The display name of the file. Used to provide a label or filename to
+	// distinguish
+	// files. This field is only returned in `PromptMessage` for prompt management. It
+	// is
+	// used in the Gemini calls only when server side tools (`code_execution`,
+	// `google_search`,
+	// and `url_context`) are enabled. This field is not supported in Gemini API.
+	//
+	DisplayName *string `json:"displayName,omitempty,omitzero"`
+
+	// Required. The URI of the file in Google Cloud Storage.
+	//
+	FileUri *string `json:"fileUri,omitempty,omitzero"`
+
+	// Required. The IANA standard MIME type of the source data.
+	//
+	MimeType *string `json:"mimeType,omitempty,omitzero"`
+}
+
+// The FileSearch tool that retrieves knowledge from Semantic Retrieval corpora.
+// Files
+// are imported to Semantic Retrieval corpora using the ImportFile API. This data
+// type
+// is not supported in Vertex AI.
+type GoogleAPIFileSearch struct {
+	// Required. The names of the file_search_stores to retrieve from. Example:
+	// `fileSearchStores/my-file-search-store-123`
+	//
+	FileSearchStoreNames []string `json:"fileSearchStoreNames,omitempty,omitzero"`
+
+	// Optional. Metadata filter to apply to the semantic retrieval documents and
+	// chunks.
+	//
+	MetadataFilter *string `json:"metadataFilter,omitempty,omitzero"`
+
+	// Optional. The number of semantic retrieval chunks to retrieve.
+	//
+	TopK *int `json:"topK,omitempty,omitzero"`
+}
+
+// A function call.
+type GoogleAPIFunctionCall struct {
+	// Optional. The function parameters and values in JSON object format. See
+	// [FunctionDeclaration.parameters]
+	// for parameter details.
+	//
+	Args GoogleAPIFunctionCallArgs `json:"args,omitempty,omitzero"`
+
+	// Optional. The unique ID of the function call. If populated, the client to
+	// execute
+	// the
+	// `function_call` and return the response with the matching `id`.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// Optional. Required. The name of the function to call. Matches
+	// [FunctionDeclaration.Name].
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// Optional. The partial argument value of the function call. If provided,
+	// represents
+	// the arguments/fields that are streamed incrementally. This field is not
+	// supported
+	// in Gemini API.
+	//
+	PartialArgs []GoogleAPIPartialArg `json:"partialArgs,omitempty,omitzero"`
+
+	// Optional. Whether this is the last part of the FunctionCall. If true, another
+	// partial
+	// message for the current FunctionCall is expected to follow. This field is not
+	// supported
+	// in Gemini API.
+	//
+	WillContinue *bool `json:"willContinue,omitempty,omitzero"`
+}
+
+// Optional. The function parameters and values in JSON object format. See
+// [FunctionDeclaration.parameters]
+// for parameter details.
+type GoogleAPIFunctionCallArgs map[string]interface{}
+
+// Function calling config.
+type GoogleAPIFunctionCallingConfig struct {
+	// Optional. Function names to call. Only set when the Mode is ANY. Function names
+	// should
+	// match [FunctionDeclaration.Name]. With mode set to ANY, model will predict a
+	// function
+	// call from the set of function names provided.
+	//
+	AllowedFunctionNames []string `json:"allowedFunctionNames,omitempty,omitzero"`
+
+	// Optional. Function calling mode.
+	//
+	Mode *GoogleAPIFunctionCallingConfigMode `json:"mode,omitempty,omitzero"`
+
+	// Optional. When set to true, arguments of a single function call will be
+	// streamed
+	// out in multiple parts/contents/responses. Partial parameter results will be
+	// returned
+	// in the [FunctionCall.partial_args] field. This field is not supported in Gemini
+	// API.
+	//
+	StreamFunctionCallArguments *bool `json:"streamFunctionCallArguments,omitempty,omitzero"`
+}
+
+type GoogleAPIFunctionCallingConfigMode string
+
+const GoogleAPIFunctionCallingConfigModeANY GoogleAPIFunctionCallingConfigMode = "ANY"
+const GoogleAPIFunctionCallingConfigModeAUTO GoogleAPIFunctionCallingConfigMode = "AUTO"
+const GoogleAPIFunctionCallingConfigModeMODEUNSPECIFIED GoogleAPIFunctionCallingConfigMode = "MODE_UNSPECIFIED"
+const GoogleAPIFunctionCallingConfigModeNONE GoogleAPIFunctionCallingConfigMode = "NONE"
+const GoogleAPIFunctionCallingConfigModeVALIDATED GoogleAPIFunctionCallingConfigMode = "VALIDATED"
+
+// Structured representation of a function declaration as defined by the [OpenAPI
+// 3.0
+// specification](https://spec.openapis.org/oas/v3.0.3). Included in this
+// declaration
+// are the function name, description, parameters and response type. This
+// FunctionDeclaration
+// is a representation of a block of code that can be used as a `Tool` by the model
+// and executed by the client.
+type GoogleAPIFunctionDeclaration struct {
+	// Optional. Specifies the function Behavior. Currently only non-blocking
+	// functions
+	// are supported. If not specified, the system keeps the current function call
+	// behavior.
+	// This field is currently only supported by the BidiGenerateContent method.
+	//
+	Behavior *GoogleAPIFunctionDeclarationBehavior `json:"behavior,omitempty,omitzero"`
+
+	// Optional. Description and purpose of the function. Model uses it to decide how
+	// and
+	// whether to call the function.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// Required. The name of the function to call. Must start with a letter or an
+	// underscore.
+	// Must be a-z, A-Z, 0-9, or contain underscores, dots, colons and dashes, with a
+	// maximum
+	// length of 64.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// Optional. Describes the parameters to this function in JSON Schema Object
+	// format.
+	// Reflects the Open API 3.03 Parameter Object. string Key: the name of the
+	// parameter.
+	// Parameter names are case sensitive. Schema Value: the Schema defining the type
+	// used
+	// for the parameter. For function with no parameters, this can be left unset.
+	// Parameter
+	// names must start with a letter or an underscore and must only contain chars
+	// a-z,
+	// A-Z, 0-9, or underscores with a maximum length of 64. Example with 1 required
+	// and
+	// 1 optional parameter: type: OBJECT properties: param1: type: STRING param2:
+	// type:
+	// INTEGER required: - param1
+	//
+	Parameters *GoogleAPISchema `json:"parameters,omitempty,omitzero"`
+
+	// Optional. Describes the parameters to the function in JSON Schema format. The
+	// schema
+	// must describe an object where the properties are the parameters to the
+	// function.
+	// For example: ``` { "type": "object", "properties": { "name": { "type": "string"
+	// },
+	// "age": { "type": "integer" } }, "additionalProperties": false, "required":
+	// ["name",
+	// "age"], "propertyOrdering": ["name", "age"] } ``` This field is mutually
+	// exclusive
+	// with `parameters`.
+	//
+	ParametersJsonSchema interface{} `json:"parametersJsonSchema,omitempty,omitzero"`
+
+	// Optional. Describes the output from this function in JSON Schema format.
+	// Reflects
+	// the Open API 3.03 Response Object. The Schema defines the type used for the
+	// response
+	// value of the function.
+	//
+	Response *GoogleAPISchema `json:"response,omitempty,omitzero"`
+
+	// Optional. Describes the output from this function in JSON Schema format. The
+	// value
+	// specified by the schema is the response value of the function. This field is
+	// mutually
+	// exclusive with `response`.
+	//
+	ResponseJsonSchema interface{} `json:"responseJsonSchema,omitempty,omitzero"`
+}
+
+type GoogleAPIFunctionDeclarationBehavior string
+
+const GoogleAPIFunctionDeclarationBehaviorBLOCKING GoogleAPIFunctionDeclarationBehavior = "BLOCKING"
+const GoogleAPIFunctionDeclarationBehaviorNONBLOCKING GoogleAPIFunctionDeclarationBehavior = "NON_BLOCKING"
+const GoogleAPIFunctionDeclarationBehaviorUNSPECIFIED GoogleAPIFunctionDeclarationBehavior = "UNSPECIFIED"
+
+// A function response.
+type GoogleAPIFunctionResponse struct {
+	// Optional. The ID of the function call this response is for. Populated by the
+	// client
+	// to match the corresponding function call `id`.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// Required. The name of the function to call. Matches [FunctionDeclaration.name]
+	// and
+	// [FunctionCall.name].
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// Optional. List of parts that constitute a function response. Each part may
+	// have a different IANA MIME type.
+	//
+	Parts []GoogleAPIFunctionResponsePart `json:"parts,omitempty,omitzero"`
+
+	// Required. The function response in JSON object format. Use "output" key to
+	// specify
+	// function output and "error" key to specify error details (if any). If "output"
+	// and
+	// "error" keys are not specified, then whole "response" is treated as function
+	// output.
+	//
+	Response GoogleAPIFunctionResponseResponse `json:"response,omitempty,omitzero"`
+
+	// Optional. Specifies how the response should be scheduled in the conversation.
+	// Only
+	// applicable to NON_BLOCKING function calls, is ignored otherwise. Defaults to
+	// WHEN_IDLE.
+	//
+	Scheduling *GoogleAPIFunctionResponseScheduling `json:"scheduling,omitempty,omitzero"`
+
+	// Optional. Signals that function call continues, and more responses will be
+	// returned,
+	// turning the function call into a generator. Is only applicable to NON_BLOCKING
+	// function
+	// calls (see FunctionDeclaration.behavior for details), ignored otherwise. If
+	// false,
+	// the default, future responses will not be considered. Is only applicable to
+	// NON_BLOCKING
+	// function calls, is ignored otherwise. If set to false, future responses will
+	// not
+	// be considered. It is allowed to return empty `response` with
+	// `will_continue=False`
+	// to signal that the function call is finished.
+	//
+	WillContinue *bool `json:"willContinue,omitempty,omitzero"`
+}
+
+// Raw media bytes for function response.
+// Text should not be sent as raw bytes, use the FunctionResponse.response
+// field.
+type GoogleAPIFunctionResponseBlob struct {
+	// Required. Inline media bytes.
+	//
+	Data *string `json:"data,omitempty,omitzero"`
+
+	// Optional. Display name of the blob.
+	// Used to provide a label or filename to distinguish blobs.
+	//
+	DisplayName *string `json:"displayName,omitempty,omitzero"`
+
+	// Required. The IANA standard MIME type of the source data.
+	//
+	MimeType *string `json:"mimeType,omitempty,omitzero"`
+}
+
+// URI based data for function response.
+type GoogleAPIFunctionResponseFileData struct {
+	// Optional. Display name of the file.
+	// Used to provide a label or filename to distinguish files.
+	//
+	DisplayName *string `json:"displayName,omitempty,omitzero"`
+
+	// Required. URI.
+	//
+	FileUri *string `json:"fileUri,omitempty,omitzero"`
+
+	// Required. The IANA standard MIME type of the source data.
+	//
+	MimeType *string `json:"mimeType,omitempty,omitzero"`
+}
+
+// A datatype containing media that is part of a `FunctionResponse` message.
+// A `FunctionResponsePart` consists of data which has an associated datatype. A
+// `FunctionResponsePart` can only contain one of the accepted types in
+// `FunctionResponsePart.data`.
+// A `FunctionResponsePart` must have a fixed IANA MIME type identifying the
+// type and subtype of the media if the `inline_data` field is filled with raw
+// bytes.
+type GoogleAPIFunctionResponsePart struct {
+	// Optional. URI based data.
+	//
+	FileData *GoogleAPIFunctionResponseFileData `json:"fileData,omitempty,omitzero"`
+
+	// Optional. Inline media bytes.
+	//
+	InlineData *GoogleAPIFunctionResponseBlob `json:"inlineData,omitempty,omitzero"`
+}
+
+// Required. The function response in JSON object format. Use "output" key to
+// specify
+// function output and "error" key to specify error details (if any). If "output"
+// and
+// "error" keys are not specified, then whole "response" is treated as function
+// output.
+type GoogleAPIFunctionResponseResponse map[string]interface{}
+
+type GoogleAPIFunctionResponseScheduling string
+
+const GoogleAPIFunctionResponseSchedulingINTERRUPT GoogleAPIFunctionResponseScheduling = "INTERRUPT"
+const GoogleAPIFunctionResponseSchedulingSCHEDULINGUNSPECIFIED GoogleAPIFunctionResponseScheduling = "SCHEDULING_UNSPECIFIED"
+const GoogleAPIFunctionResponseSchedulingSILENT GoogleAPIFunctionResponseScheduling = "SILENT"
+const GoogleAPIFunctionResponseSchedulingWHENIDLE GoogleAPIFunctionResponseScheduling = "WHEN_IDLE"
+
+// The configuration for routing the request to a specific model. This can be used
+// to
+// control which model is used for the generation, either automatically or by
+// specifying
+// a model name. This data type is not supported in Gemini API.
+type GoogleAPIGenerationConfigRoutingConfig struct {
+	// In this mode, the model is selected automatically based on the content of the
+	// request.
+	//
+	AutoMode *GoogleAPIGenerationConfigRoutingConfigAutoRoutingMode `json:"autoMode,omitempty,omitzero"`
+
+	// In this mode, the model is specified manually.
+	//
+	ManualMode *GoogleAPIGenerationConfigRoutingConfigManualRoutingMode `json:"manualMode,omitempty,omitzero"`
+}
+
+// The configuration for automated routing. When automated routing is specified,
+// the
+// routing will be determined by the pretrained routing model and customer provided
+// model routing preference. This data type is not supported in Gemini API.
+type GoogleAPIGenerationConfigRoutingConfigAutoRoutingMode struct {
+	// The model routing preference.
+	//
+	ModelRoutingPreference *string `json:"modelRoutingPreference,omitempty,omitzero"`
+}
+
+// The configuration for manual routing. When manual routing is specified, the
+// model
+// will be selected based on the model name provided. This data type is not
+// supported
+// in Gemini API.
+type GoogleAPIGenerationConfigRoutingConfigManualRoutingMode struct {
+	// The name of the model to use. Only public LLM models are accepted.
+	//
+	ModelName *string `json:"modelName,omitempty,omitzero"`
+}
+
+// Tool to retrieve knowledge from Google Maps.
+type GoogleAPIGoogleMaps struct {
+	// Optional. The authentication config to access the API. Only API key is
+	// supported.
+	// This field is not supported in Gemini API.
+	//
+	AuthConfig *GoogleAPIAuthConfig `json:"authConfig,omitempty,omitzero"`
+
+	// Optional. Whether to return a widget context token in the GroundingMetadata of
+	// the
+	// response. Developers can use the widget context token to render a Google Maps
+	// widget
+	// with geospatial context related to the places that the model references in the
+	// response.
+	//
+	EnableWidget *bool `json:"enableWidget,omitempty,omitzero"`
+}
+
+// GoogleSearch tool type. Tool to support Google Search in Model. Powered by
+// Google.
+type GoogleAPIGoogleSearch struct {
+	// Optional. Sites with confidence level chosen & above this value will be blocked
+	// from
+	// the search results. This field is not supported in Gemini API.
+	//
+	BlockingConfidence *GoogleAPIGoogleSearchBlockingConfidence `json:"blockingConfidence,omitempty,omitzero"`
+
+	// Optional. List of domains to be excluded from the search results. The default
+	// limit
+	// is 2000 domains. Example: ["amazon.com", "facebook.com"]. This field is not
+	// supported
+	// in Gemini API.
+	//
+	ExcludeDomains []string `json:"excludeDomains,omitempty,omitzero"`
+
+	// Optional. The set of search types to enable. If not set, web search is enabled
+	// by
+	// default.
+	//
+	SearchTypes *GoogleAPISearchTypes `json:"searchTypes,omitempty,omitzero"`
+
+	// Optional. Filter search results to a specific time range. If customers set a
+	// start
+	// time, they must set an end time (and vice versa). This field is not supported
+	// in
+	// Vertex AI.
+	//
+	TimeRangeFilter *GoogleAPIInterval `json:"timeRangeFilter,omitempty,omitzero"`
+}
+
+type GoogleAPIGoogleSearchBlockingConfidence string
+
+const GoogleAPIGoogleSearchBlockingConfidenceBLOCKHIGHANDABOVE GoogleAPIGoogleSearchBlockingConfidence = "BLOCK_HIGH_AND_ABOVE"
+const GoogleAPIGoogleSearchBlockingConfidenceBLOCKHIGHERANDABOVE GoogleAPIGoogleSearchBlockingConfidence = "BLOCK_HIGHER_AND_ABOVE"
+const GoogleAPIGoogleSearchBlockingConfidenceBLOCKLOWANDABOVE GoogleAPIGoogleSearchBlockingConfidence = "BLOCK_LOW_AND_ABOVE"
+const GoogleAPIGoogleSearchBlockingConfidenceBLOCKMEDIUMANDABOVE GoogleAPIGoogleSearchBlockingConfidence = "BLOCK_MEDIUM_AND_ABOVE"
+const GoogleAPIGoogleSearchBlockingConfidenceBLOCKONLYEXTREMELYHIGH GoogleAPIGoogleSearchBlockingConfidence = "BLOCK_ONLY_EXTREMELY_HIGH"
+const GoogleAPIGoogleSearchBlockingConfidenceBLOCKVERYHIGHANDABOVE GoogleAPIGoogleSearchBlockingConfidence = "BLOCK_VERY_HIGH_AND_ABOVE"
+const GoogleAPIGoogleSearchBlockingConfidencePHISHBLOCKTHRESHOLDUNSPECIFIED GoogleAPIGoogleSearchBlockingConfidence = "PHISH_BLOCK_THRESHOLD_UNSPECIFIED"
+
+// Tool to retrieve public web data for grounding, powered by Google.
+type GoogleAPIGoogleSearchRetrieval struct {
+	// Specifies the dynamic retrieval configuration for the given source.
+	//
+	DynamicRetrievalConfig *GoogleAPIDynamicRetrievalConfig `json:"dynamicRetrievalConfig,omitempty,omitzero"`
+}
+
+// HTTP options to be used in each of the requests.
+type GoogleAPIHTTPOptions struct {
+	// Optional. APIVersion specifies the version of the API to use. If empty,
+	// defaults
+	// to "v1beta" for Gemini API and "v1beta1" for Gemini Enterprise Agent Platform.
+	//
+	ApiVersion *string `json:"apiVersion,omitempty,omitzero"`
+
+	// Optional. BaseURL specifies the base URL for the API endpoint. If empty,
+	// defaults
+	// to "https://generativelanguage.googleapis.com/" for the Gemini API backend, and
+	// location-specific
+	// Gemini Enterprise Agent Platform endpoint (e.g.,
+	// "https://us-central1-aiplatform.googleapis.com/
+	//
+	BaseUrl *string `json:"baseUrl,omitempty,omitzero"`
+
+	// Optional. BaseURL specifies the base URL for the API endpoint. If empty,
+	// defaults
+	// to "https://generativelanguage.googleapis.com/" for the Gemini API backend, and
+	// location-specific
+	// Gemini Enterprise Agent Platform endpoint (e.g.,
+	// "https://us-central1-aiplatform.googleapis.com/
+	//
+	BaseUrlResourceScope *GoogleAPIHTTPOptionsBaseUrlResourceScope `json:"baseUrlResourceScope,omitempty,omitzero"`
+
+	// Optional. Extra parameters to add to the request body.
+	// The structure must match the backend API's request structure.
+	//   - Gemini Enterprise Agent Platform backend API docs:
+	// https://cloud.google.com/vertex-ai/docs/reference/rest
+	//   - GeminiAPI backend API docs: https://ai.google.dev/api/rest
+	//
+	ExtraBody GoogleAPIHTTPOptionsExtraBody `json:"extraBody,omitempty,omitzero"`
+
+	// Optional. Additional HTTP headers to be sent with the request.
+	//
+	Headers GoogleAPIHTTPOptionsHeaders `json:"headers,omitempty,omitzero"`
+
+	// Optional. Timeout for the request in milliseconds.
+	//
+	Timeout *int `json:"timeout,omitempty,omitzero"`
+}
+
+type GoogleAPIHTTPOptionsBaseUrlResourceScope string
+
+const GoogleAPIHTTPOptionsBaseUrlResourceScopeCOLLECTION GoogleAPIHTTPOptionsBaseUrlResourceScope = "COLLECTION"
+
+// Optional. Extra parameters to add to the request body.
+// The structure must match the backend API's request structure.
+//   - Gemini Enterprise Agent Platform backend API docs:
+//
+// https://cloud.google.com/vertex-ai/docs/reference/rest
+//   - GeminiAPI backend API docs: https://ai.google.dev/api/rest
+type GoogleAPIHTTPOptionsExtraBody map[string]interface{}
+
+// Optional. Additional HTTP headers to be sent with the request.
+type GoogleAPIHTTPOptionsHeaders map[string][]string
+
+// The image generation configuration to be used in GenerateContentConfig.
+type GoogleAPIImageConfig struct {
+	// Optional. Aspect ratio of the generated images. Supported values are
+	// "1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", and "21:9".
+	//
+	AspectRatio *string `json:"aspectRatio,omitempty,omitzero"`
+
+	// Optional. The image output format for generated images. This field is not
+	// supported
+	// in Gemini API.
+	//
+	ImageOutputOptions *GoogleAPIImageConfigImageOutputOptions `json:"imageOutputOptions,omitempty,omitzero"`
+
+	// Optional. Specifies the size of generated images. Supported
+	// values are `1K`, `2K`, `4K`. If not specified, the model will use default
+	// value `1K`.
+	//
+	ImageSize *string `json:"imageSize,omitempty,omitzero"`
+
+	// Optional. Compression quality of the generated image (for
+	// ``image/jpeg`` only). This field is not supported in Gemini API.
+	//
+	OutputCompressionQuality *int `json:"outputCompressionQuality,omitempty,omitzero"`
+
+	// Optional. MIME type of the generated image. This field is not
+	// supported in Gemini API.
+	//
+	OutputMimeType *string `json:"outputMimeType,omitempty,omitzero"`
+
+	// Optional. Controls the generation of people. Supported values are:
+	// ALLOW_ALL, ALLOW_ADULT, ALLOW_NONE.
+	//
+	PersonGeneration *string `json:"personGeneration,omitempty,omitzero"`
+
+	// Optional. Controls whether prominent people (celebrities) generation is
+	// allowed.
+	// If used with personGeneration, personGeneration enum would take precedence. For
+	// instance,
+	// if ALLOW_NONE is set, all person generation would be blocked. If this field is
+	// unspecified,
+	// the default behavior is to allow prominent people. This field is not supported
+	// in
+	// Gemini API.
+	//
+	ProminentPeople *GoogleAPIImageConfigProminentPeople `json:"prominentPeople,omitempty,omitzero"`
+}
+
+// The image output format for generated images. This data type is not supported in
+// Gemini API.
+type GoogleAPIImageConfigImageOutputOptions struct {
+	// Optional. The compression quality of the output image.
+	//
+	CompressionQuality *int `json:"compressionQuality,omitempty,omitzero"`
+
+	// Optional. The image format that the output should be saved as.
+	//
+	MimeType *string `json:"mimeType,omitempty,omitzero"`
+}
+
+type GoogleAPIImageConfigProminentPeople string
+
+const GoogleAPIImageConfigProminentPeopleALLOWPROMINENTPEOPLE GoogleAPIImageConfigProminentPeople = "ALLOW_PROMINENT_PEOPLE"
+const GoogleAPIImageConfigProminentPeopleBLOCKPROMINENTPEOPLE GoogleAPIImageConfigProminentPeople = "BLOCK_PROMINENT_PEOPLE"
+const GoogleAPIImageConfigProminentPeoplePROMINENTPEOPLEUNSPECIFIED GoogleAPIImageConfigProminentPeople = "PROMINENT_PEOPLE_UNSPECIFIED"
+
+// Image search for grounding and related configurations.
+type GoogleAPIImageSearch map[string]interface{}
+
+// Represents a time interval, encoded as a Timestamp start (inclusive) and a
+// Timestamp
+// end (exclusive). The start must be less than or equal to the end. When the start
+// equals the end, the interval is empty (matches no time). When both start and end
+// are unspecified, the interval matches any time.
+type GoogleAPIInterval struct {
+	// Optional. Exclusive end of the interval. If specified, a Timestamp matching
+	// this
+	// interval will have to be before the end.
+	//
+	EndTime *time.Time `json:"endTime,omitempty,omitzero"`
+
+	// Optional. Inclusive start of the interval. If specified, a Timestamp matching
+	// this
+	// interval will have to be the same or after the start.
+	//
+	StartTime *time.Time `json:"startTime,omitempty,omitzero"`
+}
+
+// An object that represents a latitude/longitude pair.
+// This is expressed as a pair of doubles to represent degrees latitude and
+// degrees longitude. Unless specified otherwise, this object must conform to the
+// <a href="https://en.wikipedia.org/wiki/World_Geodetic_System#1984_version">
+// WGS84 standard</a>. Values must be within normalized ranges.
+type GoogleAPILatLng struct {
+	// Optional. The latitude in degrees. It must be in the range [-90.0, +90.0].
+	//
+	Latitude *float64 `json:"latitude,omitempty,omitzero"`
+
+	// Optional. The longitude in degrees. It must be in the range [-180.0, +180.0]
+	//
+	Longitude *float64 `json:"longitude,omitempty,omitzero"`
+}
+
+// A MCPServer is a server that can be called by the model to perform actions. It
+// is
+// a server that implements the MCP protocol. Next ID: 5. This data type is not
+// supported
+// in Vertex AI.
+type GoogleAPIMCPServer struct {
+	// The name of the MCPServer.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// A transport that can stream HTTP requests and responses.
+	//
+	StreamableHttpTransport *GoogleAPIStreamableHTTPTransport `json:"streamableHttpTransport,omitempty,omitzero"`
+}
+
+// Configuration for Model Armor. Model Armor is a Google Cloud service that
+// provides
+// safety and security filtering for prompts and responses. It helps protect your
+// AI
+// applications from risks such as harmful content, sensitive data leakage, and
+// prompt
+// injection attacks. This data type is not supported in Gemini API.
+type GoogleAPIModelArmorConfig struct {
+	// Optional. The resource name of the Model Armor template to use for prompt
+	// screening.
+	// A Model Armor template is a set of customized filters and thresholds that
+	// define
+	// how Model Armor screens content. If specified, Model Armor will use this
+	// template
+	// to check the user's prompt for safety and security risks before it is sent to
+	// the
+	// model. The name must be in the format
+	// `projects/{project}/locations/{location}/templates/{template}`.
+	//
+	PromptTemplateName *string `json:"promptTemplateName,omitempty,omitzero"`
+
+	// Optional. The resource name of the Model Armor template to use for response
+	// screening.
+	// A Model Armor template is a set of customized filters and thresholds that
+	// define
+	// how Model Armor screens content. If specified, Model Armor will use this
+	// template
+	// to check the model's response for safety and security risks before it is
+	// returned
+	// to the user. The name must be in the format
+	// `projects/{project}/locations/{location}/templates/{template}`.
+	//
+	ResponseTemplateName *string `json:"responseTemplateName,omitempty,omitzero"`
+}
+
+// Config for model selection.
+type GoogleAPIModelSelectionConfig struct {
+	// Optional. Options for feature selection preference.
+	//
+	FeatureSelectionPreference *GoogleAPIModelSelectionConfigFeatureSelectionPreference `json:"featureSelectionPreference,omitempty,omitzero"`
+}
+
+type GoogleAPIModelSelectionConfigFeatureSelectionPreference string
+
+const GoogleAPIModelSelectionConfigFeatureSelectionPreferenceBALANCED GoogleAPIModelSelectionConfigFeatureSelectionPreference = "BALANCED"
+const GoogleAPIModelSelectionConfigFeatureSelectionPreferenceFEATURESELECTIONPREFERENCEUNSPECIFIED GoogleAPIModelSelectionConfigFeatureSelectionPreference = "FEATURE_SELECTION_PREFERENCE_UNSPECIFIED"
+const GoogleAPIModelSelectionConfigFeatureSelectionPreferencePRIORITIZECOST GoogleAPIModelSelectionConfigFeatureSelectionPreference = "PRIORITIZE_COST"
+const GoogleAPIModelSelectionConfigFeatureSelectionPreferencePRIORITIZEQUALITY GoogleAPIModelSelectionConfigFeatureSelectionPreference = "PRIORITIZE_QUALITY"
+
+// Configuration for a multi-speaker text-to-speech request.
+type GoogleAPIMultiSpeakerVoiceConfig struct {
+	// Required. A list of configurations for the voices of the speakers. Exactly two
+	// speaker
+	// voice configurations must be provided.
+	//
+	SpeakerVoiceConfigs []GoogleAPISpeakerVoiceConfig `json:"speakerVoiceConfigs,omitempty,omitzero"`
+}
 
 // Native Google Gen AI GenerateContent arguments and configuration used by
 // Captain's API runtime.
@@ -27,13 +1088,13 @@ type GoogleAPIOptions struct {
 	FrequencyPenalty *float64 `json:"frequencyPenalty,omitempty,omitzero"`
 
 	// Per-request HTTP transport and API version settings.
-	HttpOptions *json.RawMessage `json:"httpOptions,omitempty,omitzero"`
+	HttpOptions *GoogleAPIHTTPOptions `json:"httpOptions,omitempty,omitzero"`
 
 	// Generation options for image response modalities.
-	ImageConfig *json.RawMessage `json:"imageConfig,omitempty,omitzero"`
+	ImageConfig *GoogleAPIImageConfig `json:"imageConfig,omitempty,omitzero"`
 
 	// String key-value labels attached to the request for billing and reporting.
-	Labels Labels `json:"labels,omitempty,omitzero"`
+	Labels GoogleAPIOptionsLabels `json:"labels,omitempty,omitzero"`
 
 	// Number of top token log probabilities returned per decoding step.
 	Logprobs *int `json:"logprobs,omitempty,omitzero"`
@@ -42,22 +1103,22 @@ type GoogleAPIOptions struct {
 	MaxOutputTokens *int `json:"maxOutputTokens,omitempty,omitzero"`
 
 	// Resolution requested when the model processes media inputs.
-	MediaResolution *string `json:"mediaResolution,omitempty,omitzero"`
+	MediaResolution *GoogleAPIOptionsMediaResolution `json:"mediaResolution,omitempty,omitzero"`
 
 	// Google model identifier passed to GenerateContent.
 	Model string `json:"model"`
 
 	// Model Armor template and filtering behavior applied to the request.
-	ModelArmorConfig *json.RawMessage `json:"modelArmorConfig,omitempty,omitzero"`
+	ModelArmorConfig *GoogleAPIModelArmorConfig `json:"modelArmorConfig,omitempty,omitzero"`
 
 	// Constraints used by automatic model selection.
-	ModelSelectionConfig *json.RawMessage `json:"modelSelectionConfig,omitempty,omitzero"`
+	ModelSelectionConfig *GoogleAPIModelSelectionConfig `json:"modelSelectionConfig,omitempty,omitzero"`
 
 	// Penalty applied when a token has appeared in the generated text.
 	PresencePenalty *float64 `json:"presencePenalty,omitempty,omitzero"`
 
 	// Raw JSON Schema constraining generated JSON output.
-	ResponseJsonSchema *json.RawMessage `json:"responseJsonSchema,omitempty,omitzero"`
+	ResponseJsonSchema interface{} `json:"responseJsonSchema,omitempty,omitzero"`
 
 	// Whether token log probabilities are included in the response.
 	ResponseLogprobs *bool `json:"responseLogprobs,omitempty,omitzero"`
@@ -69,22 +1130,22 @@ type GoogleAPIOptions struct {
 	ResponseModalities []string `json:"responseModalities,omitempty,omitzero"`
 
 	// Google schema constraining a structured response.
-	ResponseSchema *json.RawMessage `json:"responseSchema,omitempty,omitzero"`
+	ResponseSchema *GoogleAPISchema `json:"responseSchema,omitempty,omitzero"`
 
 	// Model routing behavior for supported Google endpoints.
-	RoutingConfig *json.RawMessage `json:"routingConfig,omitempty,omitzero"`
+	RoutingConfig *GoogleAPIGenerationConfigRoutingConfig `json:"routingConfig,omitempty,omitzero"`
 
 	// Per-category content safety thresholds applied to the request.
-	SafetySettings *json.RawMessage `json:"safetySettings,omitempty,omitzero"`
+	SafetySettings []GoogleAPISafetySetting `json:"safetySettings,omitempty,omitzero"`
 
 	// Fixed sampling seed used for best-effort deterministic generation.
 	Seed *int `json:"seed,omitempty,omitzero"`
 
 	// Google processing tier used for the request.
-	ServiceTier *string `json:"serviceTier,omitempty,omitzero"`
+	ServiceTier *GoogleAPIOptionsServiceTier `json:"serviceTier,omitempty,omitzero"`
 
 	// Voice and language settings used for generated speech.
-	SpeechConfig *json.RawMessage `json:"speechConfig,omitempty,omitzero"`
+	SpeechConfig *GoogleAPISpeechConfig `json:"speechConfig,omitempty,omitzero"`
 
 	// Text sequences that stop generation when encountered.
 	StopSequences []string `json:"stopSequences,omitempty,omitzero"`
@@ -93,19 +1154,19 @@ type GoogleAPIOptions struct {
 	Stream *bool `json:"stream,omitempty,omitzero"`
 
 	// System instruction content supplied separately from the conversation.
-	SystemInstruction *json.RawMessage `json:"systemInstruction,omitempty,omitzero"`
+	SystemInstruction *GoogleAPIContent `json:"systemInstruction,omitempty,omitzero"`
 
 	// Sampling temperature used for response generation.
 	Temperature *float64 `json:"temperature,omitempty,omitzero"`
 
 	// Thinking budget and inclusion settings for reasoning-capable Gemini models.
-	ThinkingConfig *json.RawMessage `json:"thinkingConfig,omitempty,omitzero"`
+	ThinkingConfig *GoogleAPIThinkingConfig `json:"thinkingConfig,omitempty,omitzero"`
 
 	// Native policy controlling Google function-calling behavior.
-	ToolConfig *json.RawMessage `json:"toolConfig,omitempty,omitzero"`
+	ToolConfig *GoogleAPIToolConfig `json:"toolConfig,omitempty,omitzero"`
 
 	// Native Google tool declarations derived from Captain caller tools.
-	Tools *json.RawMessage `json:"tools,omitempty,omitzero"`
+	Tools []GoogleAPITool `json:"tools,omitempty,omitzero"`
 
 	// Number of highest-probability tokens retained during sampling.
 	TopK *float64 `json:"topK,omitempty,omitzero"`
@@ -115,4 +1176,975 @@ type GoogleAPIOptions struct {
 }
 
 // String key-value labels attached to the request for billing and reporting.
-type Labels map[string]string
+type GoogleAPIOptionsLabels map[string]string
+
+type GoogleAPIOptionsMediaResolution string
+
+const GoogleAPIOptionsMediaResolutionMEDIARESOLUTIONHIGH GoogleAPIOptionsMediaResolution = "MEDIA_RESOLUTION_HIGH"
+const GoogleAPIOptionsMediaResolutionMEDIARESOLUTIONLOW GoogleAPIOptionsMediaResolution = "MEDIA_RESOLUTION_LOW"
+const GoogleAPIOptionsMediaResolutionMEDIARESOLUTIONMEDIUM GoogleAPIOptionsMediaResolution = "MEDIA_RESOLUTION_MEDIUM"
+const GoogleAPIOptionsMediaResolutionMEDIARESOLUTIONUNSPECIFIED GoogleAPIOptionsMediaResolution = "MEDIA_RESOLUTION_UNSPECIFIED"
+
+type GoogleAPIOptionsServiceTier string
+
+const GoogleAPIOptionsServiceTierFlex GoogleAPIOptionsServiceTier = "flex"
+const GoogleAPIOptionsServiceTierPriority GoogleAPIOptionsServiceTier = "priority"
+const GoogleAPIOptionsServiceTierStandard GoogleAPIOptionsServiceTier = "standard"
+const GoogleAPIOptionsServiceTierUnspecified GoogleAPIOptionsServiceTier = "unspecified"
+
+// A datatype containing media content.
+// Exactly one field within a Part should be set, representing the specific type
+// of content being conveyed. Using multiple fields within the same `Part`
+// instance is considered invalid.
+type GoogleAPIPart struct {
+	// Optional. The result of executing the ExecutableCode.
+	//
+	CodeExecutionResult *GoogleAPICodeExecutionResult `json:"codeExecutionResult,omitempty,omitzero"`
+
+	// Optional. Code generated by the model that is intended to be executed.
+	//
+	ExecutableCode *GoogleAPIExecutableCode `json:"executableCode,omitempty,omitzero"`
+
+	// Optional. The URI-based data of the part. This can be used to include files
+	// from
+	// Google Cloud Storage.
+	//
+	FileData *GoogleAPIFileData `json:"fileData,omitempty,omitzero"`
+
+	// Optional. A predicted [FunctionCall] returned from the model that contains a
+	// string
+	// representing the [FunctionDeclaration.Name] with the parameters and their
+	// values.
+	//
+	FunctionCall *GoogleAPIFunctionCall `json:"functionCall,omitempty,omitzero"`
+
+	// Optional. The result output of a [FunctionCall] that contains a string
+	// representing
+	// the [FunctionDeclaration.Name] and a structured JSON object containing any
+	// output
+	// from the function call. It is used as context to the model.
+	//
+	FunctionResponse *GoogleAPIFunctionResponse `json:"functionResponse,omitempty,omitzero"`
+
+	// Optional. The inline data content of the part. This can be used to include
+	// images,
+	// audio, or video in a request.
+	//
+	InlineData *GoogleAPIBlob `json:"inlineData,omitempty,omitzero"`
+
+	// Optional. Media resolution for the input media.
+	//
+	MediaResolution *GoogleAPIPartMediaResolution `json:"mediaResolution,omitempty,omitzero"`
+
+	// Custom metadata associated with the Part. Agents using genai.Part as content
+	// representation
+	// may need to keep track of the additional information. For example it can be
+	// name
+	// of a file/source from which the Part originates or a way to multiplex multiple
+	// Part
+	// streams. This field is not supported in Vertex AI.
+	//
+	PartMetadata GoogleAPIPartPartMetadata `json:"partMetadata,omitempty,omitzero"`
+
+	// Optional. The text content of the part. When sent from the VSCode Gemini Code
+	// Assist
+	// extension, references to @mentioned items will be converted to markdown
+	// boldface
+	// text. For example `@my-repo` will be converted to and sent as `**my-repo**` by
+	// the
+	// IDE agent.
+	//
+	Text *string `json:"text,omitempty,omitzero"`
+
+	// Optional. Indicates whether the `part` represents the model's thought process
+	// or
+	// reasoning.
+	//
+	Thought *bool `json:"thought,omitempty,omitzero"`
+
+	// Optional. An opaque signature for the thought so it can be reused in subsequent
+	// requests.
+	//
+	ThoughtSignature *string `json:"thoughtSignature,omitempty,omitzero"`
+
+	// Optional. Server-side tool call. This field is populated when the model
+	// predicts
+	// a tool invocation that should be executed on the server. The client is expected
+	// to
+	// echo this message back to the API.
+	//
+	ToolCall *GoogleAPIToolCall `json:"toolCall,omitempty,omitzero"`
+
+	// Optional. The output from a server-side ToolCall execution. This field is
+	// populated
+	// by the client with the results of executing the corresponding ToolCall.
+	//
+	ToolResponse *GoogleAPIToolResponse `json:"toolResponse,omitempty,omitzero"`
+
+	// Optional. Video metadata. The metadata should only be specified while the video
+	// data
+	// is presented in inline_data or file_data.
+	//
+	VideoMetadata *GoogleAPIVideoMetadata `json:"videoMetadata,omitempty,omitzero"`
+}
+
+// Media resolution for the input media.
+type GoogleAPIPartMediaResolution struct {
+	// Optional. The tokenization quality used for given media.
+	//
+	Level *GoogleAPIPartMediaResolutionLevel `json:"level,omitempty,omitzero"`
+
+	// Optional. Specifies the required sequence length for media tokenization.
+	//
+	NumTokens *int `json:"numTokens,omitempty,omitzero"`
+}
+
+type GoogleAPIPartMediaResolutionLevel string
+
+const GoogleAPIPartMediaResolutionLevelMEDIARESOLUTIONHIGH GoogleAPIPartMediaResolutionLevel = "MEDIA_RESOLUTION_HIGH"
+const GoogleAPIPartMediaResolutionLevelMEDIARESOLUTIONLOW GoogleAPIPartMediaResolutionLevel = "MEDIA_RESOLUTION_LOW"
+const GoogleAPIPartMediaResolutionLevelMEDIARESOLUTIONMEDIUM GoogleAPIPartMediaResolutionLevel = "MEDIA_RESOLUTION_MEDIUM"
+const GoogleAPIPartMediaResolutionLevelMEDIARESOLUTIONULTRAHIGH GoogleAPIPartMediaResolutionLevel = "MEDIA_RESOLUTION_ULTRA_HIGH"
+const GoogleAPIPartMediaResolutionLevelMEDIARESOLUTIONUNSPECIFIED GoogleAPIPartMediaResolutionLevel = "MEDIA_RESOLUTION_UNSPECIFIED"
+
+// Custom metadata associated with the Part. Agents using genai.Part as content
+// representation
+// may need to keep track of the additional information. For example it can be name
+// of a file/source from which the Part originates or a way to multiplex multiple
+// Part
+// streams. This field is not supported in Vertex AI.
+type GoogleAPIPartPartMetadata map[string]interface{}
+
+// Partial argument value of the function call. This data type is not supported in
+// Gemini
+// API.
+type GoogleAPIPartialArg struct {
+	// Optional. Represents a boolean value.
+	//
+	BoolValue *bool `json:"boolValue,omitempty,omitzero"`
+
+	// Required. A JSON Path (RFC 9535) to the argument being streamed.
+	// https://datatracker.ietf.org/doc/html/rfc9535.
+	// e.g. "$.foo.bar[0].data".
+	//
+	JsonPath *string `json:"jsonPath,omitempty,omitzero"`
+
+	// Optional. Represents a NULL value.
+	//
+	NullValue *string `json:"nullValue,omitempty,omitzero"`
+
+	// Optional. Represents a double value.
+	//
+	NumberValue *float64 `json:"numberValue,omitempty,omitzero"`
+
+	// Optional. Represents a string value.
+	//
+	StringValue *string `json:"stringValue,omitempty,omitzero"`
+
+	// Optional. Whether this is not the last part of the same json_path. If true,
+	// another
+	// PartialArg message for the current json_path is expected to follow.
+	//
+	WillContinue *bool `json:"willContinue,omitempty,omitzero"`
+}
+
+// Configuration for a prebuilt voice.
+type GoogleAPIPrebuiltVoiceConfig struct {
+	// The name of the prebuilt voice to use.
+	//
+	VoiceName *string `json:"voiceName,omitempty,omitzero"`
+}
+
+// Specifies the context retrieval config. This data type is not supported in
+// Gemini
+// API.
+type GoogleAPIRAGRetrievalConfig struct {
+	// Optional. Config for filters.
+	//
+	Filter *GoogleAPIRAGRetrievalConfigFilter `json:"filter,omitempty,omitzero"`
+
+	// Optional. Config for Hybrid Search.
+	//
+	HybridSearch *GoogleAPIRAGRetrievalConfigHybridSearch `json:"hybridSearch,omitempty,omitzero"`
+
+	// Optional. Config for ranking and reranking.
+	//
+	Ranking *GoogleAPIRAGRetrievalConfigRanking `json:"ranking,omitempty,omitzero"`
+
+	// Optional. The number of contexts to retrieve.
+	//
+	TopK *int `json:"topK,omitempty,omitzero"`
+}
+
+// Config for filters. This data type is not supported in Gemini API.
+type GoogleAPIRAGRetrievalConfigFilter struct {
+	// Optional. String for metadata filtering.
+	//
+	MetadataFilter *string `json:"metadataFilter,omitempty,omitzero"`
+
+	// Optional. Only returns contexts with vector distance smaller than the
+	// threshold.
+	//
+	VectorDistanceThreshold *float64 `json:"vectorDistanceThreshold,omitempty,omitzero"`
+
+	// Optional. Only returns contexts with vector similarity larger than the
+	// threshold.
+	//
+	VectorSimilarityThreshold *float64 `json:"vectorSimilarityThreshold,omitempty,omitzero"`
+}
+
+// Config for Hybrid Search. This data type is not supported in Gemini API.
+type GoogleAPIRAGRetrievalConfigHybridSearch struct {
+	// Optional. Alpha value controls the weight between dense and sparse vector
+	// search
+	// results. The range is [0, 1], while 0 means sparse vector search only and 1
+	// means
+	// dense vector search only. The default value is 0.5 which balances sparse and
+	// dense
+	// vector search equally.
+	//
+	Alpha *float64 `json:"alpha,omitempty,omitzero"`
+}
+
+// Config for ranking and reranking. This data type is not supported in Gemini API.
+type GoogleAPIRAGRetrievalConfigRanking struct {
+	// Optional. Config for LlmRanker.
+	//
+	LlmRanker *GoogleAPIRAGRetrievalConfigRankingLlmRanker `json:"llmRanker,omitempty,omitzero"`
+
+	// Optional. Config for Rank Service.
+	//
+	RankService *GoogleAPIRAGRetrievalConfigRankingRankService `json:"rankService,omitempty,omitzero"`
+}
+
+// Config for LlmRanker. This data type is not supported in Gemini API.
+type GoogleAPIRAGRetrievalConfigRankingLlmRanker struct {
+	// Optional. The model name used for ranking. See [Supported
+	// models](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#supported-models).
+	//
+	ModelName *string `json:"modelName,omitempty,omitzero"`
+}
+
+// Config for Rank Service. This data type is not supported in Gemini API.
+type GoogleAPIRAGRetrievalConfigRankingRankService struct {
+	// Optional. The model name of the rank service. Format:
+	// `semantic-ranker-512@latest`
+	//
+	ModelName *string `json:"modelName,omitempty,omitzero"`
+}
+
+// The configuration for the replicated voice to use.
+type GoogleAPIReplicatedVoiceConfig struct {
+	// Optional. The mimetype of the voice sample. The only currently supported
+	// value is `audio/wav`. This represents 16-bit signed little-endian wav
+	// data, with a 24kHz sampling rate.
+	//
+	MimeType *string `json:"mimeType,omitempty,omitzero"`
+
+	// Optional. The sample of the custom voice.
+	//
+	VoiceSampleAudio *string `json:"voiceSampleAudio,omitempty,omitzero"`
+}
+
+// Defines a retrieval tool that model can call to access external knowledge. This
+// data
+// type is not supported in Gemini API.
+type GoogleAPIRetrieval struct {
+	// Optional. Deprecated. This option is no longer supported.
+	//
+	DisableAttribution *bool `json:"disableAttribution,omitempty,omitzero"`
+
+	// Use data source powered by external API for grounding.
+	//
+	ExternalApi *GoogleAPIExternalAPI `json:"externalApi,omitempty,omitzero"`
+
+	// Set to use data source powered by Vertex AI Search.
+	//
+	VertexAiSearch *GoogleAPIVertexAISearch `json:"vertexAiSearch,omitempty,omitzero"`
+
+	// Set to use data source powered by Vertex RAG store. User data is uploaded via
+	// the
+	// VertexRAGDataService.
+	//
+	VertexRagStore *GoogleAPIVertexRAGStore `json:"vertexRagStore,omitempty,omitzero"`
+}
+
+// Retrieval config.
+type GoogleAPIRetrievalConfig struct {
+	// The language code of the user.
+	//
+	LanguageCode *string `json:"languageCode,omitempty,omitzero"`
+
+	// Optional. The location of the user.
+	//
+	LatLng *GoogleAPILatLng `json:"latLng,omitempty,omitzero"`
+}
+
+// A safety setting that affects the safety-blocking behavior. A SafetySetting
+// consists
+// of a harm category and a threshold for that category.
+type GoogleAPISafetySetting struct {
+	// Required. The harm category to be blocked.
+	//
+	Category *GoogleAPISafetySettingCategory `json:"category,omitempty,omitzero"`
+
+	// Optional. The method for blocking content. If not specified, the default
+	// behavior
+	// is to use the probability score. This field is not supported in Gemini API.
+	//
+	Method *GoogleAPISafetySettingMethod `json:"method,omitempty,omitzero"`
+
+	// Required. The threshold for blocking content. If the harm probability exceeds
+	// this
+	// threshold, the content will be blocked.
+	//
+	Threshold *GoogleAPISafetySettingThreshold `json:"threshold,omitempty,omitzero"`
+}
+
+type GoogleAPISafetySettingCategory string
+
+const GoogleAPISafetySettingCategoryHARMCATEGORYCIVICINTEGRITY GoogleAPISafetySettingCategory = "HARM_CATEGORY_CIVIC_INTEGRITY"
+const GoogleAPISafetySettingCategoryHARMCATEGORYDANGEROUSCONTENT GoogleAPISafetySettingCategory = "HARM_CATEGORY_DANGEROUS_CONTENT"
+const GoogleAPISafetySettingCategoryHARMCATEGORYHARASSMENT GoogleAPISafetySettingCategory = "HARM_CATEGORY_HARASSMENT"
+const GoogleAPISafetySettingCategoryHARMCATEGORYHATESPEECH GoogleAPISafetySettingCategory = "HARM_CATEGORY_HATE_SPEECH"
+const GoogleAPISafetySettingCategoryHARMCATEGORYIMAGEDANGEROUSCONTENT GoogleAPISafetySettingCategory = "HARM_CATEGORY_IMAGE_DANGEROUS_CONTENT"
+const GoogleAPISafetySettingCategoryHARMCATEGORYIMAGEHARASSMENT GoogleAPISafetySettingCategory = "HARM_CATEGORY_IMAGE_HARASSMENT"
+const GoogleAPISafetySettingCategoryHARMCATEGORYIMAGEHATE GoogleAPISafetySettingCategory = "HARM_CATEGORY_IMAGE_HATE"
+const GoogleAPISafetySettingCategoryHARMCATEGORYIMAGESEXUALLYEXPLICIT GoogleAPISafetySettingCategory = "HARM_CATEGORY_IMAGE_SEXUALLY_EXPLICIT"
+const GoogleAPISafetySettingCategoryHARMCATEGORYJAILBREAK GoogleAPISafetySettingCategory = "HARM_CATEGORY_JAILBREAK"
+const GoogleAPISafetySettingCategoryHARMCATEGORYSEXUALLYEXPLICIT GoogleAPISafetySettingCategory = "HARM_CATEGORY_SEXUALLY_EXPLICIT"
+const GoogleAPISafetySettingCategoryHARMCATEGORYUNSPECIFIED GoogleAPISafetySettingCategory = "HARM_CATEGORY_UNSPECIFIED"
+
+type GoogleAPISafetySettingMethod string
+
+const GoogleAPISafetySettingMethodHARMBLOCKMETHODUNSPECIFIED GoogleAPISafetySettingMethod = "HARM_BLOCK_METHOD_UNSPECIFIED"
+const GoogleAPISafetySettingMethodPROBABILITY GoogleAPISafetySettingMethod = "PROBABILITY"
+const GoogleAPISafetySettingMethodSEVERITY GoogleAPISafetySettingMethod = "SEVERITY"
+
+type GoogleAPISafetySettingThreshold string
+
+const GoogleAPISafetySettingThresholdBLOCKLOWANDABOVE GoogleAPISafetySettingThreshold = "BLOCK_LOW_AND_ABOVE"
+const GoogleAPISafetySettingThresholdBLOCKMEDIUMANDABOVE GoogleAPISafetySettingThreshold = "BLOCK_MEDIUM_AND_ABOVE"
+const GoogleAPISafetySettingThresholdBLOCKNONE GoogleAPISafetySettingThreshold = "BLOCK_NONE"
+const GoogleAPISafetySettingThresholdBLOCKONLYHIGH GoogleAPISafetySettingThreshold = "BLOCK_ONLY_HIGH"
+const GoogleAPISafetySettingThresholdHARMBLOCKTHRESHOLDUNSPECIFIED GoogleAPISafetySettingThreshold = "HARM_BLOCK_THRESHOLD_UNSPECIFIED"
+const GoogleAPISafetySettingThresholdOFF GoogleAPISafetySettingThreshold = "OFF"
+
+// Schema is used to define the format of input/output data.
+// Represents a select subset of an [OpenAPI 3.0 schema
+// object](https://spec.openapis.org/oas/v3.0.3#schema-object). More fields may
+// be added in the future as needed.
+// You can find more details and examples at
+// https://spec.openapis.org/oas/v3.0.3.html#schema-object
+type GoogleAPISchema struct {
+	// Optional. The instance must be valid against any (one or more) of the
+	// subschemas
+	// listed in `any_of`.
+	//
+	AnyOf []GoogleAPISchema `json:"anyOf,omitempty,omitzero"`
+
+	// Optional. Default value to use if the field is not specified.
+	//
+	Default interface{} `json:"default,omitempty,omitzero"`
+
+	// Optional. Describes the data. The model uses this field to understand the
+	// purpose
+	// of the schema and how to use it. It is a best practice to provide a clear and
+	// descriptive
+	// explanation for the schema and its properties here, rather than in the prompt.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// Optional. Possible values of the field. This field can be used to restrict a
+	// value
+	// to a fixed set of values. To mark a field as an enum, set `format` to `enum`
+	// and
+	// provide the list of possible values in `enum`. For example: 1. To define
+	// directions:
+	// `{type:STRING, format:enum, enum:["EAST", "NORTH", "SOUTH", "WEST"]}` 2. To
+	// define
+	// apartment numbers: `{type:INTEGER, format:enum, enum:["101", "201", "301"]}`
+	//
+	Enum []string `json:"enum,omitempty,omitzero"`
+
+	// Optional. Example of an instance of this schema.
+	//
+	Example interface{} `json:"example,omitempty,omitzero"`
+
+	// Optional. The format of the data. For `NUMBER` type, format can be `float` or
+	// `double`.
+	// For `INTEGER` type, format can be `int32` or `int64`. For `STRING` type, format
+	// can
+	// be `email`, `byte`, `date`, `date-time`, `password`, and other formats to
+	// further
+	// refine the data type.
+	//
+	Format *string `json:"format,omitempty,omitzero"`
+
+	// Optional. If type is `ARRAY`, `items` specifies the schema of elements in the
+	// array.
+	//
+	Items *GoogleAPISchema `json:"items,omitempty,omitzero"`
+
+	// Optional. If type is `ARRAY`, `max_items` specifies the maximum number of items
+	// in
+	// an array.
+	//
+	MaxItems *int `json:"maxItems,omitempty,omitzero"`
+
+	// Optional. If type is `STRING`, `max_length` specifies the maximum length of the
+	// string.
+	//
+	MaxLength *int `json:"maxLength,omitempty,omitzero"`
+
+	// Optional. If type is `OBJECT`, `max_properties` specifies the maximum number of
+	// properties
+	// that can be provided.
+	//
+	MaxProperties *int `json:"maxProperties,omitempty,omitzero"`
+
+	// Optional. If type is `INTEGER` or `NUMBER`, `maximum` specifies the maximum
+	// allowed
+	// value.
+	//
+	Maximum *float64 `json:"maximum,omitempty,omitzero"`
+
+	// Optional. If type is `ARRAY`, `min_items` specifies the minimum number of items
+	// in
+	// an array.
+	//
+	MinItems *int `json:"minItems,omitempty,omitzero"`
+
+	// Optional. If type is `STRING`, `min_length` specifies the minimum length of the
+	// string.
+	//
+	MinLength *int `json:"minLength,omitempty,omitzero"`
+
+	// Optional. If type is `OBJECT`, `min_properties` specifies the minimum number of
+	// properties
+	// that can be provided.
+	//
+	MinProperties *int `json:"minProperties,omitempty,omitzero"`
+
+	// Optional. Minimum value of the Type.INTEGER and Type.NUMBER.
+	//
+	Minimum *float64 `json:"minimum,omitempty,omitzero"`
+
+	// Optional. Indicates if the value of this field can be null.
+	//
+	Nullable *bool `json:"nullable,omitempty,omitzero"`
+
+	// Optional. If type is `STRING`, `pattern` specifies a regular expression that
+	// the
+	// string must match.
+	//
+	Pattern *string `json:"pattern,omitempty,omitzero"`
+
+	// Optional. If type is `OBJECT`, `properties` is a map of property names to
+	// schema
+	// definitions for each property of the object.
+	//
+	Properties GoogleAPISchemaProperties `json:"properties,omitempty,omitzero"`
+
+	// Optional. Order of properties displayed or used where order matters. This is
+	// not
+	// a standard field in OpenAPI specification, but can be used to control the order
+	// of
+	// properties.
+	//
+	PropertyOrdering []string `json:"propertyOrdering,omitempty,omitzero"`
+
+	// Optional. If type is `OBJECT`, `required` lists the names of properties that
+	// must
+	// be present.
+	//
+	Required []string `json:"required"`
+
+	// Optional. Title for the schema.
+	//
+	Title *string `json:"title,omitempty,omitzero"`
+
+	// Optional. Data type of the schema field.
+	//
+	Type *GoogleAPISchemaType `json:"type,omitempty,omitzero"`
+}
+
+// Optional. If type is `OBJECT`, `properties` is a map of property names to schema
+// definitions for each property of the object.
+type GoogleAPISchemaProperties map[string]GoogleAPISchema
+
+type GoogleAPISchemaType string
+
+const GoogleAPISchemaTypeARRAY GoogleAPISchemaType = "ARRAY"
+const GoogleAPISchemaTypeBOOLEAN GoogleAPISchemaType = "BOOLEAN"
+const GoogleAPISchemaTypeINTEGER GoogleAPISchemaType = "INTEGER"
+const GoogleAPISchemaTypeNULL GoogleAPISchemaType = "NULL"
+const GoogleAPISchemaTypeNUMBER GoogleAPISchemaType = "NUMBER"
+const GoogleAPISchemaTypeOBJECT GoogleAPISchemaType = "OBJECT"
+const GoogleAPISchemaTypeSTRING GoogleAPISchemaType = "STRING"
+const GoogleAPISchemaTypeTYPEUNSPECIFIED GoogleAPISchemaType = "TYPE_UNSPECIFIED"
+
+// Different types of search that can be enabled on the GoogleSearch tool.
+type GoogleAPISearchTypes struct {
+	// Optional. Setting this field enables image search. Image bytes are returned.
+	//
+	ImageSearch GoogleAPIImageSearch `json:"imageSearch,omitempty,omitzero"`
+
+	// Optional. Setting this field enables web search. Only text results are
+	// returned.
+	//
+	WebSearch GoogleAPIWebSearch `json:"webSearch,omitempty,omitzero"`
+}
+
+// Configuration for a single speaker in a multi-speaker setup.
+type GoogleAPISpeakerVoiceConfig struct {
+	// Required. The name of the speaker. This should be the same as the speaker name
+	// used
+	// in the prompt.
+	//
+	Speaker *string `json:"speaker,omitempty,omitzero"`
+
+	// Required. The configuration for the voice of this speaker.
+	//
+	VoiceConfig *GoogleAPIVoiceConfig `json:"voiceConfig,omitempty,omitzero"`
+}
+
+// Config for speech generation and transcription.
+type GoogleAPISpeechConfig struct {
+	// Optional. The language code (ISO 639-1) for the speech synthesis.
+	//
+	LanguageCode *string `json:"languageCode,omitempty,omitzero"`
+
+	// The configuration for a multi-speaker text-to-speech request. This field is
+	// mutually
+	// exclusive with `voice_config`.
+	//
+	MultiSpeakerVoiceConfig *GoogleAPIMultiSpeakerVoiceConfig `json:"multiSpeakerVoiceConfig,omitempty,omitzero"`
+
+	// Optional. The configuration in case of single-voice output.
+	//
+	VoiceConfig *GoogleAPIVoiceConfig `json:"voiceConfig,omitempty,omitzero"`
+}
+
+// A transport that can stream HTTP requests and responses. Next ID: 6. This data
+// type
+// is not supported in Vertex AI.
+type GoogleAPIStreamableHTTPTransport struct {
+	// Optional. Optional: Fields for authentication headers, timeouts, etc., if
+	// needed.
+	//
+	Headers GoogleAPIStreamableHTTPTransportHeaders `json:"headers,omitempty,omitzero"`
+
+	// Timeout for SSE read operations.
+	//
+	SseReadTimeout *int `json:"sseReadTimeout,omitempty,omitzero"`
+
+	// Whether to close the client session when the transport closes.
+	//
+	TerminateOnClose *bool `json:"terminateOnClose,omitempty,omitzero"`
+
+	// HTTP timeout for regular operations.
+	//
+	Timeout *int `json:"timeout,omitempty,omitzero"`
+
+	// The full URL for the MCPServer endpoint. Example:
+	// "https://api.example.com/mcp".
+	//
+	Url *string `json:"url,omitempty,omitzero"`
+}
+
+// Optional. Optional: Fields for authentication headers, timeouts, etc., if
+// needed.
+type GoogleAPIStreamableHTTPTransportHeaders map[string]string
+
+// The thinking features configuration.
+type GoogleAPIThinkingConfig struct {
+	// Optional. Indicates whether to include thoughts in the response. If true,
+	// thoughts
+	// are returned only if the model supports thought and thoughts are available.
+	//
+	IncludeThoughts *bool `json:"includeThoughts,omitempty,omitzero"`
+
+	// Optional. Indicates the thinking budget in tokens.
+	//
+	ThinkingBudget *int `json:"thinkingBudget,omitempty,omitzero"`
+
+	// Optional. The number of thoughts tokens that the model should generate.
+	//
+	ThinkingLevel *GoogleAPIThinkingConfigThinkingLevel `json:"thinkingLevel,omitempty,omitzero"`
+}
+
+type GoogleAPIThinkingConfigThinkingLevel string
+
+const GoogleAPIThinkingConfigThinkingLevelHIGH GoogleAPIThinkingConfigThinkingLevel = "HIGH"
+const GoogleAPIThinkingConfigThinkingLevelLOW GoogleAPIThinkingConfigThinkingLevel = "LOW"
+const GoogleAPIThinkingConfigThinkingLevelMEDIUM GoogleAPIThinkingConfigThinkingLevel = "MEDIUM"
+const GoogleAPIThinkingConfigThinkingLevelMINIMAL GoogleAPIThinkingConfigThinkingLevel = "MINIMAL"
+const GoogleAPIThinkingConfigThinkingLevelTHINKINGLEVELUNSPECIFIED GoogleAPIThinkingConfigThinkingLevel = "THINKING_LEVEL_UNSPECIFIED"
+
+// Tool details of a tool that the model may use to generate a response.
+type GoogleAPITool struct {
+	// Optional. CodeExecution tool type. Enables the model to execute code as part of
+	// generation.
+	//
+	CodeExecution *GoogleAPIToolCodeExecution `json:"codeExecution,omitempty,omitzero"`
+
+	// Optional. Tool to support the model interacting directly with the
+	// computer. If enabled, it automatically populates computer-use specific
+	// Function Declarations.
+	//
+	ComputerUse *GoogleAPIComputerUse `json:"computerUse,omitempty,omitzero"`
+
+	// Optional. Tool to support searching public web data, powered by Vertex AI
+	// Search
+	// and Sec4 compliance. This field is not supported in Gemini API.
+	//
+	EnterpriseWebSearch *GoogleAPIEnterpriseWebSearch `json:"enterpriseWebSearch,omitempty,omitzero"`
+
+	// Optional. FileSearch tool type. Tool to retrieve knowledge from Semantic
+	// Retrieval
+	// corpora. This field is not supported in Vertex AI.
+	//
+	FileSearch *GoogleAPIFileSearch `json:"fileSearch,omitempty,omitzero"`
+
+	// Optional. Function tool type. One or more function declarations to be passed to
+	// the
+	// model along with the current user query. Model may decide to call a subset of
+	// these
+	// functions by populating FunctionCall in the response. User should provide a
+	// FunctionResponse
+	// for each function call in the next turn. Based on the function responses, Model
+	// will
+	// generate the final response back to the user. Maximum 512 function declarations
+	// can
+	// be provided.
+	//
+	FunctionDeclarations []GoogleAPIFunctionDeclaration `json:"functionDeclarations,omitempty,omitzero"`
+
+	// Optional. Tool that allows grounding the model's response with
+	// geospatial context related to the user's query.
+	//
+	GoogleMaps *GoogleAPIGoogleMaps `json:"googleMaps,omitempty,omitzero"`
+
+	// Optional. GoogleSearch tool type. Tool to support Google Search in Model.
+	// Powered
+	// by Google.
+	//
+	GoogleSearch *GoogleAPIGoogleSearch `json:"googleSearch,omitempty,omitzero"`
+
+	// Optional. Specialized retrieval tool that is powered by Google Search.
+	//
+	GoogleSearchRetrieval *GoogleAPIGoogleSearchRetrieval `json:"googleSearchRetrieval,omitempty,omitzero"`
+
+	// Optional. MCP Servers to connect to. This field is not supported in Vertex AI.
+	//
+	McpServers []GoogleAPIMCPServer `json:"mcpServers,omitempty,omitzero"`
+
+	// Optional. If specified, Vertex AI will use Parallel.ai to search for
+	// information
+	// to answer user queries. The search results will be grounded on Parallel.ai and
+	// presented
+	// to the model for response generation. This field is not supported in Gemini
+	// API.
+	//
+	ParallelAiSearch *GoogleAPIToolParallelAISearch `json:"parallelAiSearch,omitempty,omitzero"`
+
+	// Optional. Retrieval tool type. System will always execute the provided
+	// retrieval
+	// tool(s) to get external knowledge to answer the prompt. Retrieval results are
+	// presented
+	// to the model for generation. This field is not supported in Gemini API.
+	//
+	Retrieval *GoogleAPIRetrieval `json:"retrieval,omitempty,omitzero"`
+
+	// Optional. Tool to support URL context retrieval.
+	//
+	UrlContext GoogleAPIURLContext `json:"urlContext,omitempty,omitzero"`
+}
+
+// A predicted server-side `ToolCall` returned from the model.
+// This message contains information about a tool that the model wants to invoke.
+// The client is NOT expected to execute this `ToolCall`. Instead, the
+// client should pass this `ToolCall` back to the API in a subsequent turn
+// within a `Content` message, along with the corresponding `ToolResponse`.
+type GoogleAPIToolCall struct {
+	// Optional. The tool call arguments. Example: {"arg1": "value1", "arg2":
+	// "value2"}.
+	//
+	Args GoogleAPIToolCallArgs `json:"args,omitempty,omitzero"`
+
+	// Optional. Unique identifier of the tool call. The server returns the tool
+	// response
+	// with the matching `id`.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// Optional. The type of tool that was called.
+	//
+	ToolType *GoogleAPIToolCallToolType `json:"toolType,omitempty,omitzero"`
+}
+
+// Optional. The tool call arguments. Example: {"arg1": "value1", "arg2":
+// "value2"}.
+type GoogleAPIToolCallArgs map[string]interface{}
+
+type GoogleAPIToolCallToolType string
+
+const GoogleAPIToolCallToolTypeFILESEARCH GoogleAPIToolCallToolType = "FILE_SEARCH"
+const GoogleAPIToolCallToolTypeGOOGLEMAPS GoogleAPIToolCallToolType = "GOOGLE_MAPS"
+const GoogleAPIToolCallToolTypeGOOGLESEARCHIMAGE GoogleAPIToolCallToolType = "GOOGLE_SEARCH_IMAGE"
+const GoogleAPIToolCallToolTypeGOOGLESEARCHWEB GoogleAPIToolCallToolType = "GOOGLE_SEARCH_WEB"
+const GoogleAPIToolCallToolTypeTOOLTYPEUNSPECIFIED GoogleAPIToolCallToolType = "TOOL_TYPE_UNSPECIFIED"
+const GoogleAPIToolCallToolTypeURLCONTEXT GoogleAPIToolCallToolType = "URL_CONTEXT"
+
+// Tool that executes code generated by the model, and automatically returns the
+// result
+// to the model. See also [ExecutableCode]and [CodeExecutionResult] which are input
+// and output to this tool. This data type is not supported in Gemini API.
+type GoogleAPIToolCodeExecution map[string]interface{}
+
+// Tool config.
+// This config is shared for all tools provided in the request.
+type GoogleAPIToolConfig struct {
+	// Optional. Function calling config.
+	//
+	FunctionCallingConfig *GoogleAPIFunctionCallingConfig `json:"functionCallingConfig,omitempty,omitzero"`
+
+	// Optional. If true, the API response will include the server-side tool calls and
+	// responses
+	// within the `Content` message. This allows clients to observe the server's tool
+	// invocations.
+	//
+	IncludeServerSideToolInvocations *bool `json:"includeServerSideToolInvocations,omitempty,omitzero"`
+
+	// Optional. Retrieval config.
+	//
+	RetrievalConfig *GoogleAPIRetrievalConfig `json:"retrievalConfig,omitempty,omitzero"`
+}
+
+// ParallelAISearch tool type. A tool that uses the Parallel.ai search engine for
+// grounding.
+// This data type is not supported in Gemini API.
+type GoogleAPIToolParallelAISearch struct {
+	// Optional. The API key for ParallelAISearch. If an API key is not provided, the
+	// system
+	// will attempt to verify access by checking for an active Parallel.ai
+	// subscription
+	// through the Google Cloud Marketplace. See
+	// https://docs.parallel.ai/search/search-quickstart
+	// for more details.
+	//
+	ApiKey *string `json:"apiKey,omitempty,omitzero"`
+
+	// Optional. Custom configs for ParallelAISearch. This field can be used to pass
+	// any
+	// parameter from the Parallel.ai Search API. See the Parallel.ai documentation
+	// for
+	// the full list of available parameters and their usage:
+	// https://docs.parallel.ai/api-reference/search-beta/search
+	// Currently only `source_policy`, `excerpts`, `max_results`, `mode`,
+	// `fetch_policy`
+	// can be set via this field. For example: { "source_policy": { "include_domains":
+	// ["google.com",
+	// "wikipedia.org"], "exclude_domains": ["example.com"] }, "fetch_policy": {
+	// "max_age_seconds":
+	// 3600 } }
+	//
+	CustomConfigs GoogleAPIToolParallelAISearchCustomConfigs `json:"customConfigs,omitempty,omitzero"`
+}
+
+// Optional. Custom configs for ParallelAISearch. This field can be used to pass
+// any
+// parameter from the Parallel.ai Search API. See the Parallel.ai documentation for
+// the full list of available parameters and their usage:
+// https://docs.parallel.ai/api-reference/search-beta/search
+// Currently only `source_policy`, `excerpts`, `max_results`, `mode`,
+// `fetch_policy`
+// can be set via this field. For example: { "source_policy": { "include_domains":
+// ["google.com",
+// "wikipedia.org"], "exclude_domains": ["example.com"] }, "fetch_policy": {
+// "max_age_seconds":
+// 3600 } }
+type GoogleAPIToolParallelAISearchCustomConfigs map[string]interface{}
+
+// The output from a server-side `ToolCall` execution.
+// This message contains the results of a tool invocation that was initiated by a
+// `ToolCall` from the model. The client should pass this `ToolResponse` back to
+// the API in a subsequent turn within a `Content` message, along with the
+// corresponding `ToolCall`.
+type GoogleAPIToolResponse struct {
+	// Optional. The identifier of the tool call this response is for.
+	//
+	Id *string `json:"id,omitempty,omitzero"`
+
+	// Optional. The tool response.
+	//
+	Response GoogleAPIToolResponseResponse `json:"response,omitempty,omitzero"`
+
+	// Optional. The type of tool that was called, matching the tool_type in the
+	// corresponding
+	// ToolCall.
+	//
+	ToolType *GoogleAPIToolResponseToolType `json:"toolType,omitempty,omitzero"`
+}
+
+// Optional. The tool response.
+type GoogleAPIToolResponseResponse map[string]interface{}
+
+type GoogleAPIToolResponseToolType string
+
+const GoogleAPIToolResponseToolTypeFILESEARCH GoogleAPIToolResponseToolType = "FILE_SEARCH"
+const GoogleAPIToolResponseToolTypeGOOGLEMAPS GoogleAPIToolResponseToolType = "GOOGLE_MAPS"
+const GoogleAPIToolResponseToolTypeGOOGLESEARCHIMAGE GoogleAPIToolResponseToolType = "GOOGLE_SEARCH_IMAGE"
+const GoogleAPIToolResponseToolTypeGOOGLESEARCHWEB GoogleAPIToolResponseToolType = "GOOGLE_SEARCH_WEB"
+const GoogleAPIToolResponseToolTypeTOOLTYPEUNSPECIFIED GoogleAPIToolResponseToolType = "TOOL_TYPE_UNSPECIFIED"
+const GoogleAPIToolResponseToolTypeURLCONTEXT GoogleAPIToolResponseToolType = "URL_CONTEXT"
+
+// Tool to support URL context.
+type GoogleAPIURLContext map[string]interface{}
+
+// Retrieve from Vertex AI Search datastore or engine for grounding. datastore and
+// engine
+// are mutually exclusive. See https://cloud.google.com/products/agent-builder.
+// This
+// data type is not supported in Gemini API.
+type GoogleAPIVertexAISearch struct {
+	// Specifications that define the specific DataStores to be searched, along with
+	// configurations
+	// for those data stores. This is only considered for Engines with multiple data
+	// stores.
+	// It should only be set if engine is used.
+	//
+	DataStoreSpecs []GoogleAPIVertexAISearchDataStoreSpec `json:"dataStoreSpecs,omitempty,omitzero"`
+
+	// Optional. Fully-qualified Vertex AI Search data store resource ID. Format:
+	// `projects/{project}/locations/{location}/collections/{collection}/dataStores/{dataStore}`
+	//
+	Datastore *string `json:"datastore,omitempty,omitzero"`
+
+	// Optional. Fully-qualified Vertex AI Search engine resource ID. Format:
+	// `projects/{project}/locations/{location}/collections/{collection}/engines/{engine}`
+	//
+	Engine *string `json:"engine,omitempty,omitzero"`
+
+	// Optional. Filter strings to be passed to the search API.
+	//
+	Filter *string `json:"filter,omitempty,omitzero"`
+
+	// Optional. Number of search results to return per query. The default value is
+	// 10.
+	// The maximumm allowed value is 10.
+	//
+	MaxResults *int `json:"maxResults,omitempty,omitzero"`
+}
+
+// Define data stores within engine to filter on in a search call and
+// configurations
+// for those data stores. For more information, see
+// https://cloud.google.com/generative-ai-app-builder/docs/reference/rpc/google.cloud.discoveryengine.v1#datastorespec.
+// This data type is not supported in Gemini API.
+type GoogleAPIVertexAISearchDataStoreSpec struct {
+	// Full resource name of DataStore, such as Format:
+	// `projects/{project}/locations/{location}/collections/{collection}/dataStores/{dataStore}`
+	//
+	DataStore *string `json:"dataStore,omitempty,omitzero"`
+
+	// Optional. Filter specification to filter documents in the data store specified
+	// by
+	// data_store field. For more information on filtering, see
+	// [Filtering](https://cloud.google.com/generative-ai-app-builder/docs/filter-search-metadata)
+	//
+	Filter *string `json:"filter,omitempty,omitzero"`
+}
+
+// Retrieve from Vertex RAG Store for grounding. This data type is not supported in
+// Gemini API. You can find API default values and more details at
+// https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/rag-api-v1#parameters-list
+type GoogleAPIVertexRAGStore struct {
+	// Optional. Deprecated. Please use rag_resources instead.
+	//
+	RagCorpora []string `json:"ragCorpora,omitempty,omitzero"`
+
+	// Optional. The representation of the RAG source. It can be used to specify
+	// corpus
+	// only or ragfiles. Currently only support one corpus or multiple files from one
+	// corpus.
+	// In the future we may open up multiple corpora support.
+	//
+	RagResources []GoogleAPIVertexRAGStoreRAGResource `json:"ragResources,omitempty,omitzero"`
+
+	// Optional. The retrieval config for the RAG query.
+	//
+	RagRetrievalConfig *GoogleAPIRAGRetrievalConfig `json:"ragRetrievalConfig,omitempty,omitzero"`
+
+	// Optional. Number of top k results to return from the selected corpora.
+	//
+	SimilarityTopK *int `json:"similarityTopK,omitempty,omitzero"`
+
+	// Optional. Currently only supported for Gemini Multimodal Live API. In Gemini
+	// Multimodal
+	// Live API, if `store_context` bool is specified, Gemini will leverage it to
+	// automatically
+	// memorize the interactions between the client and Gemini, and retrieve context
+	// when
+	// needed to augment the response generation for users' ongoing and future
+	// interactions.
+	//
+	StoreContext *bool `json:"storeContext,omitempty,omitzero"`
+
+	// Optional. Only return results with vector distance smaller than the threshold.
+	//
+	VectorDistanceThreshold *float64 `json:"vectorDistanceThreshold,omitempty,omitzero"`
+}
+
+// The definition of the RAG resource. This data type is not supported in Gemini
+// API.
+type GoogleAPIVertexRAGStoreRAGResource struct {
+	// Optional. RAGCorpora resource name. Format:
+	// `projects/{project}/locations/{location}/ragCorpora/{rag_corpus}`
+	//
+	RagCorpus *string `json:"ragCorpus,omitempty,omitzero"`
+
+	// Optional. rag_file_id. The files should be in the same rag_corpus set in
+	// rag_corpus
+	// field.
+	//
+	RagFileIds []string `json:"ragFileIds,omitempty,omitzero"`
+}
+
+// Provides metadata for a video, including the start and end offsets for clipping
+// and
+// the frame rate.
+type GoogleAPIVideoMetadata struct {
+	// Optional. The end offset of the video.
+	//
+	EndOffset *int `json:"endOffset,omitempty,omitzero"`
+
+	// Optional. The frame rate of the video sent to the model. If not specified, the
+	// default
+	// value is 1.0. The valid range is (0.0, 24.0].
+	//
+	Fps *float64 `json:"fps,omitempty,omitzero"`
+
+	// Optional. The start offset of the video.
+	//
+	StartOffset *int `json:"startOffset,omitempty,omitzero"`
+}
+
+// The configuration for the voice to use.
+type GoogleAPIVoiceConfig struct {
+	// The configuration for a prebuilt voice.
+	//
+	PrebuiltVoiceConfig *GoogleAPIPrebuiltVoiceConfig `json:"prebuiltVoiceConfig,omitempty,omitzero"`
+
+	// Optional. The configuration for a replicated voice, which is a clone of a
+	// user's voice that can be used for speech synthesis. If this is unset, a
+	// default voice is used.
+	//
+	ReplicatedVoiceConfig *GoogleAPIReplicatedVoiceConfig `json:"replicatedVoiceConfig,omitempty,omitzero"`
+}
+
+// Standard web search for grounding and related configurations. Only text results
+// are
+// returned.
+type GoogleAPIWebSearch map[string]interface{}
