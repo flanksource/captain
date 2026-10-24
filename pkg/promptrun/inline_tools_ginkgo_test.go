@@ -7,6 +7,8 @@ import (
 	g "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/agent/setup"
 	"github.com/flanksource/captain/pkg/api"
 )
@@ -26,6 +28,8 @@ var _ = g.Describe("Inline tool binding", func() {
 		Expect(in.Config.Tools).To(HaveLen(2))
 		Expect(in.Config.Tools[0].Name).To(Equal("host_tool"))
 		Expect(in.Config.Tools[1].Name).To(Equal("echo_input"))
+		Expect(in.inlineTools.PreRun(&agent.HookContext{Context: context.Background(), Request: &ai.Request{}, Response: &ai.Response{}})).To(Succeed())
+		g.DeferCleanup(in.inlineTools.Close)
 		out, err := in.Config.Tools[1].Handler(context.Background(), map[string]any{"q": "hi"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(Equal(`{"q":"hi"}`))

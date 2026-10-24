@@ -15,6 +15,7 @@ type (
 	SandboxKind       = registry.SandboxKind
 	SandboxCapability = registry.SandboxCapability
 	SandboxDescriptor = registry.Sandbox
+	ToolPlacement     = registry.ToolPlacement
 )
 
 const (
@@ -28,6 +29,9 @@ const (
 	CapabilityRemoteExec       = registry.CapabilityRemoteExec
 	CapabilityIsolateWorkspace = registry.CapabilityIsolateWorkspace
 	CapabilityEgressProxy      = registry.CapabilityEgressProxy
+
+	ToolPlacementHost    = registry.ToolPlacementHost
+	ToolPlacementSandbox = registry.ToolPlacementSandbox
 )
 
 // ParseSandboxKind normalizes a selectable mode token; empty resolves to Off.

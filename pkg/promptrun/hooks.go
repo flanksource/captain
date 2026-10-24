@@ -62,7 +62,8 @@ func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
 	if in.Provider == nil && in.Resolved.Spec.Setup != nil {
 		hooks = append(hooks, &setup.Plugin{})
 	}
-	// After setup: inline tools must run where setup moved the run.
+	// After setup: inline tool environments are prepared where setup moved the
+	// run, and torn down after it at PhaseRun.
 	if in.inlineTools != nil {
 		hooks = append(hooks, in.inlineTools)
 	}
