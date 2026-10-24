@@ -90,10 +90,10 @@ func Start(kubeconfigPath string) (*Proxy, error) {
 	}
 
 	rp := &httputil.ReverseProxy{
-		Director: func(r *http.Request) {
-			r.URL.Scheme = upstream.Scheme
-			r.URL.Host = upstream.Host
-			r.Host = upstream.Host
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.Out.URL.Scheme = upstream.Scheme
+			r.Out.URL.Host = upstream.Host
+			r.Out.Host = upstream.Host
 		},
 		Transport: transport,
 	}
