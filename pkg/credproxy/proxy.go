@@ -1,4 +1,4 @@
-package proxy
+package credproxy
 
 import (
 	"bytes"
@@ -30,11 +30,15 @@ type Decision struct {
 
 // Proxy is the egress credential proxy: an HTTP forward proxy that
 // substitutes placeholders in exactly the granted position and rejects them
-// anywhere else. CONNECT is refused — tunneled TLS would blind the proxy, and
-// the sandbox has no legitimate need to hide its requests from it.
+// anywhere else. CONNECT is served only with an Authority, by terminating the
+// tunnel so its requests stay inspectable — an opaque tunnel would blind the
+// proxy, and the client has no legitimate need to hide its requests from it.
 type Proxy struct {
 	Grants  []Grant
 	Resolve Resolver
+	// Authority terminates CONNECT tunnels to granted HTTPS destinations; nil
+	// refuses CONNECT, so clients must send absolute-form requests.
+	Authority *Authority
 	// Audit receives every decision; nil discards. Never receives a value.
 	Audit func(Decision)
 	// Dialer resolves and dials upstream. The proxy resolves DNS itself and
@@ -62,8 +66,7 @@ func (p *Proxy) resolve(v HeaderGrant) (string, error) {
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodConnect {
-		p.audit(Decision{Method: r.Method, Destination: r.Host, Verdict: "rejected", Reason: "CONNECT is not served; requests must be inspectable"})
-		http.Error(w, "captain-proxy: CONNECT is not served", http.StatusForbidden)
+		p.serveConnect(w, r)
 		return
 	}
 	if !r.URL.IsAbs() {

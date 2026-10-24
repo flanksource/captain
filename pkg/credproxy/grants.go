@@ -1,4 +1,4 @@
-// Package proxy is the egress credential proxy (SPEC-git-agent-protocol §9):
+// Package credproxy is the egress credential proxy (SPEC-git-agent-protocol §9):
 // the sandbox never holds a real credential, only a placeholder; the proxy
 // substitutes the real value on the way out, and only when the placeholder
 // appears in exactly the granted header for the granted destination. A
@@ -6,7 +6,7 @@
 // (R9.2). The proxy protects the credential's value, not its capability —
 // grants are scoped by method and path prefix because a host-level allowlist
 // still permits POST /gists (R9.6/H7).
-package proxy
+package credproxy
 
 import (
 	"fmt"
