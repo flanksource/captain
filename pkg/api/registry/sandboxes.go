@@ -8,19 +8,27 @@ package registry
 // hook: the agent SDK modes spawn their subprocess inside vendor code, and
 // ModeAPI is an in-process HTTP call with no argv at all. Widening a Modes list
 // means adding the wrapping seam for that mode first.
+//
+// ToolPlacements follow the same rule. Off and native have no wrapper a tool
+// could run inside (native is enforced by the provider itself), so their tools
+// run on the host. Docker declares none: its container cannot reach the
+// host-side caller-tool endpoint, so no inline tool would be callable. Git
+// Agent runs remotely, with no route back to tools on this host.
 var (
 	OffSandbox = &Sandbox{
-		Kind:         SandboxOff,
-		Description:  "Disable provider filesystem/network isolation and built-in approval prompts",
-		Capabilities: nil,
-		Modes:        []RuntimeMode{ModeAPI, ModeCLI, ModeAgent, ModeCmux},
+		Kind:           SandboxOff,
+		Description:    "Disable provider filesystem/network isolation and built-in approval prompts",
+		Capabilities:   nil,
+		Modes:          []RuntimeMode{ModeAPI, ModeCLI, ModeAgent, ModeCmux},
+		ToolPlacements: []ToolPlacement{ToolPlacementHost},
 	}
 
 	NativeSandbox = &Sandbox{
-		Kind:         SandboxNative,
-		Description:  "Translate one Captain policy into the provider's native sandbox",
-		Capabilities: nil,
-		Modes:        []RuntimeMode{ModeCLI, ModeAgent, ModeCmux},
+		Kind:           SandboxNative,
+		Description:    "Translate one Captain policy into the provider's native sandbox",
+		Capabilities:   nil,
+		Modes:          []RuntimeMode{ModeCLI, ModeAgent, ModeCmux},
+		ToolPlacements: []ToolPlacement{ToolPlacementHost},
 	}
 
 	DockerSandbox = &Sandbox{

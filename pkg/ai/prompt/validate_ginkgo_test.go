@@ -45,6 +45,21 @@ var _ = Describe("Prompt validation", func() {
 		Entry("tool with an invalid output schema", "---\ntools:\n  lookup:\n    exec: 'true'\n    output: {id: notatype}\n---\nbody\n", "promptfile/tools", "tools.lookup: output"),
 	)
 
+	DescribeTable("warns where an inline tool's credentials end up somewhere other than declared",
+		func(source, message string) {
+			Expect(Load(source).Validate(ValidationOptions{})).To(ConsistOf(And(
+				HaveField("Rule", "promptfile/tools"), HaveField("Severity", "warning"),
+				HaveField("Message", ContainSubstring(message)),
+			)))
+		},
+		Entry("direct credentials inside the sandbox",
+			"---\ntools:\n  deploy: {exec: 'true', placement: sandbox, credentials: direct}\n---\nbody\n",
+			"tools.deploy hands real credentials into the sandbox"),
+		Entry("a proxied tool beside a setup that hands the agent the same secrets",
+			"---\nsetup:\n  connections:\n    aws: {accessKey: {value: a}, secretKey: {value: b}}\ntools:\n  deploy: {exec: 'true', credentials: proxied}\n---\nbody\n",
+			"setup.connections (aws) still reach the agent"),
+	)
+
 	It("warns that retrying a destructive tool re-runs its side effect", func() {
 		const source = "---\ntools:\n  drop: {exec: 'true', destructive: true, retry: {attempts: 2}}\n---\nbody\n"
 		Expect(Load(source).Validate(ValidationOptions{})).To(ConsistOf(And(

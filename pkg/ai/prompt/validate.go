@@ -103,21 +103,37 @@ func validateDeclarations(source string) []Diagnostic {
 	} else if err := validateDeclaredSchemas(source); err != nil {
 		diagnostics = append(diagnostics, validationError("promptfile/schema", err, offset))
 	}
-	return append(diagnostics, validateInlineTools(document.Spec.Tools)...)
+	return append(diagnostics, validateInlineTools(document.Spec)...)
 }
 
-// validateInlineTools compiles each tool's schemas and flags a retried
-// destructive tool, whose every retry repeats the side effect.
-func validateInlineTools(tools api.InlineTools) []Diagnostic {
+// validateInlineTools compiles each tool's schemas and flags declarations whose
+// effect differs from what they appear to say: a retried destructive tool
+// repeats its side effect, direct credentials inside the sandbox put real
+// secrets there, and a tool kept away from secrets does not keep them from the
+// agent when the run's own setup hands them over.
+func validateInlineTools(spec api.Spec) []Diagnostic {
 	var diagnostics []Diagnostic
-	for _, name := range tools.Names() {
-		tool := tools[name]
+	warn := func(format string, args ...any) {
+		diagnostics = append(diagnostics, Diagnostic{Rule: "promptfile/tools", Severity: "warning", Message: fmt.Sprintf(format, args...)})
+	}
+	var runConnections []string
+	if spec.Setup != nil {
+		runConnections = api.DeclaredConnections(spec.Setup.Connections)
+	}
+	for _, name := range spec.Tools.Names() {
+		tool := spec.Tools[name]
 		if err := compileToolSchemas(tool); err != nil {
 			diagnostics = append(diagnostics, Diagnostic{Rule: "promptfile/tools", Severity: "error", Message: fmt.Sprintf("tools.%s: %s", name, err)})
 		}
 		if tool.Destructive && tool.Retry != nil && tool.Retry.Attempts > 1 {
-			diagnostics = append(diagnostics, Diagnostic{Rule: "promptfile/tools", Severity: "warning",
-				Message: fmt.Sprintf("tools.%s is destructive and retried: a failed attempt may already have had its effect", name)})
+			warn("tools.%s is destructive and retried: a failed attempt may already have had its effect", name)
+		}
+		if tool.Placement.Effective() == api.ToolPlacementSandbox && tool.Credentials == api.ToolCredentialsDirect {
+			warn("tools.%s hands real credentials into the sandbox; credentials: proxied keeps them on the host", name)
+		}
+		if len(runConnections) > 0 && (tool.Credentials == api.ToolCredentialsNone || tool.Credentials == api.ToolCredentialsProxied) {
+			warn("tools.%s is credentials: %s, but setup.connections (%s) still reach the agent; declare them on the tool instead",
+				name, tool.Credentials, strings.Join(runConnections, ", "))
 		}
 	}
 	return diagnostics
