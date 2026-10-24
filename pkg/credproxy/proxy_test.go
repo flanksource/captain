@@ -1,4 +1,4 @@
-package proxy
+package credproxy
 
 import (
 	"io"
@@ -12,8 +12,8 @@ import (
 )
 
 // world spins a TLS upstream and a proxy granting it. Requests invoke the
-// handler in absolute form because ordinary HTTP clients tunnel TLS with
-// CONNECT, which this inspectable proxy deliberately refuses.
+// handler in absolute form; tunnelled CONNECT requests are covered with an
+// Authority in connect_test.go.
 type world struct {
 	upstream  *httptest.Server
 	proxy     *httptest.Server
