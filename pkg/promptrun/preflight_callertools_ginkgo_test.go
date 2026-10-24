@@ -156,6 +156,18 @@ var _ = Describe("promptrun.Preflight caller tools", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("refuses inline tools under a sandbox that cannot run them", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true}}
+			in.Resolved.Spec.Model = api.Model{Name: "sonnet", Mode: api.ModeCLI}
+			in.Config.SandboxSelection = &api.SandboxConfig{Kind: api.SandboxDocker}
+			expectRefused(`tools.lookup: sandbox "docker" cannot run inline tools`)
+		})
+
+		It("refuses placement: sandbox on a run with no sandbox to place it in", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true, Placement: api.ToolPlacementSandbox}}
+			expectRefused(`tools.lookup: sandbox "off" cannot run an inline tool with placement "sandbox"; it supports: host`)
+		})
+
 		It("refuses inline tools on a runtime that cannot expose them", func() {
 			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true}}
 			in.Resolved.Spec.Model = api.Model{Name: "gemini-2.5-pro", Mode: api.ModeCLI}

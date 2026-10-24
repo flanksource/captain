@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/flanksource/commons-db/shell"
+
+	"github.com/flanksource/captain/pkg/credproxy"
 )
 
 // DefaultInlineToolTimeout bounds one attempt of an inline tool that declares
@@ -37,6 +39,16 @@ type InlineTool struct {
 	// Timeout bounds each attempt; empty means DefaultInlineToolTimeout.
 	Timeout string     `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	Retry   *ToolRetry `json:"retry,omitempty" yaml:"retry,omitempty"`
+	// Placement is where the script runs relative to the run's sandbox; empty
+	// means host.
+	Placement ToolPlacement `json:"placement,omitempty" yaml:"placement,omitempty" jsonschema:"enum=host,enum=sandbox"`
+	// Credentials is how the tool's connections and secret env vars reach the
+	// script; empty derives it (see ResolveCredentials).
+	Credentials ToolCredentials `json:"credentials,omitempty" yaml:"credentials,omitempty" jsonschema:"enum=none,enum=direct,enum=proxied"`
+	// Grants are the HTTP(S) destinations a proxied tool may call. The script
+	// sees a placeholder per granted header and the proxy substitutes the real
+	// value on the way out, only in that header, only for that destination.
+	Grants []credproxy.Grant `json:"grants,omitempty" yaml:"grants,omitempty"`
 }
 
 // ToolRetry re-runs a failed attempt with exponential backoff. An attempt fails
@@ -93,6 +105,9 @@ func (t InlineTool) validate(name string) error {
 	}
 	if t.Checkout != nil {
 		return fmt.Errorf("checkout is not supported per tool; declare it in the run's setup")
+	}
+	if err := t.validateEnvironment(); err != nil {
+		return err
 	}
 	if _, err := t.ParseTimeout(); err != nil {
 		return err

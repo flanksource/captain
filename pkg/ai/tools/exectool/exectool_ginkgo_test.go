@@ -24,13 +24,29 @@ import (
 const countingScript = `n=$(cat count 2>/dev/null || echo 0); n=$((n+1)); echo $n > count; `
 
 // hookContextAt is the state setup.Plugin leaves behind once it has moved the
-// run into cwd.
-func hookContextAt(cwd string) *agent.HookContext {
+// run into cwd under the given setup.
+func hookContextAt(cwd string, setup *shell.Setup) *agent.HookContext {
 	return &agent.HookContext{
 		Context:  context.Background(),
-		Request:  &ai.Request{},
+		Request:  &ai.Request{Setup: setup},
 		Response: &ai.Response{Workspace: &api.Workspace{Cwd: cwd}},
 	}
+}
+
+func call(definition api.ToolDefinition, input map[string]any) (any, error) {
+	return definition.Handler(context.Background(), input)
+}
+
+// bindAndPrepare binds the tools to a workspace over setup and runs its
+// PreRun, the way promptrun's hook list does, closing it after the spec.
+func bindAndPrepare(cwd string, opts exectool.WorkspaceOptions, tools api.InlineTools) (*exectool.Workspace, []api.ToolDefinition) {
+	opts.Cwd = cwd
+	workspace := exectool.NewWorkspace(opts)
+	definitions, err := exectool.Definitions(tools, workspace)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(workspace.PreRun(hookContextAt(cwd, opts.Setup))).To(Succeed())
+	DeferCleanup(workspace.Close)
+	return workspace, definitions
 }
 
 var _ = Describe("Inline exec tools", func() {
@@ -42,21 +58,16 @@ var _ = Describe("Inline exec tools", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	build := func(tool api.InlineTool, opts ...func(*exectool.Workspace) shell.WrapFunc) api.ToolDefinition {
-		workspace := exectool.NewWorkspace(dir, nil)
-		var wrap shell.WrapFunc
-		for _, opt := range opts {
-			wrap = opt(workspace)
+	build := func(tool api.InlineTool, wrap ...shell.WrapFunc) api.ToolDefinition {
+		opts := exectool.WorkspaceOptions{}
+		if len(wrap) > 0 {
+			opts.SandboxWrap = wrap[0]
 		}
-		definitions, err := exectool.Definitions(api.InlineTools{"probe": tool}, workspace, wrap)
-		Expect(err).NotTo(HaveOccurred())
+		_, definitions := bindAndPrepare(dir, opts, api.InlineTools{"probe": tool})
 		Expect(definitions).To(HaveLen(1))
 		return definitions[0]
 	}
 
-	call := func(definition api.ToolDefinition, input map[string]any) (any, error) {
-		return definition.Handler(context.Background(), input)
-	}
 
 	attempts := func() string {
 		count, err := os.ReadFile(filepath.Join(dir, "count"))
@@ -111,7 +122,7 @@ var _ = Describe("Inline exec tools", func() {
 
 		It("refuses a schema that does not compile before any call", func() {
 			_, err := exectool.Definitions(api.InlineTools{"probe": {Exec: "true", Output: map[string]any{"type": 7}}},
-				exectool.NewWorkspace(dir, nil), nil)
+				exectool.NewWorkspace(exectool.WorkspaceOptions{Cwd: dir}))
 
 			Expect(err).To(MatchError(ContainSubstring("output schema")))
 		})
@@ -133,12 +144,10 @@ var _ = Describe("Inline exec tools", func() {
 
 	It("layers the tool's env vars over the run's dotenv", func() {
 		Expect(os.WriteFile(filepath.Join(dir, ".env"), []byte("FROM_RUN=run\nSHARED=run\n"), 0o600)).To(Succeed())
-		workspace := exectool.NewWorkspace(dir, &shell.Setup{DotEnv: []string{".env"}})
-		definitions, err := exectool.Definitions(api.InlineTools{"probe": {
+		_, definitions := bindAndPrepare(dir, exectool.WorkspaceOptions{Setup: &shell.Setup{DotEnv: []string{".env"}}}, api.InlineTools{"probe": {
 			Exec:  `[ "$FROM_RUN" = run ] && [ "$SHARED" = tool ] && echo ok`,
 			Setup: shell.Setup{EnvVars: []types.EnvVar{{Name: "SHARED", ValueStatic: "tool"}}},
-		}}, workspace, nil)
-		Expect(err).NotTo(HaveOccurred())
+		}})
 
 		result, err := call(definitions[0], nil)
 
@@ -146,29 +155,39 @@ var _ = Describe("Inline exec tools", func() {
 		Expect(result).To(Equal("ok"))
 	})
 
-	It("reads the workspace at call time, after setup has relocated the run", func() {
-		workspace := exectool.NewWorkspace(GinkgoT().TempDir(), nil)
-		definitions, err := exectool.Definitions(api.InlineTools{"probe": {Exec: "pwd -P"}}, workspace, nil)
+	It("prepares in the workspace setup left, not where the run started", func() {
+		workspace := exectool.NewWorkspace(exectool.WorkspaceOptions{Cwd: GinkgoT().TempDir()})
+		definitions, err := exectool.Definitions(api.InlineTools{"probe": {Exec: "pwd -P"}}, workspace)
 		Expect(err).NotTo(HaveOccurred())
 
-		Expect(workspace.PreRun(hookContextAt(dir))).To(Succeed())
+		Expect(workspace.PreRun(hookContextAt(dir, nil))).To(Succeed())
+		DeferCleanup(workspace.Close)
 		result, err := call(definitions[0], nil)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(dir))
 	})
 
-	It("runs the command through the confinement wrapper", func() {
-		wrapped := func(*exectool.Workspace) shell.WrapFunc {
-			return func(_ context.Context, cmd string, args, env []string) (string, []string, []string, error) {
-				return "env", append([]string{"CONFINED=yes", cmd}, args...), env, nil
-			}
+	It("runs a placement: sandbox tool through the run's sandbox wrapper", func() {
+		wrap := func(_ context.Context, cmd string, args, env []string) (string, []string, []string, error) {
+			return "env", append([]string{"CONFINED=yes", cmd}, args...), env, nil
 		}
 
-		result, err := call(build(api.InlineTool{Exec: "echo $CONFINED"}, wrapped), nil)
+		result, err := call(build(api.InlineTool{Exec: "echo $CONFINED", Placement: api.ToolPlacementSandbox, Credentials: api.ToolCredentialsNone}, wrap), nil)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal("yes"))
+	})
+
+	It("never wraps a host tool, even when the run has a sandbox wrapper", func() {
+		wrap := func(_ context.Context, cmd string, args, env []string) (string, []string, []string, error) {
+			return "env", append([]string{"CONFINED=yes", cmd}, args...), env, nil
+		}
+
+		result, err := call(build(api.InlineTool{Exec: "echo \"[$CONFINED]\""}, wrap), nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal("[]"))
 	})
 
 	Context("retry", func() {
