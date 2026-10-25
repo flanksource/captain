@@ -9,7 +9,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -100,7 +99,19 @@ func resolvePromptRecord(ctx context.Context, options promptRecordOptions) (prom
 				continue
 			}
 			if source.FS == nil {
-				return localPromptRecord(source, ref.RelPath)
+				if strings.HasSuffix(ref.RelPath, ".prompt") {
+					return localPromptRecord(source, ref.RelPath)
+				}
+				records, err := listPromptRecordsFromSource(source)
+				if err != nil {
+					return promptRecord{}, err
+				}
+				for _, record := range records {
+					if record.Rel == ref.RelPath {
+						return record, nil
+					}
+				}
+				return promptRecord{}, fmt.Errorf("prompt %q not found in %s", ref.RelPath, source.Label)
 			}
 			path := ref.RelPath
 			if source.Root != "" {
@@ -115,8 +126,8 @@ func resolvePromptRecord(ctx context.Context, options promptRecordOptions) (prom
 
 func resolvePromptRecordByName(sources []promptSource, name string) (promptRecord, error) {
 	bareName := strings.TrimSuffix(name, ".prompt")
-	var matches []promptRecord
-	for _, source := range sources {
+	for _, source := range promptLookupSources(sources) {
+		var matches []promptRecord
 		records, err := listPromptRecordsFromSource(source)
 		if err != nil {
 			return promptRecord{}, err
@@ -127,23 +138,19 @@ func resolvePromptRecordByName(sources []promptSource, name string) (promptRecor
 				matches = append(matches, record)
 			}
 		}
-	}
-	// A local copy of a shipped prompt overrides it rather than making the name ambiguous.
-	if slices.ContainsFunc(matches, func(record promptRecord) bool { return record.Source.Kind != "embedded" }) {
-		matches = slices.DeleteFunc(matches, func(record promptRecord) bool { return record.Source.Kind == "embedded" })
-	}
-	switch len(matches) {
-	case 0:
-		return promptRecord{}, fmt.Errorf("prompt %q not found", name)
-	case 1:
-		return matches[0], nil
-	default:
+		if len(matches) == 0 {
+			continue
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
 		paths := make([]string, len(matches))
 		for i, match := range matches {
 			paths[i] = match.Source.Label + ":" + match.Rel
 		}
 		return promptRecord{}, fmt.Errorf("prompt name %q is ambiguous (%s); use a prompt id or path", name, strings.Join(paths, ", "))
 	}
+	return promptRecord{}, fmt.Errorf("prompt %q not found", name)
 }
 
 func isBarePromptFilename(id string) bool {
@@ -178,6 +185,9 @@ func filePromptRecord(id string) (promptRecord, error) {
 func promptSummary(record promptRecord) (PromptSummary, error) {
 	content, err := readPromptContent(record)
 	if err != nil {
+		if record.LinkError != nil || record.ReadPath != "" {
+			return promptLinkWarning(record, err), nil
+		}
 		return PromptSummary{}, err
 	}
 	return promptSummaryOrRepair(record, content), nil
@@ -199,6 +209,9 @@ func promptSummaryOrRepair(record promptRecord, content string) PromptSummary {
 func promptDetail(record promptRecord) (PromptDetail, error) {
 	content, err := readPromptContent(record)
 	if err != nil {
+		if record.LinkError != nil || record.ReadPath != "" {
+			return PromptDetail{PromptSummary: promptLinkWarning(record, err)}, nil
+		}
 		return PromptDetail{}, err
 	}
 	if record.UpdatedAt == "" {
@@ -320,6 +333,9 @@ func basePromptSummary(record promptRecord) PromptSummary {
 }
 
 func readPromptContent(record promptRecord) (string, error) {
+	if record.LinkError != nil {
+		return "", record.LinkError
+	}
 	if record.Source.FS != nil {
 		data, err := fs.ReadFile(record.Source.FS, record.Rel)
 		if err != nil {
