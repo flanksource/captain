@@ -63,6 +63,12 @@ type Input struct {
 	// which case Run takes RemoteProvider as if the caller had passed it, or runs
 	// whole runs, in which case Run hands the run to its RemoteRunner.
 	Provider ai.Provider
+	// Relocated builds the provider of a run that executes on another machine
+	// (a git-agent sandbox). Unlike Provider it is called with the run's final
+	// Config — inline tools and the approval broker bound — because the run's
+	// caller tools are served from here while the agent runs there. Like
+	// Provider, it owns the workspace: Run adds no setup hook.
+	Relocated func(ai.Config) (ai.Provider, error)
 	// Hooks are the caller's own agent hooks — a host's commit pipeline, an
 	// environment stamp. They sit after the workflow's checks and before setup,
 	// so a Post hook of theirs at PhaseRun still sees a live worktree.
@@ -389,7 +395,11 @@ func buildProvider(in Input) (ai.Provider, func(), error) {
 	if in.Resolved.Spec.NoCache {
 		cfg.NoCache = true
 	}
-	provider, err := middleware.NewProvider(cfg)
+	newProvider := middleware.NewProvider
+	if in.Relocated != nil {
+		newProvider = in.Relocated
+	}
+	provider, err := newProvider(cfg)
 	if err != nil {
 		return nil, release, err
 	}

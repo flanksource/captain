@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"

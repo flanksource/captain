@@ -8,9 +8,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,6 +40,90 @@ type TaskPayload struct {
 	// Timeout is the supervisor's effective deadline. The relocated runner
 	// must not fall back to the shorter local model-call default.
 	Timeout string `json:"timeout,omitempty"`
+	// Tools is the supervisor's caller-tool server, which the runner reaches
+	// through the service tunnel.
+	Tools *TaskTools `json:"tools,omitempty"`
+	// Sidecar are the tools the runner executes itself, next to the worktree.
+	Sidecar *TaskSidecarTools `json:"sidecar,omitempty"`
+	// Requires names the features of this payload the runner must honour. A
+	// runner refuses a task naming one it does not know, rather than run it
+	// without — an older runner would otherwise drop the tools and carry on.
+	Requires []string `json:"requires,omitempty"`
+}
+
+// The Requires entries: RequiresTools for a payload that carries Tools,
+// RequiresSidecarTools for one that carries Sidecar.
+const (
+	RequiresTools        = "tools"
+	RequiresSidecarTools = "sidecar-tools"
+)
+
+// KnownRequirements are the payload features this runner honours.
+var KnownRequirements = []string{RequiresTools, RequiresSidecarTools}
+
+// TaskSidecarTools are tool declarations shipped to the sidecar. No secret
+// travels in them: grant headers carry only their names, and a sidecar-proxied
+// tool's values come from its single-use release.
+type TaskSidecarTools struct {
+	Tools api.InlineTools `json:"tools"`
+	// Preferences and Policy are the run's tool policy. The runner resolves the
+	// tools against them exactly as the supervisor's admission check did, so a
+	// tool the run denies is not served and none ends up needing approval.
+	Preferences api.ToolPreferences  `json:"preferences,omitempty"`
+	Policy      api.PermissionPolicy `json:"policy,omitempty"`
+	// Releases locate each sidecar-proxied tool's credential release, by tool
+	// name: the tunnel service holding it and the token it wants.
+	Releases map[string]TaskCredentialRelease `json:"releases,omitempty"`
+	// Proxies locate each proxied tool's credential proxies on the supervisor,
+	// by tool name.
+	Proxies map[string]TaskToolProxies `json:"proxies,omitempty"`
+}
+
+// TaskToolProxies are the tunnel services a proxied sidecar tool reaches the
+// supervisor's proxies through, and what it presents to them. Neither the
+// secret nor the token is a credential the proxies forward.
+type TaskToolProxies struct {
+	EgressService string `json:"egressService,omitempty"`
+	EgressSecret  string `json:"egressSecret,omitempty"`
+	CAPEM         []byte `json:"caPEM,omitempty"`
+	KubeService   string `json:"kubeService,omitempty"`
+	KubeToken     string `json:"kubeToken,omitempty"`
+}
+
+// TaskCredentialRelease is one tool's single-use credential release.
+type TaskCredentialRelease struct {
+	Service string `json:"service"`
+	Token   string `json:"token"`
+}
+
+// TaskTools locate the supervisor's caller-tool server inside the "tools"
+// service: the MCP path and the headers that authenticate to it. The bearer
+// header is per run and revoked when the supervisor's run ends.
+type TaskTools struct {
+	Name    string            `json:"name"`
+	Path    string            `json:"path"`
+	Headers map[string]string `json:"headers"`
+}
+
+// ToolsService names the tunnel service the supervisor's caller tools are
+// published as.
+const ToolsService = "tools"
+
+// CheckRequirements refuses a payload whose Requires this runner cannot
+// honour.
+func (p TaskPayload) CheckRequirements() error {
+	for _, required := range p.Requires {
+		if !slices.Contains(KnownRequirements, required) {
+			return fmt.Errorf("the task requires %q, which this captain does not support; upgrade the sidecar to the supervisor's version", required)
+		}
+	}
+	if p.Tools != nil && !slices.Contains(p.Requires, RequiresTools) {
+		return fmt.Errorf("the task carries tools but does not require %q", RequiresTools)
+	}
+	if p.Sidecar != nil && !slices.Contains(p.Requires, RequiresSidecarTools) {
+		return fmt.Errorf("the task carries sidecar tools but does not require %q", RequiresSidecarTools)
+	}
+	return nil
 }
 
 // LoadTaskPayload reads a materialized task.json.
@@ -84,6 +170,10 @@ type DispatchRequest struct {
 	Policy          Policy
 	TaskPayload     TaskPayload
 	HooksJSON       []byte // pre-serialized hooks.json (may be nil)
+	// Services are the supervisor's loopback services the task's agent may
+	// tunnel to. They are registered with the task, before the push that
+	// starts the agent, and withdrawn by RemoveServices once the outcome is in.
+	Services Services
 }
 
 // Transport describes how to reach the sidecar, for whichever scheme its URL
@@ -141,6 +231,9 @@ func Dispatch(ctx context.Context, req DispatchRequest) (*DispatchResult, error)
 		return nil, err
 	}
 	if err := pushDispatch(ctx, req, task, snapshot, control); err != nil {
+		if removeErr := RemoveServices(req.MailboxPath, task); removeErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("withdraw services: %w", removeErr))
+		}
 		return nil, err
 	}
 	return &DispatchResult{Task: task, Attempt: 1, Snapshot: snapshot, Control: control}, nil
@@ -199,7 +292,7 @@ func recordDispatch(ctx context.Context, req DispatchRequest, task string, snaps
 	if _, err := runGitIn(ctx, req.MailboxPath, env, strings.NewReader(updates), "update-ref", "--stdin"); err != nil {
 		return err
 	}
-	return SaveTaskState(req.MailboxPath, &TaskState{
+	if err := SaveTaskState(req.MailboxPath, &TaskState{
 		Task:           task,
 		Agent:          req.Agent,
 		Base:           snapshot.Base,
@@ -209,7 +302,13 @@ func recordDispatch(ctx context.Context, req DispatchRequest, task string, snaps
 		Mailbox:        req.MailboxRoute,
 		Policy:         req.Policy,
 		Hooks:          hooks,
-	})
+	}); err != nil {
+		return err
+	}
+	if len(req.Services) == 0 {
+		return nil
+	}
+	return WriteServices(req.MailboxPath, task, req.Services)
 }
 
 // copyDispatchObjects gives the mailbox ownership of synthetic objects that

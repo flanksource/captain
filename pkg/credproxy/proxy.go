@@ -3,10 +3,13 @@ package credproxy
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -36,6 +39,11 @@ type Decision struct {
 type Proxy struct {
 	Grants  []Grant
 	Resolve Resolver
+	// Secret, when set, must arrive as the password of a Basic
+	// Proxy-Authorization on every request and CONNECT, so a process that only
+	// finds the loopback port cannot borrow the grants. Clients carry it as the
+	// proxy URL's userinfo (see ProxyURL).
+	Secret string
 	// Authority terminates CONNECT tunnels to granted HTTPS destinations; nil
 	// refuses CONNECT, so clients must send absolute-form requests.
 	Authority *Authority
@@ -65,10 +73,50 @@ func (p *Proxy) resolve(v HeaderGrant) (string, error) {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !p.authorized(r) {
+		p.audit(Decision{Method: r.Method, Destination: r.Host, Verdict: "rejected", Reason: "missing or wrong proxy credential"})
+		w.Header().Set("Proxy-Authenticate", `Basic realm="captain-proxy"`)
+		http.Error(w, "captain-proxy: proxy authentication required", http.StatusProxyAuthRequired)
+		return
+	}
+	r.Header.Del("Proxy-Authorization")
 	if r.Method == http.MethodConnect {
 		p.serveConnect(w, r)
 		return
 	}
+	p.serveGranted(w, r)
+}
+
+func (p *Proxy) authorized(r *http.Request) bool {
+	if p.Secret == "" {
+		return true
+	}
+	scheme, encoded, ok := strings.Cut(r.Header.Get("Proxy-Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Basic") {
+		return false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return false
+	}
+	_, password, _ := strings.Cut(string(decoded), ":")
+	return subtle.ConstantTimeCompare([]byte(password), []byte(p.Secret)) == 1
+}
+
+// ProxyURL is the URL a client reaches a proxy at, carrying its secret as
+// userinfo so every proxy-aware HTTP stack sends it as Proxy-Authorization.
+func ProxyURL(addr, secret string) string {
+	u := url.URL{Scheme: "http", Host: addr}
+	if secret != "" {
+		u.User = url.UserPassword("captain", secret)
+	}
+	return u.String()
+}
+
+// serveGranted runs a request through the grant pipeline. It serves both an
+// absolute-form proxy request and a request inside a terminated CONNECT
+// tunnel, whose proxy credential was checked when the tunnel opened.
+func (p *Proxy) serveGranted(w http.ResponseWriter, r *http.Request) {
 	if !r.URL.IsAbs() {
 		p.audit(Decision{Method: r.Method, Destination: r.Host, Verdict: "rejected", Reason: "not an absolute-form proxy request"})
 		http.Error(w, "captain-proxy: absolute-form proxy requests only", http.StatusBadRequest)

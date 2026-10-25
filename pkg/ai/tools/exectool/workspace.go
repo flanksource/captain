@@ -14,6 +14,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/credproxy"
 )
 
 // WorkspaceOptions describe where a run's inline tools execute.
@@ -26,6 +27,18 @@ type WorkspaceOptions struct {
 	// SandboxWrap confines placement: sandbox tools inside the run's sandbox.
 	// Nil means the run has no sandbox a tool can be placed in.
 	SandboxWrap shell.WrapFunc
+	// ReleaseGrants fetches a sidecar-proxied tool's grants with their real
+	// values from the supervisor. Nil means the workspace is not a sidecar's,
+	// and a sidecar-proxied tool cannot be prepared.
+	ReleaseGrants func(ctx context.Context, tool string, grants []credproxy.Grant) ([]credproxy.Grant, error)
+	// SupervisorProxies returns where a proxied sidecar tool reaches the
+	// proxies the supervisor serves for it, and a closer for whatever relays
+	// them here. Nil means the workspace is not a sidecar's.
+	SupervisorProxies func(ctx context.Context, tool string) (ProxyEndpoints, func() error, error)
+	// PrivateRoot is where each tool's private directory is created, so a host
+	// confining its agent can deny the agent one path. Empty means the system
+	// temp directory.
+	PrivateRoot string
 }
 
 // Workspace is the run-scoped environment of a run's inline tools. A run's
@@ -35,7 +48,10 @@ type WorkspaceOptions struct {
 // directory instead of the workspace, and proxies start once. Post at PhaseRun
 // tears all of it down, whatever the run's outcome.
 type Workspace struct {
-	wrap shell.WrapFunc
+	wrap          shell.WrapFunc
+	release       func(ctx context.Context, tool string, grants []credproxy.Grant) ([]credproxy.Grant, error)
+	privateRoot   string
+	remoteProxies func(ctx context.Context, tool string) (ProxyEndpoints, func() error, error)
 
 	mu       sync.Mutex
 	cwd      string
@@ -45,6 +61,7 @@ type Workspace struct {
 }
 
 type boundTool struct {
+	name        string
 	tool        api.InlineTool
 	credentials api.ToolCredentials
 }
@@ -57,10 +74,16 @@ type environment struct {
 }
 
 func NewWorkspace(opts WorkspaceOptions) *Workspace {
-	w := &Workspace{wrap: opts.SandboxWrap, tools: map[string]boundTool{}}
+	w := &Workspace{wrap: opts.SandboxWrap, release: opts.ReleaseGrants, remoteProxies: opts.SupervisorProxies,
+		privateRoot: opts.PrivateRoot, tools: map[string]boundTool{}}
 	w.setRun(opts.Cwd, opts.Setup)
 	return w
 }
+
+// Prepare prepares every bound tool's environment in the workspace's own cwd,
+// for a host that runs no agent hooks — a sidecar's task runner. Close tears
+// it down.
+func (w *Workspace) Prepare(ctx context.Context) error { return w.prepare(ctx) }
 
 func (w *Workspace) Name() string { return "inline-tools" }
 
@@ -108,14 +131,14 @@ func (w *Workspace) setRun(cwd string, setup *shell.Setup) {
 func (w *Workspace) bind(name string, tool api.InlineTool) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	credentials, err := tool.ResolveCredentials(w.run)
+	credentials, err := tool.ResolveCredentials(tool.Placement, w.run)
 	if err != nil {
 		return err
 	}
-	if tool.Placement.Effective() == api.ToolPlacementSandbox && w.wrap == nil {
+	if tool.Placement == api.ToolPlacementSandbox && w.wrap == nil {
 		return fmt.Errorf("placement: sandbox, but the run has no sandbox wrapper to confine it")
 	}
-	w.tools[name] = boundTool{tool: tool, credentials: credentials}
+	w.tools[name] = boundTool{name: name, tool: tool, credentials: credentials}
 	return nil
 }
 
@@ -151,12 +174,17 @@ func (w *Workspace) prepare(ctx context.Context) error {
 }
 
 func (w *Workspace) prepareTool(ctx context.Context, name string, bound boundTool) (*environment, error) {
-	credsDir, err := os.MkdirTemp("", "captain-tool-"+name+"-")
+	if w.privateRoot != "" {
+		if err := os.MkdirAll(w.privateRoot, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	credsDir, err := os.MkdirTemp(w.privateRoot, "captain-tool-"+name+"-")
 	if err != nil {
 		return nil, err
 	}
 	env := &environment{closers: []func() error{func() error { return os.RemoveAll(credsDir) }}}
-	if bound.tool.Placement.Effective() == api.ToolPlacementSandbox {
+	if bound.tool.Placement == api.ToolPlacementSandbox {
 		env.wrap = w.wrap
 	}
 	dbctx := dbcontext.NewContext(ctx)
@@ -206,18 +234,81 @@ func (w *Workspace) toolSetup(ctx dbcontext.Context, bound boundTool, credsDir s
 		}
 		return setup, nil, nil
 	case api.ToolCredentialsProxied:
+		if tool.Placement == api.ToolPlacementSidecar {
+			// The proxies run on the supervisor, where the credentials are;
+			// the tool reaches them through the tunnel and inherits nothing.
+			setup.DotEnv = tool.DotEnv
+			setup.EnvVars = staticEnvVars(tool.EnvVars)
+			extra, closers, err := w.supervisorProxies(ctx, bound.name, credsDir, tool.Grants)
+			env.closers = append(env.closers, closers...)
+			return setup, extra, err
+		}
 		setup.EnvVars = append(staticEnvVars(run.EnvVars), tool.EnvVars...)
 		kube := run.Connections.Kubernetes
 		if tool.Connections.Kubernetes != nil {
 			kube = tool.Connections.Kubernetes
 		}
-		extra, closers, err := startProxies(ctx, proxyOptions{dir: credsDir, baseDir: setup.BaseDir, kubernetes: kube, grants: tool.Grants})
+		endpoints, closers, err := serveProxies(ctx, proxyOptions{dir: credsDir, baseDir: setup.BaseDir, kubernetes: kube, grants: tool.Grants})
+		env.closers = append(env.closers, closers...)
+		if err != nil {
+			return setup, nil, err
+		}
+		extra, err := ProxiedEnv(credsDir, endpoints, tool.Grants)
+		return setup, extra, err
+	case api.ToolCredentialsSidecar:
+		// The sidecar's own credentials: everything the tool declares is
+		// resolved here, and nothing is inherited — the run's setup is the
+		// supervisor's.
+		setup.DotEnv = tool.DotEnv
+		setup.EnvVars, setup.Connections = tool.EnvVars, tool.Connections
+		return setup, nil, nil
+	case api.ToolCredentialsSidecarProxied:
+		setup.DotEnv = tool.DotEnv
+		setup.EnvVars = staticEnvVars(tool.EnvVars)
+		extra, closers, err := w.sidecarProxies(ctx, bound, credsDir)
 		env.closers = append(env.closers, closers...)
 		return setup, extra, err
 	default:
 		setup.EnvVars = append(staticEnvVars(run.EnvVars), tool.EnvVars...)
 		return setup, nil, nil
 	}
+}
+
+// supervisorProxies points a proxied sidecar tool at the proxies the supervisor
+// serves for it, as reached from this host.
+func (w *Workspace) supervisorProxies(ctx context.Context, tool, credsDir string, grants []credproxy.Grant) ([]string, []func() error, error) {
+	if w.remoteProxies == nil {
+		return nil, nil, fmt.Errorf("placement: sidecar with credentials: proxied, but this workspace reaches no supervisor proxies")
+	}
+	endpoints, closer, err := w.remoteProxies(ctx, tool)
+	var closers []func() error
+	if closer != nil {
+		closers = append(closers, closer)
+	}
+	if err != nil {
+		return nil, closers, err
+	}
+	extra, err := ProxiedEnv(credsDir, endpoints, grants)
+	return extra, closers, err
+}
+
+// sidecarProxies runs a sidecar-proxied tool's egress proxy in this process
+// with grant values released once by the supervisor. The values live only in
+// the proxy's memory; the tool gets placeholders, as under proxied.
+func (w *Workspace) sidecarProxies(ctx context.Context, bound boundTool, credsDir string) ([]string, []func() error, error) {
+	if w.release == nil {
+		return nil, nil, fmt.Errorf("credentials: sidecar-proxied, but this workspace has no supervisor to release the grants")
+	}
+	grants, err := w.release(ctx, bound.name, bound.tool.Grants)
+	if err != nil {
+		return nil, nil, err
+	}
+	endpoints, closer, err := ServeEgressProxy(grants, credproxy.StaticResolver)
+	if err != nil {
+		return nil, nil, err
+	}
+	extra, err := ProxiedEnv(credsDir, endpoints, bound.tool.Grants)
+	return extra, []func() error{closer}, err
 }
 
 // close runs the closers newest first: a proxy stops before the files it

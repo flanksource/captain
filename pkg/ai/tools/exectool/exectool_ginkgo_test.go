@@ -68,7 +68,6 @@ var _ = Describe("Inline exec tools", func() {
 		return definitions[0]
 	}
 
-
 	attempts := func() string {
 		count, err := os.ReadFile(filepath.Join(dir, "count"))
 		Expect(err).NotTo(HaveOccurred())

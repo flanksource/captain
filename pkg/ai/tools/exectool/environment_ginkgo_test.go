@@ -139,8 +139,28 @@ var _ = Describe("Inline tool environments", func() {
 			}}}
 			listNamespaces := run(runSetup, api.InlineTool{Credentials: api.ToolCredentialsProxied, Exec: `
 server=$(sed -n 's/^ *server: //p' "$KUBECONFIG")
+token=$(sed -n 's/^ *token: //p' "$KUBECONFIG")
 if grep -q "` + kubeToken + `" "$KUBECONFIG"; then echo leaked; exit 1; fi
-curl -fsS "$server/api/v1/namespaces"`})
+echo "anonymous=$(curl -s -o /dev/null -w '%{http_code}' "$server/api/v1/namespaces")"
+curl -fsS -H "Authorization: Bearer $token" "$server/api/v1/namespaces"`})
+
+			result, err := listNamespaces()
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("anonymous=401\n" + `{"kind":"NamespaceList"}`))
+			Expect(*requests).To(Equal([]string{"/api/v1/namespaces"}))
+		})
+
+		It("reaches the kube proxy directly when the tool also has an egress proxy", func() {
+			kubeconfig, requests := fakeKubernetes()
+			grant := credproxy.Grant{Name: "gh", URL: "https://api.example.com", Methods: []string{"GET"}, Paths: []string{"/"}}
+			listNamespaces := run(nil, api.InlineTool{Credentials: api.ToolCredentialsProxied, Grants: []credproxy.Grant{grant},
+				Setup: shell.Setup{Connections: connection.ExecConnections{Kubernetes: &connection.KubernetesConnection{
+					KubeconfigConnection: connection.KubeconfigConnection{Kubeconfig: &types.EnvVar{ValueStatic: kubeconfig}},
+				}}}, Exec: `
+server=$(sed -n 's/^ *server: //p' "$KUBECONFIG")
+token=$(sed -n 's/^ *token: //p' "$KUBECONFIG")
+curl -fsS -H "Authorization: Bearer $token" "$server/api/v1/namespaces"`})
 
 			result, err := listNamespaces()
 
@@ -157,7 +177,7 @@ curl -fsS "$server/api/v1/namespaces"`})
 			Expect(err).NotTo(HaveOccurred())
 			env := result.(string)
 			Expect(env).To(ContainSubstring("GH_AUTHORIZATION=" + grant.Placeholder("Authorization")))
-			Expect(env).To(MatchRegexp(`(?m)^HTTPS_PROXY=http://127\.0\.0\.1:\d+$`))
+			Expect(env).To(MatchRegexp(`(?m)^HTTPS_PROXY=http://captain:[0-9a-f]{64}@127\.0\.0\.1:\d+$`))
 			Expect(env).To(ContainSubstring("CA=-----BEGIN CERTIFICATE-----"))
 			Expect(env).NotTo(ContainSubstring(grantSecret))
 		})
@@ -169,6 +189,15 @@ curl -fsS "$server/api/v1/namespaces"`})
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(strings.TrimSpace(result.(string))).To(Equal("403"))
+		})
+
+		It("refuses a client that found the proxy's port but not its secret", func() {
+			grant := credproxy.Grant{Name: "gh", URL: "https://api.example.com", Methods: []string{"GET"}, Paths: []string{"/"}}
+			result, err := run(nil, api.InlineTool{Grants: []credproxy.Grant{grant},
+				Exec: `curl -s -o /dev/null -w '%{http_connect}' --proxy "http://${HTTPS_PROXY#*@}" https://api.example.com/ || true`})()
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(strings.TrimSpace(result.(string))).To(Equal("407"))
 		})
 	})
 
