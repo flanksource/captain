@@ -52,6 +52,29 @@ var _ = Describe("Promptfile linter", func() {
 		Expect(results[0].Test().Sum().Failed).To(Equal(1))
 	})
 
+	DescribeTable("reports broken prompt links as file warnings", func(explicit, cycle bool) {
+		link := filepath.Join(directory, "broken.prompt")
+		target := filepath.Join(directory, "missing.prompt")
+		if cycle {
+			target = link
+		}
+		Expect(os.Symlink(target, link)).To(Succeed())
+		write(filepath.Join(directory, "healthy.prompt"), "Review.\n")
+		var paths []string
+		if explicit {
+			paths = []string{"broken.prompt", "healthy.prompt"}
+		}
+		results := Run(context.Background(), Options{WorkDir: directory, Paths: paths})
+		Expect(results[0].Success).To(BeTrue(), results[0].Error)
+		Expect(results[0].FileCount).To(Equal(2))
+		Expect(results[0].Violations).To(ConsistOf(And(
+			HaveField("File", "broken.prompt"), HaveField("Severity", models.SeverityWarning),
+			HaveField("Rule.Method", "promptfile/symlink"),
+		)))
+		Expect(results[0].Test().Sum().Failed).To(BeZero())
+	}, Entry("discovered broken target", false, false), Entry("explicit broken target", true, false),
+		Entry("discovered cycle", false, true), Entry("explicit cycle", true, true))
+
 	It("defaults to the working directory and orders findings by path", func() {
 		write(filepath.Join(directory, "z.prompt"), "{{#if broken}}\n")
 		write(filepath.Join(directory, "a.prompt"), "{{#if broken}}\n")
@@ -80,6 +103,17 @@ var _ = Describe("Promptfile linter", func() {
 		Expect(results).To(HaveLen(1))
 		Expect(results[0].Success).To(BeFalse())
 		Expect(results[0].Error).To(ContainSubstring(".prompt"))
+	})
+
+	It("keeps unreadable ordinary files as failures", func() {
+		path := filepath.Join(directory, "private.prompt")
+		write(path, "Review.\n")
+		Expect(os.Chmod(path, 0)).To(Succeed())
+		DeferCleanup(os.Chmod, path, os.FileMode(0o600))
+		results := Run(context.Background(), Options{WorkDir: directory})
+		Expect(results[0].Success).To(BeFalse())
+		Expect(results[0].Error).To(ContainSubstring("private.prompt"))
+		Expect(results[0].Test().Sum().Failed).To(Equal(1))
 	})
 
 	It("keeps incomplete-input warnings non-failing and accepts sample inputs", func() {

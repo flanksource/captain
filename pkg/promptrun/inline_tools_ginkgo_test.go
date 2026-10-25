@@ -2,6 +2,7 @@ package promptrun
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/flanksource/commons-db/shell"
 	g "github.com/onsi/ginkgo/v2"
@@ -69,6 +70,58 @@ var _ = g.Describe("Inline tool binding", func() {
 		Expect(resolved["plain"].Credentials).To(Equal(api.ToolCredentialsNone))
 		Expect(resolved["local"].Credentials).To(BeEmpty(), "a supervisor tool is resolved where it runs")
 		Expect(declared["granted"].Credentials).To(BeEmpty(), "the declared tools are not mutated")
+	})
+
+	g.Context("bound for a chat, which drives its provider itself", func() {
+		chatSpec := func(tool api.InlineTool) api.Spec {
+			return api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeAgent}, Tools: api.InlineTools{"where": tool}}
+		}
+
+		g.It("serves every call from one environment, prepared where setup left the chat, until the chat closes it", func() {
+			dir, err := filepath.EvalSymlinks(g.GinkgoT().TempDir())
+			Expect(err).NotTo(HaveOccurred())
+			spec := chatSpec(api.InlineTool{Exec: "pwd", ReadOnly: true})
+			var cfg ai.Config
+
+			workspace, err := BindInlineTools(&spec, &cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Tools).To(HaveLen(1))
+			call := func() (any, error) { return cfg.Tools[0].Handler(context.Background(), map[string]any{}) }
+			_, err = call()
+			Expect(err).To(MatchError(ContainSubstring("not prepared")))
+
+			workspace.SetRun(dir, nil)
+			Expect(workspace.Prepare(context.Background())).To(Succeed())
+			first, err := call()
+			Expect(err).NotTo(HaveOccurred())
+			second, err := call()
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]any{first, second}).To(Equal([]any{dir, dir}))
+
+			Expect(workspace.Close()).To(Succeed())
+			_, err = call()
+			Expect(err).To(MatchError(ContainSubstring("not prepared")))
+		})
+
+		g.It("refuses a tool that would ask when the chat attaches no broker", func() {
+			spec := chatSpec(api.InlineTool{Exec: "true", Destructive: true})
+			var cfg ai.Config
+
+			_, err := BindInlineTools(&spec, &cfg)
+
+			Expect(err).To(MatchError(ContainSubstring(`caller tools where resolve to ask on "anthropic agent" but no approval broker is attached`)))
+		})
+
+		g.It("binds nothing for a spec without tools", func() {
+			spec := api.Spec{Model: api.Model{Name: "sonnet", Mode: api.ModeAgent}}
+			var cfg ai.Config
+
+			workspace, err := BindInlineTools(&spec, &cfg)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(workspace).To(BeNil())
+			Expect(cfg.Tools).To(BeEmpty())
+		})
 	})
 
 	g.It("refreshes the tools' workspace after setup has run", func() {

@@ -76,7 +76,7 @@ type environment struct {
 func NewWorkspace(opts WorkspaceOptions) *Workspace {
 	w := &Workspace{wrap: opts.SandboxWrap, release: opts.ReleaseGrants, remoteProxies: opts.SupervisorProxies,
 		privateRoot: opts.PrivateRoot, tools: map[string]boundTool{}}
-	w.setRun(opts.Cwd, opts.Setup)
+	w.SetRun(opts.Cwd, opts.Setup)
 	return w
 }
 
@@ -93,7 +93,7 @@ func (w *Workspace) PreRun(hc *agent.HookContext) error {
 	if cwd == "" {
 		cwd = hc.Request.Cwd()
 	}
-	w.setRun(cwd, hc.Request.Setup)
+	w.SetRun(cwd, hc.Request.Setup)
 	return w.prepare(hc)
 }
 
@@ -116,7 +116,9 @@ func (w *Workspace) Close() error {
 	return errors.Join(errs...)
 }
 
-func (w *Workspace) setRun(cwd string, setup *shell.Setup) {
+// SetRun points the workspace at where the run's setup left it, for a host
+// that applies setup itself and then calls Prepare — a chat.
+func (w *Workspace) SetRun(cwd string, setup *shell.Setup) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.cwd = cwd

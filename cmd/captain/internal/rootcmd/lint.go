@@ -24,7 +24,7 @@ func RegisterLintCommand(root *cobra.Command, isStdinAvailable func() bool) {
 	parent := &cobra.Command{Use: "lint", Short: "Validate Captain configuration files"}
 	clicky.MarkLocalOnly(parent)
 	root.AddCommand(parent)
-	command := clicky.AddNamedCommandWithContext("promptfile", parent, promptfileLintOptions{}, func(ctx context.Context, options promptfileLintOptions) ([]*linters.LinterResult, error) {
+	command := clicky.AddNamedCommandWithContext("promptfile", parent, promptfileLintOptions{}, func(ctx context.Context, options promptfileLintOptions) (promptfile.Results, error) {
 		workDir, err := os.Getwd()
 		if err != nil {
 			return promptfileLintFailure(err)
@@ -51,6 +51,6 @@ func RegisterLintCommand(root *cobra.Command, isStdinAvailable func() bool) {
 	command.Long = "Validate .prompt files using Gavel's linter framework. Directory discovery respects Git ignore rules. Missing frontmatter inputs warn and defer declaration checks; use --var or --vars for full validation. Missing body variables are allowed. Warnings exit successfully; errors exit nonzero."
 }
 
-func promptfileLintFailure(err error) ([]*linters.LinterResult, error) {
-	return []*linters.LinterResult{{Linter: "promptfile", Error: err.Error(), Violations: []models.Violation{}}}, err
+func promptfileLintFailure(err error) (promptfile.Results, error) {
+	return promptfile.Results{&linters.LinterResult{Linter: "promptfile", Error: err.Error(), Violations: []models.Violation{}}}, err
 }
