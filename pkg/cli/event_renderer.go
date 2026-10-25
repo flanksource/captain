@@ -67,8 +67,10 @@ type EventRenderer struct {
 	// paneLine holds a partial line until its newline arrives, because the pane
 	// terminates whatever it flushes and would split a row written in pieces.
 	paneLine strings.Builder
+	// outOfBand holds a partial line written through Writer until its newline.
+	outOfBand strings.Builder
 
-	// mu serialises Handle, Flush and Suspend: an approval prompt suspends the
+	// mu serialises Handle, Flush, Suspend and Writer: an approval prompt suspends the
 	// renderer from the tool's goroutine while events stream on another.
 	// suspended counts open suspensions, and held keeps the events they delay.
 	mu        sync.Mutex

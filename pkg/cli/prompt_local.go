@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var errPromptLinkTarget = errors.New("must target a regular file without further links")
+
 func listLocalPromptRecords(source promptSource) ([]promptRecord, error) {
 	root, err := filepath.EvalSymlinks(source.Root)
 	if err != nil {
@@ -63,7 +65,7 @@ func linkedPromptRecords(source promptSource, rel string) ([]promptRecord, error
 	path := filepath.Join(source.Root, rel)
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("resolve prompt link %s: %w", path, err)
+		return []promptRecord{invalidPromptLink(source, rel, fmt.Errorf("resolve prompt link %s: %w", path, err))}, nil
 	}
 	if !info.IsDir() {
 		if !strings.HasSuffix(rel, ".prompt") {
@@ -77,7 +79,7 @@ func linkedPromptRecords(source promptSource, rel string) ([]promptRecord, error
 	}
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return nil, fmt.Errorf("read linked prompt directory %s: %w", path, err)
+		return []promptRecord{invalidPromptLink(source, rel, fmt.Errorf("read linked prompt directory %s: %w", path, err))}, nil
 	}
 	var records []promptRecord
 	for _, entry := range entries {
@@ -118,7 +120,11 @@ func localPromptRecord(source promptSource, rel string) (promptRecord, error) {
 			if index != 0 || len(parts) > 2 || excludedPromptDirectory(parts[0]) {
 				return promptRecord{}, fmt.Errorf("prompt %s: links are only supported directly inside a prompt source, with immediate files only", record.Path)
 			}
-			return linkedPromptRecord(record)
+			linked, err := linkedPromptRecord(record)
+			if err != nil && !errors.Is(err, errPromptLinkTarget) {
+				return invalidPromptLink(source, rel, err), nil
+			}
+			return linked, err
 		}
 	}
 	if !info.Mode().IsRegular() {
@@ -142,7 +148,7 @@ func linkedPromptRecord(record promptRecord) (promptRecord, error) {
 		return promptRecord{}, fmt.Errorf("inspect linked prompt %s: %w", record.Path, err)
 	}
 	if !info.Mode().IsRegular() {
-		return promptRecord{}, fmt.Errorf("linked prompt %s must target a regular file without further links", record.Path)
+		return promptRecord{}, fmt.Errorf("linked prompt %s %w", record.Path, errPromptLinkTarget)
 	}
 	record.ReadPath = target
 	record.Source.Writable = false
