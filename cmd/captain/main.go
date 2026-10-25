@@ -86,7 +86,7 @@ func newRootCommand() *cobra.Command {
 		Dirty:   dirty,
 	})
 
-	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
+	clicky.BindAllFlagsToCommand(rootCmd, "format")
 	cli.BindDatabaseFlags(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
 	// wire logging can be toggled, e.g. -Plog.level.http=trace or

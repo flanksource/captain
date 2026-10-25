@@ -5,6 +5,7 @@ import (
 
 	"github.com/flanksource/commons-db/shell"
 
+	"github.com/flanksource/captain/pkg/ai"
 	aitools "github.com/flanksource/captain/pkg/ai/tools"
 	"github.com/flanksource/captain/pkg/ai/tools/exectool"
 	"github.com/flanksource/captain/pkg/api"
@@ -73,6 +74,38 @@ func bindInlineTools(in *Input) error {
 	in.Config.Tools = append(append([]api.ToolDefinition(nil), in.Config.Tools...), definitions...)
 	in.inlineTools = workspace
 	return nil
+}
+
+// BindInlineTools binds a spec's inline tools for a host that drives its
+// provider itself rather than through Run: a chat, whose turns share one tools
+// environment. The tools are added to cfg.Tools and the returned workspace is
+// nil when the spec declares none. The host points it at where setup left the
+// chat (Workspace.SetRun), prepares it before the first turn and closes it
+// when the chat ends. As Run's preflight does, a tool that would ask is
+// refused on a runtime that needs a broker when cfg attaches none.
+func BindInlineTools(spec *api.Spec, cfg *ai.Config) (*exectool.Workspace, error) {
+	in := Input{Resolved: api.ResolvedSpec{Spec: *spec}, Config: *cfg}
+	if err := bindInlineTools(&in); err != nil {
+		return nil, err
+	}
+	if in.inlineTools == nil {
+		return nil, nil
+	}
+	candidates, err := ai.ResolveCandidates(executingModel(in))
+	if err != nil {
+		return nil, fmt.Errorf("promptrun model: %w", err)
+	}
+	admission, err := admitCallerTools(in, in.Resolved.Spec)
+	if err != nil {
+		return nil, err
+	}
+	for _, model := range candidates {
+		if err := admission.check(model); err != nil {
+			return nil, err
+		}
+	}
+	*spec, *cfg = in.Resolved.Spec, in.Config
+	return in.inlineTools, nil
 }
 
 // checkSidecarTools refuses, before anything is dispatched, a sidecar tool the
