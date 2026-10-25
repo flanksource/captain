@@ -11,6 +11,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/fixture"
+	"github.com/flanksource/captain/pkg/credproxy"
 	"github.com/flanksource/captain/pkg/credproxy/kubeproxy"
 	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 	"github.com/flanksource/captain/pkg/ai/observation"
@@ -136,7 +137,11 @@ func startObservationCapture(
 		session.kubeCapture.ReasonCode = "runtime_kubernetes_proxy_unreachable"
 		return session, nil
 	}
-	proxy, err := kubeproxy.Start(strings.TrimSpace(flags["kubeconfig"]))
+	token, err := credproxy.NewSecret()
+	if err != nil {
+		return nil, err
+	}
+	proxy, err := kubeproxy.Start(kubeproxy.Options{Kubeconfig: strings.TrimSpace(flags["kubeconfig"]), Token: token})
 	if err != nil {
 		session.kubeCapture.Status = api.ObservationCaptureUnavailable
 		session.kubeCapture.ReasonCode = "kubernetes_proxy_start_failed"
@@ -151,7 +156,7 @@ func startObservationCapture(
 		session.blockingCode = kubernetesCaptureUnavailableErrorCode
 		return session, nil
 	}
-	kubeconfig, err := proxy.WriteKubeconfig(kubeDir)
+	kubeconfig, err := kubeproxy.WriteKubeconfig(kubeDir, proxy.Endpoint())
 	if err != nil {
 		proxy.Close()
 		_ = os.RemoveAll(kubeDir)

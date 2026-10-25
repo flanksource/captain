@@ -1,7 +1,9 @@
 package prompt
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"regexp"
 	"strconv"
@@ -18,11 +20,20 @@ type ValidationOptions struct {
 }
 
 type Diagnostic struct {
-	Rule     string
-	Severity string
-	Message  string
-	Line     int
-	Column   int
+	Rule     string `json:"rule"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	Line     int    `json:"line,omitempty"`
+	Column   int    `json:"column,omitempty"`
+}
+
+func SymlinkDiagnostic(err error) Diagnostic {
+	message := err.Error()
+	var pathError *fs.PathError
+	if errors.As(err, &pathError) {
+		message = pathError.Err.Error()
+	}
+	return Diagnostic{Rule: "promptfile/symlink", Severity: "warning", Message: "linked prompt unavailable: " + message}
 }
 
 var (
@@ -128,7 +139,7 @@ func validateInlineTools(spec api.Spec) []Diagnostic {
 		if tool.Destructive && tool.Retry != nil && tool.Retry.Attempts > 1 {
 			warn("tools.%s is destructive and retried: a failed attempt may already have had its effect", name)
 		}
-		if tool.Placement.Effective() == api.ToolPlacementSandbox && tool.Credentials == api.ToolCredentialsDirect {
+		if tool.Placement == api.ToolPlacementSandbox && tool.Credentials == api.ToolCredentialsDirect {
 			warn("tools.%s hands real credentials into the sandbox; credentials: proxied keeps them on the host", name)
 		}
 		if len(runConnections) > 0 && (tool.Credentials == api.ToolCredentialsNone || tool.Credentials == api.ToolCredentialsProxied) {

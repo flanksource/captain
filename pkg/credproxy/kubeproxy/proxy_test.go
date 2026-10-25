@@ -29,7 +29,7 @@ func TestProxy_ForwardsAndLogs(t *testing.T) {
 	kubeconfig := filepath.Join(tmp, "kubeconfig")
 	writeKubeconfig(t, kubeconfig, upstream.URL, "test-token")
 
-	proxy, err := Start(kubeconfig)
+	proxy, err := Start(Options{Kubeconfig: kubeconfig})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,13 +85,13 @@ func TestProxy_WriteKubeconfig(t *testing.T) {
 	srcKubeconfig := filepath.Join(tmp, "src-kubeconfig")
 	writeKubeconfig(t, srcKubeconfig, upstream.URL, "")
 
-	proxy, err := Start(srcKubeconfig)
+	proxy, err := Start(Options{Kubeconfig: srcKubeconfig})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer proxy.Close()
 
-	out, err := proxy.WriteKubeconfig(tmp)
+	out, err := WriteKubeconfig(tmp, proxy.Endpoint())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +101,60 @@ func TestProxy_WriteKubeconfig(t *testing.T) {
 	}
 	if !strings.Contains(string(data), proxy.URL()) {
 		t.Errorf("generated kubeconfig missing proxy URL %q:\n%s", proxy.URL(), data)
+	}
+}
+
+// A token-guarded proxy serves only clients presenting its token, and the
+// upstream sees the real credential in place of it.
+func TestProxy_TokenGuardsTheCluster(t *testing.T) {
+	const proxyToken, realToken = "proxy-only-token", "real-cluster-token"
+	var upstreamAuth []string
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamAuth = append(upstreamAuth, r.Header.Get("Authorization"))
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+	tmp := t.TempDir()
+	kubeconfig := filepath.Join(tmp, "kubeconfig")
+	writeKubeconfig(t, kubeconfig, upstream.URL, realToken)
+	proxy, err := Start(Options{Kubeconfig: kubeconfig, Token: proxyToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	status := func(authorization string) int {
+		req, _ := http.NewRequest("GET", proxy.URL()+"/api/v1/pods", nil)
+		if authorization != "" {
+			req.Header.Set("Authorization", authorization)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := status(""); got != http.StatusUnauthorized {
+		t.Errorf("no token: status %d, want 401", got)
+	}
+	if got := status("Bearer guessed"); got != http.StatusUnauthorized {
+		t.Errorf("wrong token: status %d, want 401", got)
+	}
+	if got := status("Bearer " + proxyToken); got != http.StatusOK {
+		t.Errorf("proxy token: status %d, want 200", got)
+	}
+	if len(upstreamAuth) != 1 || upstreamAuth[0] != "Bearer "+realToken {
+		t.Errorf("upstream Authorization = %q, want only the real credential", upstreamAuth)
+	}
+
+	out, err := WriteKubeconfig(filepath.Join(tmp, "proxy"), proxy.Endpoint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(out)
+	if !strings.Contains(string(data), proxyToken) || strings.Contains(string(data), realToken) {
+		t.Errorf("proxy kubeconfig must carry the proxy token and never the real one:\n%s", data)
 	}
 }
 

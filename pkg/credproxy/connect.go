@@ -76,7 +76,7 @@ func (p *Proxy) serveTunnelled(w http.ResponseWriter, r *http.Request, authority
 	}
 	r.URL.Scheme = "https"
 	r.URL.Host = authority
-	p.ServeHTTP(w, r)
+	p.serveGranted(w, r)
 }
 
 func withDefaultPort(hostport, port string) string {

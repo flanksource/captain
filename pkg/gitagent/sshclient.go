@@ -55,22 +55,7 @@ func runSSHClient(args []string, stdin io.Reader, stdout, stderr io.Writer) (int
 	if at := strings.LastIndex(host, "@"); at >= 0 {
 		user, host = host[:at], host[at+1:]
 	}
-	signer, _, err := EnsureKeyPair(keyPath)
-	if err != nil {
-		return 255, err
-	}
-	config := &gossh.ClientConfig{
-		User: user,
-		Auth: []gossh.AuthMethod{gossh.PublicKeys(signer)},
-		HostKeyCallback: func(_ string, _ net.Addr, key gossh.PublicKey) error {
-			if got := gossh.FingerprintSHA256(key); got != pinned {
-				return fmt.Errorf("host key %s does not match the pinned %s", got, pinned)
-			}
-			return nil
-		},
-		Timeout: 30 * time.Second,
-	}
-	client, err := gossh.Dial("tcp", net.JoinHostPort(host, port), config)
+	client, err := dialSSH(net.JoinHostPort(host, port), user, keyPath, pinned)
 	if err != nil {
 		return 255, err
 	}
@@ -90,6 +75,29 @@ func runSSHClient(args []string, stdin io.Reader, stdout, stderr io.Writer) (int
 		return 255, err
 	}
 	return 0, nil
+}
+
+// dialSSH connects with a captain-managed key, accepting only the host key
+// whose fingerprint is pinned: the endpoint's name is never its identity.
+func dialSSH(addr, user, keyPath, pinned string) (*gossh.Client, error) {
+	if keyPath == "" || pinned == "" {
+		return nil, fmt.Errorf("an ssh connection needs a key and a pinned host fingerprint")
+	}
+	signer, _, err := EnsureKeyPair(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	return gossh.Dial("tcp", addr, &gossh.ClientConfig{
+		User: user,
+		Auth: []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback: func(_ string, _ net.Addr, key gossh.PublicKey) error {
+			if got := gossh.FingerprintSHA256(key); got != pinned {
+				return fmt.Errorf("host key %s does not match the pinned %s", got, pinned)
+			}
+			return nil
+		},
+		Timeout: 30 * time.Second,
+	})
 }
 
 // valueFlags are the ssh(1) options git may pass that consume the following

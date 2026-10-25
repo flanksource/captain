@@ -4,6 +4,7 @@
 package kubeproxy
 
 import (
+	"crypto/subtle"
 	"fmt"
 	"net"
 	"net/http"
@@ -32,9 +33,20 @@ func NewRequestLogger(f *os.File) *RequestLogger {
 	return proxylog.NewLogger(f)
 }
 
+// Options configure Start.
+type Options struct {
+	// Kubeconfig holds the real credentials; empty uses default discovery.
+	Kubeconfig string
+	// Token, when set, is the bearer token every client must present. It is
+	// written into WriteKubeconfig's output and stripped before forwarding, so
+	// a process that only finds the loopback port cannot borrow the cluster.
+	Token string
+}
+
 type Proxy struct {
 	server *httptest.Server
 	url    *url.URL
+	token  string
 
 	mu      sync.Mutex
 	logger  *RequestLogger
@@ -75,8 +87,8 @@ type CommandEvent struct {
 // Start loads kubeconfig (or default discovery if empty), spins up an HTTP
 // reverse proxy on a random localhost port, and returns the running Proxy.
 // Callers must Close it.
-func Start(kubeconfigPath string) (*Proxy, error) {
-	cfg, err := loadConfig(kubeconfigPath)
+func Start(opts Options) (*Proxy, error) {
+	cfg, err := loadConfig(opts.Kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
 	}
@@ -98,8 +110,13 @@ func Start(kubeconfigPath string) (*Proxy, error) {
 		Transport: transport,
 	}
 
-	p := &Proxy{}
+	p := &Proxy{token: opts.Token}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !p.authorized(r) {
+			http.Error(w, "captain-kube-proxy: unauthorized", http.StatusUnauthorized)
+			return
+		}
+		r.Header.Del("Authorization")
 		start := time.Now()
 		rec := proxylog.NewStatusRecorder(w)
 		rp.ServeHTTP(rec, r)
@@ -127,6 +144,14 @@ func Start(kubeconfigPath string) (*Proxy, error) {
 }
 
 func (p *Proxy) URL() string { return p.server.URL }
+
+func (p *Proxy) authorized(r *http.Request) bool {
+	if p.token == "" {
+		return true
+	}
+	presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(presented), []byte(p.token)) == 1
+}
 
 func (p *Proxy) Close() {
 	if p == nil || p.server == nil {
@@ -210,11 +235,25 @@ func kubernetesResource(requestPath string) string {
 	return resource
 }
 
-// WriteKubeconfig generates a minimal kubeconfig pointing at the proxy with no
-// auth (the proxy injects auth on the way out). Callers should remove the file.
-func (p *Proxy) WriteKubeconfig(dir string) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+// Endpoint is where a client reaches a kube proxy and the token it presents —
+// the proxy itself, or a forwarder that relays to it.
+type Endpoint struct {
+	URL   string
+	Token string
+}
+
+func (p *Proxy) Endpoint() Endpoint { return Endpoint{URL: p.URL(), Token: p.token} }
+
+// WriteKubeconfig generates a minimal kubeconfig pointing at a proxy endpoint.
+// Its only credential is the proxy's own token, if any: the proxy injects the
+// real auth on the way out. Callers should remove the file.
+func WriteKubeconfig(dir string, endpoint Endpoint) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
+	}
+	user := map[string]any{}
+	if endpoint.Token != "" {
+		user["token"] = endpoint.Token
 	}
 	contents := map[string]any{
 		"apiVersion":      "v1",
@@ -223,7 +262,7 @@ func (p *Proxy) WriteKubeconfig(dir string) (string, error) {
 		"clusters": []map[string]any{{
 			"name": "captain-proxy",
 			"cluster": map[string]any{
-				"server":                   p.URL(),
+				"server":                   endpoint.URL,
 				"insecure-skip-tls-verify": true,
 			},
 		}},
@@ -236,7 +275,7 @@ func (p *Proxy) WriteKubeconfig(dir string) (string, error) {
 		}},
 		"users": []map[string]any{{
 			"name": "captain-proxy",
-			"user": map[string]any{},
+			"user": user,
 		}},
 	}
 	data, err := yaml.Marshal(contents)

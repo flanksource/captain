@@ -59,7 +59,7 @@ func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
 	hooks = append(hooks, verifyHooks...)
 	hooks = append(hooks, in.Hooks...)
 	hooks = append(hooks, afterHooks...)
-	if in.Provider == nil && in.Resolved.Spec.Setup != nil {
+	if in.Provider == nil && in.Relocated == nil && in.Resolved.Spec.Setup != nil {
 		hooks = append(hooks, &setup.Plugin{})
 	}
 	// After setup: inline tool environments are prepared where setup moved the

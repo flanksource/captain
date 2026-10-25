@@ -2,6 +2,7 @@ package registry
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -58,19 +59,30 @@ const (
 	// ToolPlacementSandbox runs the tool inside the run's sandbox, through the
 	// adapter's command wrapper.
 	ToolPlacementSandbox ToolPlacement = "sandbox"
+	// ToolPlacementSupervisor runs a relocated run's tool on the supervisor, the
+	// host the run was submitted from; the remote agent reaches it over the
+	// git-agent tunnel.
+	ToolPlacementSupervisor ToolPlacement = "supervisor"
+	// ToolPlacementSidecar runs a relocated run's tool on the git-agent sidecar,
+	// next to the agent's worktree.
+	ToolPlacementSidecar ToolPlacement = "sidecar"
 )
 
-// Valid reports whether p names a placement; empty is valid and means host.
+// Valid reports whether p names a placement; empty is valid and means the
+// sandbox's default (see Sandbox.ResolveToolPlacement).
 func (p ToolPlacement) Valid() bool {
-	return p == "" || p == ToolPlacementHost || p == ToolPlacementSandbox
+	switch p {
+	case "", ToolPlacementHost, ToolPlacementSandbox, ToolPlacementSupervisor, ToolPlacementSidecar:
+		return true
+	}
+	return false
 }
 
-// Effective resolves the default: an unset placement runs on the host.
-func (p ToolPlacement) Effective() ToolPlacement {
-	if p == "" {
-		return ToolPlacementHost
-	}
-	return p
+// Confined reports whether the tool runs away from Captain's own process —
+// inside the run's sandbox or on a sidecar — where secrets go only when the
+// prompt says how.
+func (p ToolPlacement) Confined() bool {
+	return p == ToolPlacementSandbox || p == ToolPlacementSidecar
 }
 
 // Sandbox describes one sandbox adapter: what it can do and which runtime modes
@@ -95,29 +107,30 @@ type Sandbox struct {
 	// field exists to prevent.
 	Modes []RuntimeMode
 	// ToolPlacements are where a run under this adapter can execute its inline
-	// tools. A placement outside the list is refused before the run starts: a
-	// tool the agent cannot reach, or one silently run outside the boundary it
-	// asked for, is the failure this field exists to prevent.
+	// tools, the default first. A placement outside the list is refused before
+	// the run starts: a tool the agent cannot reach, or one silently run outside
+	// the boundary it asked for, is the failure this field exists to prevent.
 	ToolPlacements []ToolPlacement
 }
 
-// ValidateToolPlacement fails loud when an adapter cannot run a tool where it
-// asks to run, naming what it can do instead.
-func (s *Sandbox) ValidateToolPlacement(placement ToolPlacement) error {
-	placement = placement.Effective()
-	for _, supported := range s.ToolPlacements {
-		if supported == placement {
-			return nil
-		}
-	}
+// ResolveToolPlacement resolves an unset placement to the adapter's default
+// and fails loud when the adapter cannot run a tool where it asks to run,
+// naming what it can do instead.
+func (s *Sandbox) ResolveToolPlacement(placement ToolPlacement) (ToolPlacement, error) {
 	if len(s.ToolPlacements) == 0 {
-		return fmt.Errorf("sandbox %q cannot run inline tools", s.Kind)
+		return "", fmt.Errorf("sandbox %q cannot run inline tools", s.Kind)
+	}
+	if placement == "" {
+		return s.ToolPlacements[0], nil
+	}
+	if slices.Contains(s.ToolPlacements, placement) {
+		return placement, nil
 	}
 	supported := make([]string, len(s.ToolPlacements))
 	for i, p := range s.ToolPlacements {
 		supported[i] = string(p)
 	}
-	return fmt.Errorf("sandbox %q cannot run an inline tool with placement %q; it supports: %s",
+	return "", fmt.Errorf("sandbox %q cannot run an inline tool with placement %q; it supports: %s",
 		s.Kind, placement, strings.Join(supported, ", "))
 }
 

@@ -3,11 +3,14 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/callertools"
+	"github.com/flanksource/captain/pkg/ai/tools/exectool"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 	"github.com/flanksource/captain/pkg/sandbox/adapter"
@@ -72,7 +75,7 @@ func remoteExecProviderFor(req *ai.Request, cfg ai.Config) (ai.Provider, error) 
 		_ = sandbox.Close()
 		return nil, err
 	}
-	return &remoteExecProvider{executor: executor, sandbox: sandbox, model: cfg.Model.Name, runtime: api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)}, nil
+	return &remoteExecProvider{executor: executor, sandbox: sandbox, cfg: cfg, model: cfg.Model.Name, runtime: api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)}, nil
 }
 
 // remoteExecProvider adapts a RemoteExecutor to ai.Provider. Streaming is
@@ -81,6 +84,7 @@ func remoteExecProviderFor(req *ai.Request, cfg ai.Config) (ai.Provider, error) 
 type remoteExecProvider struct {
 	executor api.RemoteExecutor
 	sandbox  api.Sandbox
+	cfg      ai.Config
 	model    string
 	runtime  api.Runtime
 	close    sync.Once
@@ -94,8 +98,88 @@ type bufferedOnlyProvider struct{ ai.Provider }
 
 func (p bufferedOnlyProvider) Unwrap() ai.Provider { return p.Provider }
 
+// Execute serves the run's caller tools on this host for as long as the remote
+// run lasts — the agent reaches them through the adapter's transport, and
+// approvals are decided here by the run's own broker — then hands the run over.
 func (p *remoteExecProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
-	return p.executor.Execute(ctx, req)
+	tools, err := callertools.StartCLI(ctx, p.cfg, req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tools.Close() }()
+	var opts api.RemoteExecOptions
+	if tools != nil {
+		endpoint := tools.Endpoint()
+		opts.CallerTools = &endpoint
+	}
+	releases, closeReleases, err := sidecarCredentialReleases(ctx, req.Tools)
+	defer closeReleases()
+	if err != nil {
+		return nil, err
+	}
+	opts.CredentialReleases = releases
+	proxies, closeProxies, err := sidecarToolProxies(ctx, req.Tools)
+	defer closeProxies()
+	if err != nil {
+		return nil, err
+	}
+	opts.ToolProxies = proxies
+	return p.executor.Execute(ctx, req, opts)
+}
+
+// sidecarToolProxies serves each proxied sidecar tool's credential proxies
+// here, where the credentials are, for the tool to reach through the tunnel.
+func sidecarToolProxies(ctx context.Context, tools api.InlineTools) (map[string]api.ToolProxyEndpoints, func(), error) {
+	proxies := map[string]api.ToolProxyEndpoints{}
+	var closers []func() error
+	closeAll := func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			_ = closers[i]()
+		}
+	}
+	for _, name := range tools.Names() {
+		tool := tools[name]
+		if tool.Placement != api.ToolPlacementSidecar || tool.Credentials != api.ToolCredentialsProxied {
+			continue
+		}
+		dir, err := os.MkdirTemp("", "captain-tool-proxy-"+name+"-")
+		if err != nil {
+			return nil, closeAll, err
+		}
+		closers = append(closers, func() error { return os.RemoveAll(dir) })
+		endpoints, closer, err := exectool.ServeToolProxies(ctx, tool, dir)
+		if err != nil {
+			return nil, closeAll, fmt.Errorf("tools.%s: %w", name, err)
+		}
+		closers = append(closers, closer)
+		proxies[name] = endpoints
+	}
+	return proxies, closeAll, nil
+}
+
+// sidecarCredentialReleases serves each sidecar-proxied tool's grant values
+// once, for its proxy on the sidecar to fetch through the tunnel.
+func sidecarCredentialReleases(ctx context.Context, tools api.InlineTools) (map[string]api.CredentialRelease, func(), error) {
+	releases := map[string]api.CredentialRelease{}
+	var closers []func() error
+	closeAll := func() {
+		for _, closer := range closers {
+			_ = closer()
+		}
+	}
+	for _, name := range tools.Names() {
+		tool := tools[name]
+		if tool.Placement != api.ToolPlacementSidecar || tool.Credentials != api.ToolCredentialsSidecarProxied {
+			continue
+		}
+		release, closer, err := exectool.ServeGrantRelease(ctx, name, tool.Grants)
+		if err != nil {
+			return nil, closeAll, fmt.Errorf("tools.%s: %w", name, err)
+		}
+		releases[name] = release
+		closers = append(closers, closer)
+	}
+	return releases, closeAll, nil
 }
 
 func (p *remoteExecProvider) GetModel() string        { return p.model }

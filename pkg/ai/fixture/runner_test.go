@@ -458,7 +458,8 @@ set -eu
 # Pull the proxy URL out of KUBECONFIG and hit it once to simulate kubectl
 # making an API call. Emit a stream-json with a Bash tool_use referencing kubectl.
 proxy_url=$(grep "server:" "$KUBECONFIG" | head -1 | awk '{print $2}')
-curl -sk -o /dev/null "$proxy_url/api/v1/namespaces/prod/pods?limit=10" || true
+proxy_token=$(grep "token:" "$KUBECONFIG" | head -1 | awk '{print $2}')
+curl -sk -o /dev/null -H "Authorization: Bearer $proxy_token" "$proxy_url/api/v1/namespaces/prod/pods?limit=10" || true
 
 cat <<'EOF2'
 {"type":"system","subtype":"init","session_id":"sess-kc"}

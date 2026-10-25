@@ -13,7 +13,9 @@ package registry
 // could run inside (native is enforced by the provider itself), so their tools
 // run on the host. Docker declares none: its container cannot reach the
 // host-side caller-tool endpoint, so no inline tool would be callable. Git
-// Agent runs remotely, with no route back to tools on this host.
+// Agent serves its tools to the remote agent as one MCP server: a supervisor
+// tool (the default) runs here and is reached over the git-agent tunnel, a
+// sidecar tool runs next to the agent's worktree.
 var (
 	OffSandbox = &Sandbox{
 		Kind:           SandboxOff,
@@ -49,7 +51,8 @@ var (
 		// No ModeAPI: the adapter's contract is that the agent's work comes back
 		// as commits, and a direct API call produces no working-tree change to
 		// push.
-		Modes: []RuntimeMode{ModeCLI, ModeAgent, ModeCmux},
+		Modes:          []RuntimeMode{ModeCLI, ModeAgent, ModeCmux},
+		ToolPlacements: []ToolPlacement{ToolPlacementSupervisor, ToolPlacementSidecar},
 	}
 
 	internalSRTSandbox = &Sandbox{

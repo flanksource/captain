@@ -152,18 +152,18 @@ func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPro
 }
 
 func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (result PromptRunResult, err error) {
-	ctx, renderer, err := attachPromptTerminal(ctx, &rendered)
+	ctx, terminal, err := attachPromptTerminal(ctx, &rendered, opts.NoStream)
 	if err != nil {
 		return PromptRunResult{}, err
 	}
-	if renderer != nil {
-		defer func() { err = errors.Join(err, renderer.Flush()) }()
+	if terminal != nil {
+		defer func() { err = errors.Join(err, terminal.Close()) }()
 	}
 	groupOptions := []task.TaskGroupOption{
 		task.WithKind("prompt"),
 		task.WithLabels(promptTaskLabels(rendered, "")),
 	}
-	if renderer != nil {
+	if terminal != nil {
 		groupOptions = append(groupOptions, task.WithNoRender())
 	}
 	group := task.StartGroup[PromptRunResult]("prompt "+rendered.Name, groupOptions...)

@@ -11,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/agent/setup"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/credproxy"
 )
 
 var _ = g.Describe("Inline tool binding", func() {
@@ -47,6 +48,27 @@ var _ = g.Describe("Inline tool binding", func() {
 		in.Provider = &bufferedOnlyProvider{}
 
 		Expect(bindInlineTools(&in)).To(MatchError(ContainSubstring("supplied Provider")))
+	})
+
+	g.It("records how each sidecar tool resolved, for the relocating executor to ship as is", func() {
+		grant := credproxy.Grant{Name: "gh", URL: "https://api.example.com", Methods: []string{"GET"}, Paths: []string{"/"}}
+		in := spec(api.InlineTools{
+			"granted": {Exec: "true", ReadOnly: true, Placement: api.ToolPlacementSidecar, Grants: []credproxy.Grant{grant}},
+			"plain":   {Exec: "true", ReadOnly: true, Placement: api.ToolPlacementSidecar},
+			"local":   {Exec: "true", ReadOnly: true},
+		})
+		declared := in.Resolved.Spec.Tools
+		in.Resolved.Spec.Model = api.Model{Name: "sonnet", Mode: api.ModeCLI}
+		in.Config.SandboxSelection = &api.SandboxConfig{Kind: api.SandboxGitAgent}
+
+		Expect(bindInlineTools(&in)).To(Succeed())
+		g.DeferCleanup(in.inlineTools.Close)
+
+		resolved := in.Resolved.Spec.Tools
+		Expect(resolved["granted"].Credentials).To(Equal(api.ToolCredentialsProxied), "grants make an unset mode proxied")
+		Expect(resolved["plain"].Credentials).To(Equal(api.ToolCredentialsNone))
+		Expect(resolved["local"].Credentials).To(BeEmpty(), "a supervisor tool is resolved where it runs")
+		Expect(declared["granted"].Credentials).To(BeEmpty(), "the declared tools are not mutated")
 	})
 
 	g.It("refreshes the tools' workspace after setup has run", func() {
