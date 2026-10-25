@@ -15,9 +15,9 @@ import (
 	"github.com/flanksource/clicky/task"
 	dbcontext "github.com/flanksource/commons-db/context"
 	"github.com/flanksource/commons-db/shell"
-	dp "github.com/google/dotprompt/go/dotprompt"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/tools/exectool/toolschema"
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -47,11 +47,11 @@ func definition(name string, tool api.InlineTool, workspace *Workspace) (api.Too
 	if err := workspace.bind(name, tool); err != nil {
 		return api.ToolDefinition{}, err
 	}
-	input, err := InputSchema(tool.Input)
+	input, err := toolschema.Input(tool.Input)
 	if err != nil {
 		return api.ToolDefinition{}, err
 	}
-	output, err := OutputSchema(tool.Output)
+	output, err := toolschema.Output(tool.Output)
 	if err != nil {
 		return api.ToolDefinition{}, err
 	}
@@ -74,52 +74,6 @@ func definition(name string, tool api.InlineTool, workspace *Workspace) (api.Too
 		DefaultPermission: tool.Permission,
 		Handler:           run.handle,
 	}, nil
-}
-
-// InputSchema converts a Picoschema or JSON Schema declaration into the object
-// schema a tool takes; no declaration takes an empty object.
-func InputSchema(declared any) (map[string]any, error) {
-	if declared == nil {
-		return api.ObjectSchema(nil), nil
-	}
-	raw, err := convertSchema("input", declared)
-	if err != nil {
-		return nil, err
-	}
-	var schema map[string]any
-	if err := json.Unmarshal(raw, &schema); err != nil {
-		return nil, fmt.Errorf("input schema: %w", err)
-	}
-	return schema, nil
-}
-
-// OutputSchema converts the declared output schema; nil means the tool's
-// stdout is returned as text.
-func OutputSchema(declared any) (json.RawMessage, error) {
-	if declared == nil {
-		return nil, nil
-	}
-	raw, err := convertSchema("output", declared)
-	if err != nil {
-		return nil, err
-	}
-	// An empty document validates against any schema that compiles.
-	if _, err := ai.ValidateStructuredJSON(raw, "{}"); err != nil {
-		return nil, fmt.Errorf("output schema: %w", err)
-	}
-	return raw, nil
-}
-
-func convertSchema(section string, declared any) (json.RawMessage, error) {
-	schema, err := dp.Picoschema(declared, &dp.PicoschemaOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("%s schema: %w", section, err)
-	}
-	raw, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("%s schema: %w", section, err)
-	}
-	return raw, nil
 }
 
 type runner struct {

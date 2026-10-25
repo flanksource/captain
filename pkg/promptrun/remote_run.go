@@ -69,7 +69,7 @@ func runRemotely(ctx context.Context, in Input, runner RemoteRunner, model api.M
 				callerEvents(iter, ev)
 			}
 		}
-		started = func(spec api.Spec) error { return rec.Start(&spec) }
+		started = func(spec api.Spec) error { return rec.Start(&spec, nil) }
 	}
 	return runner.RunRemote(ctx, in, started)
 }

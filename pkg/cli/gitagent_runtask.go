@@ -61,9 +61,24 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 	if err != nil {
 		return nil, err
 	}
+	if err := payload.CheckRequirements(); err != nil {
+		return nil, err
+	}
+	tools, closeTools, err := taskToolsetFor(ctx, opts, worktree, payload)
+	if err != nil {
+		return nil, err
+	}
+	defer closeTools()
+	if len(tools.denyRead) > 0 {
+		removed, err := scrubAgentEnv()
+		if err != nil {
+			return nil, err
+		}
+		log.Infof("git-agent task %s: tools here hold credentials; the agent runs without %d sidecar variables", opts.Task, len(removed))
+	}
 	identity := ai.LogIdentity(payload.Mode, payload.Model, payload.Effort)
 	log.Infof("git-agent task %s starting %s in %s", opts.Task, identity, worktree)
-	if err := runTaskPrompt(ctx, worktree, payload); err != nil {
+	if err := runTaskPrompt(ctx, worktree, payload, tools); err != nil {
 		return nil, fmt.Errorf("running the dispatched prompt: %w", err)
 	}
 	log.Infof("git-agent task %s agent finished after %s; preparing submission", opts.Task, time.Since(started).Round(time.Millisecond))
@@ -79,10 +94,15 @@ func RunGitAgentRunTask(ctx context.Context, opts GitAgentRunTaskOptions) (_ any
 // runTaskPrompt executes the dispatched prompt in the worktree. The sandbox is
 // pinned to off: this process IS the relocated run, so resolving a relocating
 // sandbox here would dispatch the task to another agent, and so on (H15).
-func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPayload) error {
+func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPayload, tools taskToolset) error {
 	providerOpts := AIProviderOptions{
 		ModelFlags: aiflags.ModelFlags{Model: payload.Model, Mode: string(payload.Mode), Effort: string(payload.Effort)},
 		Sandbox:    string(api.SandboxOff),
+	}
+	if len(tools.denyRead) > 0 {
+		// Native relocates nothing either, so H15 still holds; it is the one
+		// mode in which the confinement below is enforced.
+		providerOpts.Sandbox = string(api.SandboxNative)
 	}
 	var req ai.Request
 	req.Prompt.User = payload.Prompt
@@ -92,12 +112,19 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 	// Editing is the point: a coding agent that cannot write files produces an
 	// empty result and an unexplained silence on the supervisor.
 	req.Sandbox = &api.SandboxRef{Mode: api.SandboxNative}
+	if len(tools.denyRead) > 0 {
+		// Tools here hold credentials, so the agent is kept from what grants
+		// them. A runtime whose sandbox cannot deny reads refuses the run rather
+		// than run the agent unconfined beside them.
+		req.Sandbox.Policy = &api.NativeSandboxPolicy{Filesystem: &api.SandboxFilesystemPolicy{DeniedReadRoots: tools.denyRead}}
+	}
 	req.Permissions.Mode = api.PermissionAcceptEdits
 	resolved, err := resolveInvocation(AIRuntimeOptions{AIProviderOptions: providerOpts}, []api.SpecLayer{api.PromptSpecLayer("dispatched task", req)})
 	if err != nil {
 		return err
 	}
 	req, cfg := resolved.Request, resolved.Config
+	cfg.CallerTools, cfg.Tools = tools.endpoint, tools.definitions
 	logRuntimeWarnings(resolved.Resolution.Warnings)
 
 	timeout, err := renderedTimeout(PromptRenderResult{Input: req, Config: cfg})
