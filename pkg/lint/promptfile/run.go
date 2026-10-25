@@ -22,13 +22,13 @@ type Options struct {
 	Data    map[string]any
 }
 
-func Run(ctx context.Context, options Options) []*linters.LinterResult {
+func Run(ctx context.Context, options Options) Results {
 	linter := &promptfileLinter{options: options}
 	result := linters.RunLinterWithTask(ctx, nil, linter, linters.RunOptions{WorkDir: options.WorkDir})
 	if result.Violations == nil {
 		result.Violations = []models.Violation{}
 	}
-	return []*linters.LinterResult{result}
+	return Results{result}
 }
 
 type promptfileLinter struct {
@@ -46,7 +46,7 @@ func (*promptfileLinter) JSONArgs() []string                        { return nil
 func (*promptfileLinter) SupportsFix() bool                         { return false }
 func (*promptfileLinter) FixArgs() []string                         { return nil }
 func (*promptfileLinter) ValidateConfig(*models.LinterConfig) error { return nil }
-func (*promptfileLinter) GetRuleCount() int                         { return 7 }
+func (*promptfileLinter) GetRuleCount() int                         { return 8 }
 func (l *promptfileLinter) GetFileCount() int                       { return l.fileCount }
 
 func (l *promptfileLinter) Run(ctx commonsContext.Context, _ *clicky.Task) ([]models.Violation, error) {
@@ -68,17 +68,23 @@ func (l *promptfileLinter) Run(ctx commonsContext.Context, _ *clicky.Task) ([]mo
 		if err := ctx.Err(); err != nil {
 			return violations, errors.Join(append(failures, err)...)
 		}
-		template, err := prompt.LoadFile(path)
-		if err != nil {
-			failures = append(failures, err)
-			continue
-		}
 		l.fileCount++
 		file, err := filepath.Rel(root, path)
 		if err != nil {
 			return violations, err
 		}
-		for _, diagnostic := range template.Validate(prompt.ValidationOptions{Data: l.options.Data}) {
+		template, loadErr := prompt.LoadFile(path)
+		var diagnostics []prompt.Diagnostic
+		if loadErr != nil {
+			if !hasPromptSymlink(root, path) {
+				failures = append(failures, loadErr)
+				continue
+			}
+			diagnostics = []prompt.Diagnostic{prompt.SymlinkDiagnostic(loadErr)}
+		} else {
+			diagnostics = template.Validate(prompt.ValidationOptions{Data: l.options.Data})
+		}
+		for _, diagnostic := range diagnostics {
 			violation := models.NewViolationBuilder().WithFile(filepath.ToSlash(file)).WithSource(l.Name()).
 				WithRuleFromLinter(l.Name(), diagnostic.Rule).WithLocation(diagnostic.Line, diagnostic.Column).
 				WithMessage(diagnostic.Message).Build()
@@ -98,9 +104,16 @@ func discover(root string, paths []string) ([]string, error) {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(root, path)
 		}
-		info, err := os.Stat(path)
+		info, err := os.Lstat(path)
 		if err != nil {
 			return nil, fmt.Errorf("select promptfiles: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			info, err = os.Stat(path)
+			if err != nil {
+				seen[filepath.Clean(path)] = true
+				continue
+			}
 		}
 		if !info.IsDir() {
 			if filepath.Ext(path) != ".prompt" {
@@ -126,4 +139,18 @@ func discover(root string, paths []string) ([]string, error) {
 	}
 	slices.Sort(files)
 	return files, nil
+}
+
+func hasPromptSymlink(root, path string) bool {
+	for {
+		info, err := os.Lstat(path)
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+		parent := filepath.Dir(path)
+		if path == root || parent == path {
+			return false
+		}
+		path = parent
+	}
 }

@@ -63,6 +63,30 @@ var _ = Describe("Promptfile lint command", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(output).To(ContainSubstring("review.prompt"))
 		Expect(output).To(ContainSubstring("mode"))
+		Expect(output).To(ContainSubstring("Prompt lint"))
+		Expect(output).To(ContainSubstring("1 error"))
+		Expect(output).To(ContainSubstring("0 warnings"))
+	})
+
+	It("distinguishes warning-only lint results in the human format", func() {
+		path := filepath.Join(GinkgoT().TempDir(), "review.prompt")
+		Expect(os.WriteFile(path, []byte("---\nmodel: {{model}}\n---\nReview.\n"), 0o600)).To(Succeed())
+		output, err := capturePromptfileOutput([]string{"lint", "promptfile", path, "--format", "pretty", "--no-color"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(output).To(ContainSubstring("0 errors"))
+		Expect(output).To(ContainSubstring("1 warning"))
+		Expect(output).To(ContainSubstring("review.prompt"))
+	})
+
+	It("keeps the broken-link cause visible in human output", func() {
+		directory := GinkgoT().TempDir()
+		path := filepath.Join(directory, "broken.prompt")
+		Expect(os.Symlink(filepath.Join(directory, "missing.prompt"), path)).To(Succeed())
+		output, err := capturePromptfileOutput([]string{"lint", "promptfile", path, "--format", "pretty", "--no-color"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(output).To(ContainSubstring("1 warning"))
+		Expect(output).To(ContainSubstring("no such file or directory"))
+		Expect(output).To(ContainSubstring("promptfile/symlink"))
 	})
 })
 
