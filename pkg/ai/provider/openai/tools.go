@@ -82,13 +82,13 @@ func (p *Provider) resolveCalls(
 			}
 		}
 
-		value, err := definition.Handler(ctx, args)
+		value, parts, err := runTool(ctx, definition, args)
 		if err != nil {
 			emit(ctx, out, ai.Event{Kind: ai.EventToolResult, Tool: call.Name, ToolCallID: call.ID, Success: false, Text: err.Error(), Model: p.model})
 			resolved = append(resolved, callResult(call.ID, map[string]any{"error": err.Error()}))
 			continue
 		}
-		emit(ctx, out, ai.Event{Kind: ai.EventToolResult, Tool: call.Name, ToolCallID: call.ID, Success: true, Text: toolOutputText(value), Model: p.model})
+		emit(ctx, out, ai.Event{Kind: ai.EventToolResult, Tool: call.Name, ToolCallID: call.ID, Success: true, Text: parts.Text, Output: parts.Display, Model: p.model})
 		resolved = append(resolved, callResult(call.ID, value))
 	}
 
@@ -146,11 +146,18 @@ func jsonText(value any) string {
 	return string(data)
 }
 
-func toolOutputText(value any) string {
-	if value == nil {
-		return ""
+// runTool runs a caller tool and returns what the model receives alongside the
+// event's split of the result.
+func runTool(ctx context.Context, definition api.ToolDefinition, args map[string]any) (any, api.ToolOutputParts, error) {
+	value, err := definition.Handler(ctx, args)
+	if err != nil {
+		return nil, api.ToolOutputParts{}, err
 	}
-	return modelOutput(value)
+	parts, err := api.ToolOutput(value)
+	if err != nil {
+		return nil, api.ToolOutputParts{}, fmt.Errorf("tool %q: %w", definition.Name, err)
+	}
+	return api.ModelValue(value), parts, nil
 }
 
 func responseRefusal(items []responses.ResponseOutputItemUnion) string {
