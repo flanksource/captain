@@ -18,7 +18,7 @@ import (
 
 type PermissionsExplainOptions struct {
 	Prompt  string   `args:"true" help:"Prompt name, ID or .prompt path"`
-	Models  []string `flag:"model" help:"Runtime to explain for, e.g. agent:sonnet (repeatable); defaults to the prompt's own model"`
+	Models  []string `flag:"model" help:"Runtime to explain for, e.g. agent:sonnet (repeatable); defaults to the prompt's own model" category:"Model selection"`
 	Presets []string `flag:"preset" help:"Runtime preset layered into the prompt (repeatable)"`
 }
 

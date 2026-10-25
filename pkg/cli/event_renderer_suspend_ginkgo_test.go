@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -85,6 +86,64 @@ var _ = Describe("Event renderer Suspend", func() {
 		outer()
 		Expect(renderer.Flush()).To(Succeed())
 		Expect(output.String()).To(ContainSubstring(heldText))
+	})
+
+	Describe("Writer", func() {
+		const (
+			streamed = "drafting the fix"
+			logLine  = "warning: model is not recognized"
+		)
+
+		It("commits a log line above the in-place turn and redraws the turn beneath it", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, true)
+			renderer.Handle(0, ai.Event{Kind: ai.EventText, Text: streamed})
+			output.Reset()
+
+			_, err := io.WriteString(renderer.Writer(), logLine+"\n")
+			Expect(err).NotTo(HaveOccurred())
+
+			written := output.String()
+			Expect(written).To(HavePrefix("\r\x1b[2K" + logLine + "\n"))
+			Expect(strings.TrimPrefix(written, "\r\x1b[2K"+logLine+"\n")).To(ContainSubstring(streamed))
+		})
+
+		It("holds log lines with events while suspended and replays both in arrival order", func() {
+			const before, after = "event before the log", "event after the log"
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+
+			// Each notice is closed by a result, which commits it: an open turn
+			// is still pending, and lines written meanwhile belong above it.
+			resume := renderer.Suspend()
+			renderer.Handle(0, ai.Event{Kind: ai.EventSystem, Text: before})
+			renderer.Handle(0, ai.Event{Kind: ai.EventResult, Success: true})
+			_, err := io.WriteString(renderer.Writer(), logLine+"\n")
+			Expect(err).NotTo(HaveOccurred())
+			renderer.Handle(0, ai.Event{Kind: ai.EventSystem, Text: after})
+			renderer.Handle(0, ai.Event{Kind: ai.EventResult, Success: true})
+			Expect(output.String()).To(BeEmpty())
+
+			resume()
+			Expect(renderer.Flush()).To(Succeed())
+			written := output.String()
+			Expect(strings.Index(written, before)).To(BeNumerically("<", strings.Index(written, logLine)))
+			Expect(strings.Index(written, logLine)).To(BeNumerically("<", strings.Index(written, after)))
+		})
+
+		It("commits a partial line only once its newline arrives, or on Flush", func() {
+			var output bytes.Buffer
+			renderer := newEventRenderer(&output, false)
+			writer := renderer.Writer()
+
+			_, _ = io.WriteString(writer, "npm install ")
+			Expect(output.String()).To(BeEmpty())
+			_, _ = io.WriteString(writer, "done\nadded 3 packages")
+			Expect(output.String()).To(Equal("npm install done\n"))
+
+			Expect(renderer.Flush()).To(Succeed())
+			Expect(output.String()).To(Equal("npm install done\nadded 3 packages\n"))
+		})
 	})
 
 	It("is safe to suspend from another goroutine while events stream", func() {

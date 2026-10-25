@@ -61,7 +61,8 @@ func promptLookupFooter(ctx context.Context, opts clicky.FormatOptions) (string,
 		return "", err
 	}
 	text := clicky.Text("").Add(clicky.Text("Lookup locations", "font-bold"))
-	for _, source := range sources {
+	text = text.Append(" (first matching source wins)", "muted")
+	for _, source := range promptLookupSources(sources) {
 		location := source.Root
 		if source.Kind == "embedded" {
 			location = fmt.Sprintf("embedded: %s/ (%s)", source.WalkRoot, source.Label)
