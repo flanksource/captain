@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
+	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
@@ -48,11 +49,12 @@ type PromptSummary struct {
 	Mode        string   `json:"mode,omitempty"`
 	Presets     []string `json:"presets,omitempty"`
 	// RuntimeProfile is the profile (id or name) the frontmatter pins, if any.
-	RuntimeProfile string           `json:"runtimeProfile,omitempty"`
-	Runtimes       []api.Model      `json:"runtimes,omitempty"`
-	Variables      []PromptVariable `json:"variables,omitempty"`
-	ParseError     string           `json:"parseError,omitempty"`
-	UpdatedAt      string           `json:"updatedAt,omitempty"`
+	RuntimeProfile string                 `json:"runtimeProfile,omitempty"`
+	Runtimes       []api.Model            `json:"runtimes,omitempty"`
+	Variables      []PromptVariable       `json:"variables,omitempty"`
+	ParseError     string                 `json:"parseError,omitempty"`
+	Diagnostics    []promptlib.Diagnostic `json:"diagnostics,omitempty"`
+	UpdatedAt      string                 `json:"updatedAt,omitempty"`
 	// Version identifies the exact content this summary describes; writes echo
 	// it back as baseVersion so a concurrent edit is reported, not clobbered.
 	Version string `json:"version,omitempty"`
@@ -69,6 +71,7 @@ func (p PromptSummary) Columns() []clickyapi.ColumnDef {
 		clickyapi.Column("relPath").Label("Path").MaxWidth(54).Build(),
 		clickyapi.Column("model").Label("Model").Build(),
 		clickyapi.Column("description").Label("Description").MaxWidth(80).Build(),
+		clickyapi.Column("validation").Label("Validation").MaxWidth(80).Build(),
 	}
 }
 
@@ -79,6 +82,7 @@ func (p PromptSummary) Row() map[string]any {
 		"relPath":     p.RelPath,
 		"model":       p.Model,
 		"description": p.Description,
+		"validation":  p.RowDetail(),
 	}
 }
 
@@ -156,17 +160,17 @@ type PromptActionFlags struct {
 	AIRuntimeOptions
 
 	Prompt         string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text, @file or @url to load it, or - for stdin; alternative to the positional" short:"p"`
-	Preset         []string `flag:"preset" help:"Runtime preset (id or name) layered beneath the prompt frontmatter (repeatable)"`
-	NoPresets      bool     `flag:"no-presets" help:"Clear presets selected by prompt frontmatter"`
-	RuntimeProfile string   `flag:"runtime-profile" help:"Deprecated and ignored; use --preset"`
+	Preset         []string `flag:"preset" help:"Runtime preset (id or name) layered beneath the prompt frontmatter (repeatable)" category:"Model runtime"`
+	NoPresets      bool     `flag:"no-presets" help:"Clear presets selected by prompt frontmatter" category:"Model runtime"`
+	RuntimeProfile string   `flag:"runtime-profile" help:"Deprecated and ignored; use --preset" category:"Model runtime"`
 	System         string   `flag:"system" clicky:"cli-file-read" help:"System prompt (or @file/@url)" short:"s"`
 	AppendSystem   string   `flag:"append-system" clicky:"cli-file-read" help:"Append text to the default system prompt (or @file/@url)"`
 	Var            []string `flag:"var" help:"Template variable key=value (repeatable); a value of @file loads it, - reads stdin" short:"V"`
 	Attach         []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	Vars           string   `flag:"vars" clicky:"cli-file-read" help:"JSON object of template variables (or @file.json)"`
-	MultiModels    []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
-	Timeout        string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
-	NoStream       bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)"`
+	MultiModels    []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M" category:"Model selection"`
+	Timeout        string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)" category:"Model runtime"`
+	NoStream       bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)" category:"Model runtime"`
 }
 
 func (PromptActionFlags) ClickyActionFlags() {}
@@ -189,6 +193,7 @@ type promptRecord struct {
 	Rel       string
 	UpdatedAt string
 	ReadPath  string
+	LinkError error
 }
 
 type promptRef struct {

@@ -77,9 +77,6 @@ func launchRendered(ctx context.Context, id string, rendered PromptRenderResult,
 		if workflowConfigured(rendered.Input.Workflow) {
 			return PromptRunResult{}, errors.New("chat mode does not support workflow-backed prompts")
 		}
-		if len(rendered.Input.Tools) > 0 {
-			return PromptRunResult{}, errors.New("chat mode does not support prompts with inline tools")
-		}
 	}
 
 	if len(rendered.Runtimes) > 0 {

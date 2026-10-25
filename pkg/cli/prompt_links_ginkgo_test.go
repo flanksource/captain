@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/clicky"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -136,18 +137,42 @@ var _ = Describe("linked prompts", func() {
 		Expect(copy.Content).To(Equal(validPromptSource))
 	}, Entry("file link", false), Entry("directory link", true))
 
-	DescribeTable("reports broken links and cycles even in implicit sources", func(cycle bool) {
+	DescribeTable("attaches broken-link warnings without blocking healthy prompts", func(cycle bool, directory bool) {
 		source.Implicit = true
 		linkPath := filepath.Join(source.Root, "broken.prompt")
+		if directory {
+			linkPath = filepath.Join(source.Root, "broken-library")
+		}
 		linkTarget := filepath.Join(target, "missing.prompt")
 		if cycle {
 			linkTarget = linkPath
 		}
 		Expect(os.Symlink(linkTarget, linkPath)).To(Succeed())
-		_, err := listPromptRecordsFromSource(source)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring(linkPath))
-	}, Entry("missing target", false), Entry("link cycle", true))
+		writePrompt(filepath.Join(source.Root, "healthy.prompt"))
+		listed, err := listPrompts(ctx, PromptListOptions{Source: source.ID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(HaveLen(2))
+		output, err := clicky.Format(listed, clicky.FormatOptions{NoColor: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(output).To(ContainSubstring("warning"))
+		for _, summary := range listed {
+			if summary.Path != linkPath {
+				continue
+			}
+			Expect(summary.Writable).To(BeFalse())
+			Expect(summary).To(HaveField("Diagnostics", ContainElement(And(
+				HaveField("Rule", "promptfile/symlink"), HaveField("Severity", "warning"), HaveField("Message", ContainSubstring(linkPath)),
+			))))
+			detail, err := getPrompt(ctx, summary.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(detail).To(HaveField("Diagnostics", Not(BeEmpty())))
+			_, err = renderPrompt(ctx, summary.ID, PromptRenderRequest{})
+			Expect(err).To(MatchError(ContainSubstring(linkPath)))
+		}
+		healthy, err := getPrompt(ctx, "healthy")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(healthy.Content).To(Equal(validPromptSource))
+	}, Entry("missing file", false, false), Entry("file cycle", true, false), Entry("missing directory", false, true), Entry("directory cycle", true, true))
 
 	It("keeps invalid linked prompts readable with parseError", func() {
 		targetPath := filepath.Join(target, "broken.prompt")
@@ -163,16 +188,23 @@ var _ = Describe("linked prompts", func() {
 		Expect(detail.ParseError).NotTo(BeEmpty())
 	})
 
-	It("reports an unreadable linked target", func() {
+	It("attaches an unreadable-target warning to the linked prompt", func() {
 		targetPath := filepath.Join(target, "private.prompt")
 		writePrompt(targetPath)
 		Expect(os.Chmod(targetPath, 0)).To(Succeed())
 		DeferCleanup(os.Chmod, targetPath, os.FileMode(0o600))
 		linkPath := filepath.Join(source.Root, "private.prompt")
 		Expect(os.Symlink(targetPath, linkPath)).To(Succeed())
-		_, err := listPrompts(ctx, PromptListOptions{Source: source.ID})
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring(linkPath))
+		listed, err := listPrompts(ctx, PromptListOptions{Source: source.ID})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(listed).To(ConsistOf(HaveField("Diagnostics", ContainElement(And(
+			HaveField("Severity", "warning"), HaveField("Message", ContainSubstring(linkPath)),
+		)))))
+		detail, err := getPrompt(ctx, listed[0].ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail).To(HaveField("Diagnostics", Not(BeEmpty())))
+		_, err = renderPrompt(ctx, listed[0].ID, PromptRenderRequest{})
+		Expect(err).To(MatchError(ContainSubstring(linkPath)))
 	})
 
 	It("skips nested links and excluded directories while retaining ordinary recursion", func() {

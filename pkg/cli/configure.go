@@ -22,8 +22,8 @@ type ConfigureOptions struct {
 	Token    text.SensitiveString `flag:"token" hidden:"true" help:"Provider API token (prefer the secure interactive prompt)"`
 	Test     bool                 `flag:"test" help:"Test the current or supplied token without saving it"`
 	Mode     string               `flag:"mode" help:"Default runtime mode for this provider: api|agent|cli|cmux"`
-	Model    string               `flag:"model" help:"Default model for this provider"`
-	Effort   string               `flag:"effort" help:"Default reasoning effort, or default to use the model default"`
+	Model    string               `flag:"model" help:"Default model for this provider" category:"Model selection"`
+	Effort   string               `flag:"effort" help:"Default reasoning effort, or default to use the model default" category:"Model selection"`
 	Active   bool                 `flag:"active" help:"Use this provider for completely flagless runs"`
 }
 

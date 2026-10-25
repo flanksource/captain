@@ -98,16 +98,33 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 	c.stream.setCancel(cancel)
 	defer cancel()
 
-	req := c.rendered.Input
-	if err := preparePromptAttachments(baseCtx, &req, c.rendered.Config); err != nil {
+	req, cfg := c.rendered.Input, c.rendered.Config
+	if err := preparePromptAttachments(baseCtx, &req, cfg); err != nil {
 		return c.fail(t, err)
 	}
-	provider, cleanup, err := buildProvider(baseCtx, &req, c.rendered.Config)
+	tools, err := promptrun.BindInlineTools(&req, &cfg)
+	if err != nil {
+		return c.fail(t, err)
+	}
+	provider, cleanup, err := buildProvider(baseCtx, &req, cfg)
 	if err != nil {
 		return c.fail(t, err)
 	}
 	defer cleanup()
 	defer closeProvider(provider)
+	// One tools environment serves every turn: prepared where setup left the
+	// chat, and torn down before setup's own cleanup when the chat ends.
+	if tools != nil {
+		defer func() {
+			if err := tools.Close(); err != nil {
+				log.Errorf("close chat inline tools: %v", err)
+			}
+		}()
+		tools.SetRun(req.Cwd(), req.Setup)
+		if err := tools.Prepare(baseCtx); err != nil {
+			return c.fail(t, err)
+		}
+	}
 	streamer, ok := provider.(ai.StreamingProvider)
 	if !ok {
 		return c.fail(t, fmt.Errorf("runtime %s/%s does not support streaming", c.rendered.Provider, c.rendered.Mode))

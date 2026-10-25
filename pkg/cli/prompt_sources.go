@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
@@ -129,6 +130,20 @@ func promptSourcesFromContext(ctx context.Context) PromptSources {
 	}
 	sources, _ := ctx.Value(promptSourcesContextKey{}).(PromptSources)
 	return sources
+}
+
+func promptLookupSources(sources []promptSource) []promptSource {
+	ordered := slices.Clone(sources)
+	slices.SortStableFunc(ordered, func(a, b promptSource) int {
+		if (a.FS == nil) == (b.FS == nil) {
+			return 0
+		}
+		if a.FS == nil {
+			return -1
+		}
+		return 1
+	})
+	return ordered
 }
 
 // hostPromptSource turns a host's fs.FS into a read-only source whose id is its

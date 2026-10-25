@@ -14,7 +14,8 @@ const PromptLookupHelp = `- Embedded examples and built-in prompts ship with the
 - Project directory: ./.captain/prompts, used only when no configured or caller-provided writable source exists.
 - User directory: ~/.config/captain/prompts, or $XDG_CONFIG_HOME/captain/prompts when XDG_CONFIG_HOME is set; always included.
 - Links directly inside a prompt directory are read-only: linked .prompt files are included, and linked directories contribute only their immediate regular .prompt files (no subdirectories or further links).
-- Directories are searched recursively for .prompt files. Local files shadow embedded prompts of the same name; multiple local matches are ambiguous, so use a prompt ID or explicit path.`
+- Broken links and unreadable linked prompts remain inspectable with promptfile/symlink warnings; render and run fail if the selected prompt cannot be read.
+- Names use the first matching local source, then embedded sources. Duplicate basenames within one source require a prompt ID or explicit path. The list footer shows lookup locations in precedence order.`
 
 func promptCommandHelpGuide(cmd *cobra.Command, styled bool) api.Text {
 	doc := api.Text{}.

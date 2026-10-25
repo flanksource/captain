@@ -69,6 +69,21 @@ var _ = Describe("Prompt source discovery", func() {
 		Expect(record.Path).To(Equal(path))
 	})
 
+	It("prefers the project prompt to the linked user library", func() {
+		project := GinkgoT().TempDir()
+		library := GinkgoT().TempDir()
+		Expect(os.MkdirAll(promptsDir, 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(project, "branch-rebase.prompt"), []byte("Project rebase."), 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(library, "branch-rebase.prompt"), []byte("Library rebase."), 0o600)).To(Succeed())
+		Expect(os.Symlink(library, filepath.Join(promptsDir, "library"))).To(Succeed())
+		ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{project}})
+		for _, name := range []string{"branch-rebase", "branch-rebase.prompt"} {
+			detail, err := getPrompt(ctx, name)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(detail.Content).To(Equal("Project rebase."))
+		}
+	})
+
 	It("keeps the repository prompt directory as the default save target", func() {
 		sources, err := buildPromptSources(context.Background(), promptSourceOptions{})
 		Expect(err).NotTo(HaveOccurred())
