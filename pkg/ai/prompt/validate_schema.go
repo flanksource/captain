@@ -9,7 +9,7 @@ import (
 	dp "github.com/google/dotprompt/go/dotprompt"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/flanksource/captain/pkg/ai/tools/exectool"
+	"github.com/flanksource/captain/pkg/ai/tools/exectool/toolschema"
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -79,7 +79,7 @@ func validateDeclaredSchemas(source string) error {
 // compileToolSchemas converts an inline tool's input and output exactly as
 // the run will, then compiles them like the prompt's own sections.
 func compileToolSchemas(tool api.InlineTool) error {
-	input, err := exectool.InputSchema(tool.Input)
+	input, err := toolschema.Input(tool.Input)
 	if err != nil {
 		return err
 	}
@@ -90,7 +90,7 @@ func compileToolSchemas(tool api.InlineTool) error {
 	if err := compileSchema("tool-input", raw); err != nil {
 		return fmt.Errorf("input schema: %w", err)
 	}
-	output, err := exectool.OutputSchema(tool.Output)
+	output, err := toolschema.Output(tool.Output)
 	if err != nil || output == nil {
 		return err
 	}

@@ -22,10 +22,49 @@ const (
 	// ToolCredentialsProxied hands the script credential-free configuration
 	// pointing at a host-side proxy that injects the credentials on the way out.
 	ToolCredentialsProxied ToolCredentials = "proxied"
+	// ToolCredentialsSidecar resolves the tool's own connections and secret env
+	// vars on the sidecar, from its environment, files and cloud identity. The
+	// supervisor's secrets are never involved.
+	ToolCredentialsSidecar ToolCredentials = "sidecar"
+	// ToolCredentialsSidecarProxied runs the credential proxy on the sidecar: it
+	// fetches the tool's grant values from the supervisor once and keeps them in
+	// memory, and the script sees only placeholders.
+	ToolCredentialsSidecarProxied ToolCredentials = "sidecar-proxied"
 )
 
 func (c ToolCredentials) Valid() bool {
-	return c == "" || c == ToolCredentialsNone || c == ToolCredentialsDirect || c == ToolCredentialsProxied
+	switch c {
+	case "", ToolCredentialsNone, ToolCredentialsDirect, ToolCredentialsProxied, ToolCredentialsSidecar, ToolCredentialsSidecarProxied:
+		return true
+	}
+	return false
+}
+
+// proxiesGrants reports whether a mode serves grants through a credential
+// proxy, wherever that proxy runs.
+func (c ToolCredentials) proxiesGrants() bool {
+	return c == ToolCredentialsProxied || c == ToolCredentialsSidecarProxied
+}
+
+// ValidateToolCredentials refuses a credentials mode the placement cannot
+// honour: sidecar modes exist only on a sidecar, and a sidecar never receives
+// the supervisor's real secrets.
+func ValidateToolCredentials(placement ToolPlacement, credentials ToolCredentials) error {
+	sidecarMode := credentials == ToolCredentialsSidecar || credentials == ToolCredentialsSidecarProxied
+	switch {
+	case sidecarMode && placement != ToolPlacementSidecar:
+		return fmt.Errorf("credentials: %s needs placement: sidecar, not %s", credentials, placementName(placement))
+	case placement == ToolPlacementSidecar && credentials == ToolCredentialsDirect:
+		return fmt.Errorf("credentials: direct would send the supervisor's secrets to the sidecar; use sidecar (the sidecar's own credentials), sidecar-proxied or proxied")
+	}
+	return nil
+}
+
+func placementName(placement ToolPlacement) string {
+	if placement == "" {
+		return "the sandbox's default"
+	}
+	return string(placement)
 }
 
 // SetupHasCredentials reports whether a setup carries secrets: any connection,
@@ -85,23 +124,40 @@ func UnproxiableConnections(connections connection.ExecConnections) []string {
 
 func (t InlineTool) validateEnvironment() error {
 	if !t.Placement.Valid() {
-		return fmt.Errorf("invalid placement %q; want host or sandbox", t.Placement)
+		return fmt.Errorf("invalid placement %q; want host, sandbox, supervisor or sidecar", t.Placement)
 	}
 	if !t.Credentials.Valid() {
-		return fmt.Errorf("invalid credentials %q; want none, direct or proxied", t.Credentials)
+		return fmt.Errorf("invalid credentials %q; want none, direct, proxied, sidecar or sidecar-proxied", t.Credentials)
+	}
+	if t.Placement != "" && t.Credentials != "" {
+		if err := ValidateToolCredentials(t.Placement, t.Credentials); err != nil {
+			return err
+		}
 	}
 	for _, grant := range t.Grants {
 		if err := grant.Validate(); err != nil {
 			return err
 		}
 	}
-	if len(t.Grants) > 0 && t.Credentials != "" && t.Credentials != ToolCredentialsProxied {
-		return fmt.Errorf("grants are served by the credential proxy and need credentials: proxied, not %s", t.Credentials)
+	if len(t.Grants) > 0 && t.Credentials != "" && !t.Credentials.proxiesGrants() {
+		return fmt.Errorf("grants are served by a credential proxy and need credentials: proxied or sidecar-proxied, not %s", t.Credentials)
 	}
 	switch t.Credentials {
 	case ToolCredentialsNone:
 		if SetupHasCredentials(t.Setup) {
 			return fmt.Errorf("credentials: none, but the tool declares connections or secret envVars")
+		}
+	case ToolCredentialsSidecarProxied:
+		if len(t.Grants) == 0 {
+			return fmt.Errorf("credentials: sidecar-proxied serves grants and the tool declares none")
+		}
+		if names := DeclaredConnections(t.Connections); len(names) > 0 {
+			return fmt.Errorf("credentials: sidecar-proxied serves only HTTP(S) grants, but the tool declares connections (%s); use credentials: proxied",
+				strings.Join(names, ", "))
+		}
+		if names := SecretEnvVarNames(t.Setup); len(names) > 0 {
+			return fmt.Errorf("credentials: sidecar-proxied, but the tool resolves secret envVars (%s); declare them as grants",
+				strings.Join(names, ", "))
 		}
 	case ToolCredentialsProxied:
 		if names := UnproxiableConnections(t.Connections); len(names) > 0 {
@@ -124,22 +180,38 @@ func (t InlineTool) validateEnvironment() error {
 //   - proxied inherits only what a proxy can serve — the run's kubernetes
 //     connection — and none of the run's real secrets.
 //
-// An unset mode is derived, never guessed: grants make it proxied; otherwise
-// no credentials to hand over, the tool's own or the run's, make it none; on
-// the host the tool then holds them directly; inside the sandbox it is refused,
-// because secrets never enter a sandbox unless the prompt says how.
-func (t InlineTool) ResolveCredentials(run shell.Setup) (ToolCredentials, error) {
-	if t.Credentials != "" {
+// The sidecar modes inherit nothing from the run: its setup is the
+// supervisor's, and the sidecar resolves only what the tool itself declares.
+//
+// placement is the resolved placement (Sandbox.ResolveToolPlacement). An unset
+// mode is derived, never guessed: grants make it proxied; otherwise no
+// credentials to hand over, the tool's own or the run's, make it none; next to
+// Captain the tool then holds them directly; a confined tool is refused,
+// because secrets never enter a sandbox or reach a sidecar unless the prompt
+// says how.
+func (t InlineTool) ResolveCredentials(placement ToolPlacement, run shell.Setup) (ToolCredentials, error) {
+	credentials, err := t.deriveCredentials(placement, run)
+	if err != nil {
+		return "", err
+	}
+	if err := ValidateToolCredentials(placement, credentials); err != nil {
+		return "", err
+	}
+	return credentials, nil
+}
+
+func (t InlineTool) deriveCredentials(placement ToolPlacement, run shell.Setup) (ToolCredentials, error) {
+	switch {
+	case t.Credentials != "":
 		return t.Credentials, nil
-	}
-	if len(t.Grants) > 0 {
+	case len(t.Grants) > 0:
 		return ToolCredentialsProxied, nil
-	}
-	if !SetupHasCredentials(t.Setup) && !SetupHasCredentials(run) {
+	case !SetupHasCredentials(t.Setup) && !SetupHasCredentials(run):
 		return ToolCredentialsNone, nil
-	}
-	if t.Placement.Effective() == ToolPlacementHost {
+	case !placement.Confined():
 		return ToolCredentialsDirect, nil
+	case placement == ToolPlacementSidecar:
+		return "", fmt.Errorf("placement: sidecar with connections or secret envVars needs an explicit credentials: none, proxied, sidecar or sidecar-proxied")
 	}
-	return "", fmt.Errorf("placement: sandbox with connections or secret envVars needs an explicit credentials: none, direct or proxied")
+	return "", fmt.Errorf("placement: %s with connections or secret envVars needs an explicit credentials: none, direct or proxied", placement)
 }

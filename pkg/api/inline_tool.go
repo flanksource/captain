@@ -40,11 +40,11 @@ type InlineTool struct {
 	Timeout string     `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	Retry   *ToolRetry `json:"retry,omitempty" yaml:"retry,omitempty"`
 	// Placement is where the script runs relative to the run's sandbox; empty
-	// means host.
-	Placement ToolPlacement `json:"placement,omitempty" yaml:"placement,omitempty" jsonschema:"enum=host,enum=sandbox"`
+	// means the sandbox's default: host locally, supervisor under git-agent.
+	Placement ToolPlacement `json:"placement,omitempty" yaml:"placement,omitempty" jsonschema:"enum=host,enum=sandbox,enum=supervisor,enum=sidecar"`
 	// Credentials is how the tool's connections and secret env vars reach the
 	// script; empty derives it (see ResolveCredentials).
-	Credentials ToolCredentials `json:"credentials,omitempty" yaml:"credentials,omitempty" jsonschema:"enum=none,enum=direct,enum=proxied"`
+	Credentials ToolCredentials `json:"credentials,omitempty" yaml:"credentials,omitempty" jsonschema:"enum=none,enum=direct,enum=proxied,enum=sidecar,enum=sidecar-proxied"`
 	// Grants are the HTTP(S) destinations a proxied tool may call. The script
 	// sees a placeholder per granted header and the proxy substitutes the real
 	// value on the way out, only in that header, only for that destination.

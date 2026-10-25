@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -100,6 +101,8 @@ func (cfg HTTPServerConfig) serve(w http.ResponseWriter, r *http.Request) {
 		cfg.advertise(w, r, repo, agent)
 	case r.Method == http.MethodPost && endpoint == receivePackService:
 		cfg.receivePack(w, r, repo, agent)
+	case r.Method == http.MethodGet && endpoint == TunnelCommand:
+		cfg.tunnel(w, r, repo, agent)
 	case endpoint == uploadPackService:
 		// A shared upload-pack leaks every task namespace to every enrolled
 		// agent, which is the reason R2.3 exists.
@@ -219,6 +222,44 @@ func (cfg HTTPServerConfig) receivePack(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
+// tunnel upgrades the request to a raw stream spliced to one of the task's
+// registered services, the HTTPS counterpart of the SSH captain-tunnel verb.
+// The service is opened before the upgrade, so a refusal is an ordinary HTTP
+// error the client can read.
+func (cfg HTTPServerConfig) tunnel(w http.ResponseWriter, r *http.Request, repo, agent string) {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), TunnelCommand) {
+		refuse(w, http.StatusUpgradeRequired, "a tunnel needs Upgrade: "+TunnelCommand)
+		return
+	}
+	conn, err := OpenService(repo, agent, r.URL.Query().Get("task"), r.URL.Query().Get("service"))
+	if err != nil {
+		refuse(w, http.StatusForbidden, "tunnel refused: "+err.Error())
+		return
+	}
+	client, buffered, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		_ = conn.Close()
+		cfg.Log("git-agent tunnel for %s: hijack: %v", agent, err)
+		refuse(w, http.StatusInternalServerError, "this connection cannot be upgraded")
+		return
+	}
+	if _, err := io.WriteString(client, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: "+TunnelCommand+"\r\n\r\n"); err != nil {
+		_ = conn.Close()
+		_ = client.Close()
+		return
+	}
+	Splice(bufferedStream{Conn: client, reader: buffered.Reader}, conn)
+}
+
+// bufferedStream reads first whatever the server buffered past the request,
+// which is already tunnel payload.
+type bufferedStream struct {
+	net.Conn
+	reader io.Reader
+}
+
+func (b bufferedStream) Read(p []byte) (int, error) { return b.reader.Read(p) }
+
 // processEnv injects the identity the hook shims read, exactly as the SSH
 // transport does — which is why the hooks need no knowledge of either.
 func (cfg HTTPServerConfig) processEnv(agent string) []string {
@@ -233,7 +274,7 @@ func splitGitPath(path string) (repo, endpoint string, ok bool) {
 	if !found {
 		return "", "", false
 	}
-	for _, candidate := range []string{"info/refs", receivePackService, uploadPackService} {
+	for _, candidate := range []string{"info/refs", receivePackService, uploadPackService, TunnelCommand} {
 		if repo, found := strings.CutSuffix(trimmed, "/"+candidate); found && repo != "" {
 			return repo, candidate, true
 		}
