@@ -60,6 +60,23 @@ var _ = Describe("Genkit tool event correlation", func() {
 		Expect(mapped).To(BeEmpty())
 	})
 
+	It("returns a structured result's content to the model and emits its data as the event output", func() {
+		tool.Handler = func(context.Context, map[string]any) (any, error) {
+			return api.StructuredToolResult{Content: "| city |\n| Cape Town |", Structured: map[string]any{"data": []any{map[string]any{"city": "Cape Town"}}}}, nil
+		}
+		correlation := newToolEventCorrelation()
+		request := &gkai.ToolRequest{Name: tool.Name, Ref: "toolu_structured", Input: map[string]any{"city": "Cape Town"}}
+		_, err := chunkToEvents(toolRequestChunk(request), provider.GetModel(), correlation)
+		Expect(err).NotTo(HaveOccurred())
+
+		modelSaw, err := provider.runTool(context.WithValue(context.Background(), genkitToolRequestContextKey{}, request), tool, request.Input, emit, correlation)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(modelSaw).To(Equal("| city |\n| Cape Town |"))
+		Expect(events).To(HaveLen(2))
+		Expect(events[1].Text).To(Equal("| city |\n| Cape Town |"))
+		Expect(events[1].Output).To(MatchJSON(`{"data":[{"city":"Cape Town"}]}`))
+	})
+
 	It("ignores OpenAI argument deltas after retaining the provider reference", func() {
 		correlation := newToolEventCorrelation()
 		first := &gkai.ToolRequest{Name: tool.Name, Ref: "call_123", Input: `{"city"`}

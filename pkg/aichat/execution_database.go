@@ -42,6 +42,8 @@ type databaseExecution struct {
 	approvalIDs           map[string]uuid.UUID
 	providerToolUses      []api.Event
 	providerToolUseReady  chan struct{}
+	toolUsesByID          map[string]api.Event
+	callerDisplays        []callertools.CallResult
 	budgetAdmission       *budgets.Admission
 }
 
@@ -161,6 +163,7 @@ func (e *databaseExecution) startCallerTools(ctx context.Context, provider *api.
 		OnApproval: func(ctx context.Context, request api.ApprovalRequest) (api.ApprovalDecision, error) {
 			return e.approvalBroker(credentialID).OnApproval(ctx, request)
 		},
+		OnResult: e.rememberCallerDisplay,
 	})
 	if err != nil {
 		return err
@@ -226,6 +229,11 @@ func (e *databaseExecution) Observe(ctx context.Context, event api.Event) (api.E
 	switch event.Kind {
 	case api.EventToolUse:
 		e.rememberProviderToolUse(event)
+		return event, nil
+	case api.EventToolResult:
+		if event.Success && len(event.Output) == 0 {
+			event.Output = e.takeCallerDisplay(event)
+		}
 		return event, nil
 	case api.EventPermission:
 		if event.ApprovalID != "" {

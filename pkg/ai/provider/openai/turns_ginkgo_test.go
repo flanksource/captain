@@ -76,4 +76,53 @@ var _ = Describe("OpenAI turn events", func() {
 		Expect(final.Usage).To(Equal(&ai.Usage{InputTokens: 50, OutputTokens: 12}))
 		Expect(final.CostUSD).To(BeNumerically(">", 0))
 	})
+
+	It("sends a structured tool result's content to the model and its data to the event", func(ctx SpecContext) {
+		const preview = "| id |\n|----|\n| j-1 |"
+		scenario, err := aimock.Parse([]byte(`openai:
+  - respond:
+      function_call: {name: journals, call_id: call_journals, arguments: {}}
+  - match: {tool_result_for: journals}
+    respond:
+      text: done
+`))
+		Expect(err).NotTo(HaveOccurred())
+		server, err := openaimock.Start(openaimock.Options{Scenario: scenario})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(server.Close)
+		provider, err := New(ai.Config{
+			Model:  api.Model{Name: "gpt-5", Provider: api.OpenAI, Mode: api.ModeAPI},
+			APIKey: aimock.DummyKey, APIURL: server.APIURL(),
+			Tools: []api.ToolDefinition{{
+				Name: "journals", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(context.Context, map[string]any) (any, error) {
+					return api.StructuredToolResult{Content: preview, Structured: map[string]any{"data": []any{map[string]any{"id": "j-1"}}}}, nil
+				},
+			}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		events, err := provider.ExecuteStream(ctx, ai.Request{Prompt: api.Prompt{User: "List journals."}})
+		Expect(err).NotTo(HaveOccurred())
+		var result ai.Event
+		var history *api.ToolResult
+		for event := range events {
+			if event.Kind == ai.EventToolResult {
+				result = event
+			}
+			if event.Kind == ai.EventTurn && event.Message.Role == api.RoleTool {
+				history = event.Message.Parts[0].ToolResult
+			}
+		}
+
+		Expect(result.Success).To(BeTrue())
+		Expect(result.Text).To(Equal(preview))
+		Expect(result.Output).To(MatchJSON(`{"data":[{"id":"j-1"}]}`))
+		Expect(history.Output).To(MatchJSON(`"| id |\n|----|\n| j-1 |"`))
+		requests := server.Requests()
+		Expect(requests).To(HaveLen(2))
+		modelSaw := requests[1].Request.Messages[len(requests[1].Request.Messages)-1].Content
+		Expect(modelSaw).To(ContainSubstring("| j-1 |"))
+		Expect(modelSaw).NotTo(ContainSubstring(`"data"`))
+	})
 })
