@@ -136,9 +136,27 @@ func TestRunToolHandlerErrorFedBack(t *testing.T) {
 	}
 }
 
+func TestToolTurnLimitHonoursBudgetMaxTurns(t *testing.T) {
+	const requested, configured = 40, 24
+	cases := []struct {
+		name            string
+		request, config api.Budget
+		want            int
+	}{
+		{"request budget wins", api.Budget{MaxTurns: requested}, api.Budget{MaxTurns: configured}, requested},
+		{"provider config when the request leaves it unset", api.Budget{}, api.Budget{MaxTurns: configured}, configured},
+		{"runtime default when neither sets it", api.Budget{}, api.Budget{}, maxToolTurns},
+	}
+	for _, tc := range cases {
+		if got := toolTurnLimit(tc.request, tc.config); got != tc.want {
+			t.Errorf("%s: toolTurnLimit = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestToolOptionsEmptyWhenNoTools(t *testing.T) {
 	p := newToolProvider(nil)
-	if opts, err := p.toolOptions(captools.ResolveOptions{}, nil); err != nil || opts != nil {
+	if opts, err := p.toolOptions(captools.ResolveOptions{}, maxToolTurns, nil); err != nil || opts != nil {
 		t.Errorf("toolOptions with no tools = %v, want nil", opts)
 	}
 	if !p.SupportsCallerTools() {
