@@ -53,7 +53,7 @@ func generateOptions(p *Provider, req ai.Request, stream gkai.ModelStreamCallbac
 		gkai.WithModelName(p.modelRef),
 		gkai.WithUse(gkai.MiddlewareFunc(turns.middleware)),
 	}
-	toolOptions, err := p.toolOptions(captools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy}, emit)
+	toolOptions, err := p.toolOptions(captools.ResolveOptions{Preferences: req.ToolPreferences, Policy: req.ToolPolicy}, toolTurnLimit(req.Budget, p.cfg.Budget), emit)
 	if err != nil {
 		return nil, err
 	}
