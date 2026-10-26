@@ -13,7 +13,8 @@ import (
 	gkai "github.com/firebase/genkit/go/ai"
 )
 
-// maxToolTurns caps the model↔tool iteration so a misbehaving loop terminates.
+// maxToolTurns caps the model↔tool iteration so a misbehaving loop terminates,
+// when neither the request nor the provider config sets budget.maxTurns.
 const (
 	maxToolTurns            = 16
 	anthropicMaxStrictTools = 20
@@ -28,7 +29,19 @@ func (p *Provider) SupportsCallerTools() bool { return true }
 // non-nil, receives EventToolUse / EventPermission / EventToolResult as the
 // model calls them. Returns nil when there are no caller tools, so a run with
 // none is byte-for-byte unchanged.
-func (p *Provider) toolOptions(opts captools.ResolveOptions, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
+// toolTurnLimit is the run's budget.maxTurns: the request's, else the provider
+// config's, else maxToolTurns (budget.maxTurns 0 means the runtime default).
+func toolTurnLimit(request, config api.Budget) int {
+	if request.MaxTurns > 0 {
+		return request.MaxTurns
+	}
+	if config.MaxTurns > 0 {
+		return config.MaxTurns
+	}
+	return maxToolTurns
+}
+
+func (p *Provider) toolOptions(opts captools.ResolveOptions, maxTurns int, emit func(ai.Event)) ([]gkai.GenerateOption, error) {
 	definitions, err := resolveToolDefinitions(p.cfg.Tools, opts)
 	if err != nil {
 		return nil, err
@@ -46,7 +59,7 @@ func (p *Provider) toolOptions(opts captools.ResolveOptions, emit func(ai.Event)
 	for i := range definitions {
 		refs = append(refs, p.genkitTool(definitions[i], emit, p.toolCorrelation))
 	}
-	return []gkai.GenerateOption{gkai.WithTools(refs...), gkai.WithMaxTurns(maxToolTurns)}, nil
+	return []gkai.GenerateOption{gkai.WithTools(refs...), gkai.WithMaxTurns(maxTurns)}, nil
 }
 
 func resolveToolDefinitions(definitions []api.ToolDefinition, opts captools.ResolveOptions) ([]api.ToolDefinition, error) {
