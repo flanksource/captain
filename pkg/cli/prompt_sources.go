@@ -71,7 +71,7 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 			}
 		}
 	}
-	cwd, err := os.Getwd()
+	cwd, err := promptDirectory(ctx)
 	if err != nil {
 		return nil, err
 	}
