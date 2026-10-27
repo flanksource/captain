@@ -25,18 +25,19 @@ const (
 	SchemaStrictnessDisabled SchemaStrictness = "none"
 	SchemaStrictnessWarning  SchemaStrictness = "warning"
 	SchemaStrictnessError    SchemaStrictness = "error"
-	SchemaStrictnessRetry    SchemaStrictness = "retry"
+	SchemaStrictnessRepair   SchemaStrictness = "repair"
+	SchemaStrictnessRetry    SchemaStrictness = SchemaStrictnessRepair
 )
 
 // AllSchemaStrictness lists the non-empty strictness modes.
 func AllSchemaStrictness() []SchemaStrictness {
-	return []SchemaStrictness{SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry}
+	return []SchemaStrictness{SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRepair}
 }
 
 // Valid reports whether s is a recognised strictness mode (including none/"").
 func (s SchemaStrictness) Valid() bool {
 	switch s {
-	case SchemaStrictnessNone, SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry:
+	case SchemaStrictnessNone, SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRepair, "retry":
 		return true
 	default:
 		return false
@@ -48,7 +49,7 @@ func (s SchemaStrictness) Validate() error {
 	if s.Valid() {
 		return nil
 	}
-	return fmt.Errorf("invalid schemaStrictness %q; want one of: none, warning, error, retry", s)
+	return fmt.Errorf("invalid schemaStrictness %q; want one of: none, warning, error, repair (retry is an alias)", s)
 }
 
 // VerifyScope narrows a workflow's verification to the changed files vs the

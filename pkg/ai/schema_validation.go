@@ -21,7 +21,7 @@ func ValidateStructuredJSON(schema json.RawMessage, document string) (string, er
 	}
 	result, err := gojsonschema.Validate(gojsonschema.NewBytesLoader(schema), gojsonschema.NewStringLoader(document))
 	if err != nil {
-		return "", fmt.Errorf("%w: validation could not run: %v (response preview, first %d chars: %q)",
+		return "", fmt.Errorf("%w: validation could not run: %w (response preview, first %d chars: %q)",
 			ErrSchemaValidation, err, maxValidationResponseChars, validationResponsePreview(document))
 	}
 	if result.Valid() {

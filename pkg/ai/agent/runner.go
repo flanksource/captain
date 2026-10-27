@@ -275,6 +275,9 @@ func (r *Runner[T]) runLoop(ctx context.Context, hc *HookContext, result *Result
 	})
 	result.Loop = loop
 	if loopErr != nil {
+		if loop != nil && len(loop.Iterations) > 0 {
+			return errors.Join(loopErr, r.updateResponse(hc, loop.Iterations[len(loop.Iterations)-1]))
+		}
 		return loopErr
 	}
 	if loop != nil && loop.StopReason == "max-cost" {
@@ -340,6 +343,7 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 		ws.SessionID = prev.SessionID
 	}
 	var text strings.Builder
+	var rejected string
 	var terminal ai.TerminalOutcomeTracker
 	for _, ev := range prev.Events {
 		if err := terminal.Observe(ev); err != nil {
@@ -347,7 +351,11 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 		}
 		switch ev.Kind {
 		case ai.EventText:
-			text.WriteString(ev.Text)
+			if ev.Rejected {
+				rejected = ev.Text
+			} else {
+				text.WriteString(ev.Text)
+			}
 		case ai.EventResult:
 			if len(ev.StructuredData) > 0 {
 				hc.Response.StructuredData = ev.StructuredData
@@ -356,7 +364,11 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 	}
 	hc.Response.TerminalOutcome = terminal.Outcome()
 	hc.Response.Text = text.String()
+	if prev.Err != nil && rejected != "" {
+		hc.Response.Text = rejected
+	}
 	hc.Response.Usage = prev.Usage
+	hc.Response.CostUSD = prev.CostUSD
 	return nil
 }
 

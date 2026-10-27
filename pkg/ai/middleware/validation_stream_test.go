@@ -46,7 +46,7 @@ func streamWith(t *testing.T, inner *streamingProvider) []ai.Event {
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
 	}
-	events, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRetry))
+	events, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRepair))
 	if err != nil {
 		t.Fatalf("ExecuteStream: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestValidationStream_RetryRepairsAnAnswerTheProviderRejected(t *testing.T) 
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
 	}
-	stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRetry))
+	stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRepair))
 	if err != nil {
 		t.Fatalf("ExecuteStream: %v", err)
 	}

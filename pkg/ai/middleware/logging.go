@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -48,6 +49,10 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 
 	resp, err := l.provider.Execute(ctx, req)
 	duration := time.Since(start)
+	if errors.Is(err, ai.ErrSchemaValidation) {
+		log.Debugf("%s response rejected after %v: %v", identity, duration.Round(time.Millisecond), err)
+		return resp, err
+	}
 
 	if err != nil {
 		log.Errorf("%v", clicky.Text("").
