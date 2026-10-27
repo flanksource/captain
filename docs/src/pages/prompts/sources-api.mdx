@@ -19,19 +19,18 @@ The prompts UI and Clicky operation surface are backed by a prompt entity. The e
 Captain discovers prompt sources in this order:
 
 1. Embedded examples from `pkg/ai/prompt/testdata`, exposed as a read-only source.
-2. Built-in prompts from `pkg/ai/prompt/builtin` (source id `builtin`), exposed as a read-only source. These are the document review prompts `spec-internal-high`, `spec-internal-low`, `spec-public-high`, `spec-public-low` and `proposal-review`.
-3. Directories configured under `prompts.dirs` in `~/.captain.yaml`.
-4. Directories passed to `captain serve --prompt-dir`.
-5. An implicit writable local source at `.captain/prompts` when no other writable source exists.
-6. An implicit writable local source at `~/.config/captain/prompts`, or `$XDG_CONFIG_HOME/captain/prompts` when that variable is set. It is listed even when the directory does not exist yet, and it never replaces `.captain/prompts` as the default save target.
+2. Directories configured under `prompts.dirs` in `~/.captain.yaml`.
+3. Directories passed to `captain serve --prompt-dir`.
+4. An implicit writable local source at `.captain/prompts` when no other writable source exists.
+5. An implicit writable local source at `~/.config/captain/prompts`, or `$XDG_CONFIG_HOME/captain/prompts` when that variable is set. It is listed even when the directory does not exist yet, and it never replaces `.captain/prompts` as the default save target.
 
 Embedded prompts are read-only. Saving an embedded prompt from the workbench writes a local fork, stripping the embedded walk root so `testdata/commit.prompt` becomes `commit.prompt`.
 
-Local sources discover ordinary directories recursively, excluding `.git`, `node_modules`, `vendor`, and `dist`. Symbolic links directly inside a source directory are also supported: a linked `.prompt` file is included, and a linked directory contributes only its immediate regular `.prompt` files. Subdirectories and further links inside a linked directory are not followed. Links nested inside ordinary subdirectories are not discovered. Broken links, resolution cycles, and unreadable targets produce errors identifying the path.
+Local sources discover ordinary directories recursively, excluding `.git`, `node_modules`, `vendor`, and `dist`. Symbolic links directly inside a source directory are also supported: a linked `.prompt` file is included, and a linked directory contributes only its immediate regular `.prompt` files. Subdirectories and further links inside a linked directory are not followed. Links nested inside ordinary subdirectories are not discovered. Broken links, resolution cycles, and unreadable targets stay in the catalog with a `promptfile/symlink` warning in their `diagnostics` array, identifying the affected path. Healthy prompts remain available. Render and run fail explicitly when the selected prompt cannot be read.
 
 Linked prompts retain their logical source paths and IDs and report `writable: false`. They support list, get, render, and run; update and delete refuse them without changing the link or its target. Use create to save an editable local copy. For example, `~/.config/captain/prompts/shared -> /path/to/shared-prompts` exposes `/path/to/shared-prompts/review.prompt` as `shared/review.prompt`, but excludes `/path/to/shared-prompts/nested/review.prompt`.
 
-CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. Bare filenames are resolved across the discovered sources. An existing file in the current directory takes precedence. A local prompt shadows an embedded one with the same name, so copying `spec-internal-high.prompt` into `~/.config/captain/prompts/` customizes it everywhere. If more than one local source contains the same filename, Captain reports the ambiguity and requires an ID or explicit path.
+CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. An existing `.prompt` file in the current directory takes precedence. Bare filenames then use the first matching local source in discovery order: configured directories, caller-supplied directories (such as `--prompt-dir`), the implicit project directory when active, and the user configuration directory. Embedded sources are checked afterward. For example, a project's `branch-rebase.prompt` overrides `~/.config/captain/prompts/library/branch-rebase.prompt`. `captain prompt list` prints lookup locations in precedence order. Duplicate basenames within a single source remain ambiguous and require an ID or explicit path. Explicit IDs and paths can address a shadowed prompt directly.
 
 ## Entity records
 
@@ -54,7 +53,7 @@ CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare
 }
 `} />
 
-Every summary and detail also carries `version` — a hash of the exact file content — and `updatedAt`.
+Readable summaries and details also carry `version` — a hash of the exact file content — and `updatedAt`. An unreadable linked prompt instead carries `diagnostics: [{"rule":"promptfile/symlink","severity":"warning","message":"..."}]`, reports `writable: false`, and has no content version. A broken directory link is represented by its logical directory path so its warning remains inspectable by ID.
 
 `PromptDetail` extends the summary with raw `content`, `inputSchema`, `inputDefault`, and metadata extracted by dotprompt. A prompt whose frontmatter no longer parses is still returned: `content` holds the raw text and `parseError` the parser message, so the editor can open it for repair. Render and run refuse such a prompt until it parses again.
 
