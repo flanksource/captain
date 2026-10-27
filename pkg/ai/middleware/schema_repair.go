@@ -79,6 +79,13 @@ func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMes
 	req.Prompt.SchemaJSON = parent.Prompt.SchemaJSON
 	req.Prompt.SchemaStrictness = api.SchemaStrictnessDisabled
 	req.Workflow = nil
+	req.ToolApproval = nil
+	if len(parent.Messages) > 0 {
+		req.Messages = append(append([]api.Message(nil), parent.Messages...), api.Message{
+			Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: renderedReq.Prompt.System + "\n\n" + renderedReq.Prompt.User}},
+		})
+	}
+	req.ToolPolicy = parent.ToolPolicy.Append(api.PermissionPolicy{{ToolMatch: api.ToolMatch{Name: api.MatchPatterns{"*"}}, Policy: api.ToolPolicyDeny}})
 
 	cfg := v.cfg
 	cfg.Model = model
