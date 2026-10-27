@@ -107,7 +107,13 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 		a.appendThinking(ev.Text)
 		a.task.SetDescription("thinking")
 	case ai.EventText:
+		if ev.Rejected {
+			a.flush()
+		}
 		a.appendText(ev.Text)
+		if ev.Rejected {
+			a.flush()
+		}
 		a.task.SetDescription("responding")
 	case ai.EventToolUse:
 		a.flush()
@@ -133,6 +139,10 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 		a.emitVerdict(ev)
 	case ai.EventError:
 		a.flush()
+		if ev.Text != "" {
+			a.appendText(ev.Text)
+			a.flush()
+		}
 		a.emitError(ev)
 	case ai.EventResult:
 		a.flush()
@@ -249,15 +259,16 @@ func (a *promptEventAccumulator) emitToolResult(ev ai.Event) {
 			a.toolByID[ev.ToolCallID] = msg
 		}
 	}
-	text, state := ev.Text, session.ToolStateOutputAvailable
+	text, state, errorText := ev.Text, session.ToolStateOutputAvailable, ""
 	if !ev.Success {
 		a.task.Warnf("tool %s failed", msg.Parts[0].ToolName)
 		text = "[error] " + ev.Text
-		state = session.ToolStateOutputError
+		state, errorText = session.ToolStateOutputError, ev.Text
 	}
 	// Re-emit the same id so the viewer merges the output into the tool row.
 	msg.Parts[0].Output = textToRaw(text)
 	msg.Parts[0].State = state
+	msg.Parts[0].ErrorText = errorText
 	a.emit(*msg)
 }
 

@@ -61,6 +61,20 @@ type Placement struct {
 	Sessions  []database.CreateSessionInput
 }
 
+// AdmittedSessionID is the id of the session the run is admitted on, known
+// before admission: the existing session, or the admission session's id when
+// the tree names one. uuid.Nil means the admission session's id is assigned
+// only when it is ensured (a tree keyed by provider session id).
+func (p Placement) AdmittedSessionID() uuid.UUID {
+	if p.SessionID != uuid.Nil {
+		return p.SessionID
+	}
+	if len(p.Sessions) == 0 {
+		return uuid.Nil
+	}
+	return p.Sessions[len(p.Sessions)-1].ID
+}
+
 func (p Placement) validate() error {
 	switch {
 	case p.SessionID != uuid.Nil && len(p.Sessions) > 0:

@@ -183,7 +183,7 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 	if messageID == "" {
 		messageID = newMessageID()
 	}
-	run, err := launchAsyncRun(item.CaptainID, rendered, true)
+	run, err := launchAsyncRun(promptLaunch{ID: item.CaptainID, Rendered: rendered, Chat: true})
 	if err != nil {
 		return ChatMessageResponse{}, err
 	}

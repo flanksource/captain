@@ -128,10 +128,12 @@ var _ = Describe("Promptfile linter", func() {
 		Expect(results[0].Success).To(BeTrue())
 	})
 
-	It("accepts the built-in prompts", func() {
-		builtin, err := filepath.Abs(filepath.Join("..", "..", "ai", "prompt", "builtin"))
+	It("accepts the document review examples", func() {
+		examples, err := filepath.Abs(filepath.Join("..", "..", "..", "examples"))
 		Expect(err).NotTo(HaveOccurred())
-		results := Run(context.Background(), Options{WorkDir: builtin, Data: map[string]any{"files": "docs/spec.md"}})
+		results := Run(context.Background(), Options{WorkDir: examples,
+			Paths: []string{"spec-internal-high.prompt", "spec-internal-low.prompt", "spec-public-high.prompt", "spec-public-low.prompt", "proposal-review.prompt"},
+			Data:  map[string]any{"files": "docs/spec.md"}})
 		Expect(results).To(HaveLen(1))
 		Expect(results[0].Success).To(BeTrue(), results[0].Error)
 		Expect(results[0].FileCount).To(Equal(5))

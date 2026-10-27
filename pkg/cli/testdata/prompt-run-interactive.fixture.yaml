@@ -25,7 +25,7 @@ steps:
     override: true
 
   # The form is inline: one row per flag, only the focused one open. The id
-  # (the positional) is focused first; enter opens the built-in prompts with
+  # (the positional) is focused first; enter opens the available prompts with
   # the highlighted one's description. Choosing proposal-review loads its
   # input schema into --vars: its files, focus and rfp variables follow the
   # id, and the first gets focus. The flags that do not fit on screen fold
@@ -34,7 +34,10 @@ steps:
     kind: exec
     terminal: pty
     cwd: "{{.env.CASE_DIR}}"
-    script: '"$CAPTAIN_BIN" prompt run -i'
+    script: |
+      mkdir -p .captain/prompts
+      cp "{{.fixture.dir}}/../../../examples/proposal-review.prompt" .captain/prompts/
+      "$CAPTAIN_BIN" prompt run -i
     input:
       - { expect: "enter edit", keys: [enter, down] }
       - { expect: "Review RFP responses", keys: [enter] }

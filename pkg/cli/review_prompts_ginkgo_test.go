@@ -14,7 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Built-in document review prompts", func() {
+var _ = Describe("Example document review prompts", func() {
 	var ctx context.Context
 	allFamilies := []string{"req/", "doc/", "hl/", "ll/", "int/", "pub/", "prop/"}
 
@@ -23,7 +23,7 @@ var _ = Describe("Built-in document review prompts", func() {
 		DeferCleanup(func() { captainconfig.SetPathForTesting("") })
 		catalog, err := runtimeprofiles.NewCatalog(runtimeprofiles.NewBuiltinSource())
 		Expect(err).NotTo(HaveOccurred())
-		ctx = ContextWithRuntimeCatalog(context.Background(), catalog)
+		ctx = ContextWithRuntimeCatalog(ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{"../../examples"}}), catalog)
 	})
 
 	DescribeTable("render as read-only lint reviews scoped to their rule families",

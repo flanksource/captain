@@ -114,7 +114,7 @@ func promptSpecHelpFields() []promptHelpField {
 		{"prompt.appendSystem", "Text appended to the runtime's default system prompt."},
 		{"prompt.source", "Diagnostic source label; Captain normally fills this from the .prompt path."},
 		{"prompt.schemaJSON", "Raw JSON Schema in the native run spec. In .prompt files, prefer output.schema."},
-		{"prompt.schemaStrictness", "Schema failure policy: runtime default, none, warning, error, or retry."},
+		{"prompt.schemaStrictness", "Schema failure policy: runtime default, none, warning, error, or repair (retry is a compatibility alias)."},
 		{"prompt.metadata", "Arbitrary string-to-string diagnostic metadata."},
 		{"prompt.attachments[]", "Ordered multimodal inputs. Each has exactly one source (id, path, or url), plus optional filename, mediaType, size, and sha256 metadata."},
 		{"messages[].role", "Role for one provider-neutral history entry: system, user, assistant, or tool."},
