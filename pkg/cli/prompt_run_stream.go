@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/flanksource/captain/pkg/ai"
 	"net/http"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type runStream struct {
 	summary       *PromptRunSummary
 	errMsg        string
 	endedAt       time.Time
+	observer      func(int, ai.Event)
 }
 
 func newRunStream() *runStream {

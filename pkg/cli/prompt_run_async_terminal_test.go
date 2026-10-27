@@ -27,7 +27,7 @@ func TestLaunchAsyncRun_SnapshotReportsTerminalOutcome(t *testing.T) {
 			rendered := workflowRendered(&api.Verify{Commands: []string{tc.command}, MaxIterations: 1})
 			rendered.Input.SetCwd(t.TempDir())
 
-			started, err := launchAsyncRun("workflow-test", rendered, false)
+			started, err := launchAsyncRun(promptLaunch{ID: "workflow-test", Rendered: rendered})
 			if err != nil {
 				t.Fatal(err)
 			}

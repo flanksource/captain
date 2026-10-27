@@ -12,7 +12,6 @@ import (
 
 var _ = Describe("Prompt source discovery", func() {
 	var promptsDir string
-	builtinNames := []string{"spec-internal-high.prompt", "spec-internal-low.prompt", "spec-public-high.prompt", "spec-public-low.prompt", "proposal-review.prompt"}
 
 	BeforeEach(func() {
 		captainconfig.SetPathForTesting(filepath.Join(GinkgoT().TempDir(), ".captain.yaml"))
@@ -29,29 +28,15 @@ var _ = Describe("Prompt source discovery", func() {
 		return path
 	}
 
-	It("ships the review prompts as a read-only built-in source", func() {
+	It("does not register a built-in review prompt source", func() {
 		sources, err := buildPromptSources(context.Background(), promptSourceOptions{})
 		Expect(err).NotTo(HaveOccurred())
-		var builtin []promptRecord
-		for _, source := range sources {
-			if source.ID == "builtin" {
-				Expect(source.Writable).To(BeFalse())
-				builtin, err = listPromptRecordsFromSource(source)
-				Expect(err).NotTo(HaveOccurred())
-			}
-		}
-		names := make([]string, 0, len(builtin))
-		for _, record := range builtin {
-			names = append(names, filepath.Base(record.Rel))
-		}
-		Expect(names).To(ConsistOf(builtinNames))
+		Expect(sources).NotTo(ContainElement(HaveField("ID", "builtin")))
 	})
 
-	It("resolves built-in prompts by name when the user prompt directory is absent", func() {
-		record, err := resolvePromptRecord(context.Background(), promptRecordOptions{ID: "spec-internal-high"})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(record.Source.ID).To(Equal("builtin"))
-		Expect(record.Rel).To(Equal("builtin/spec-internal-high.prompt"))
+	It("requires a local source for review prompts", func() {
+		_, err := resolvePromptRecord(context.Background(), promptRecordOptions{ID: "spec-internal-high"})
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("discovers prompts in the user configuration directory", func() {
@@ -62,7 +47,7 @@ var _ = Describe("Prompt source discovery", func() {
 		Expect(record.Source.Implicit).To(BeTrue())
 	})
 
-	It("lets a user copy shadow a built-in prompt of the same name", func() {
+	It("resolves a review prompt installed in the user directory", func() {
 		path := writeUserPrompt("spec-internal-high.prompt", "Review {{files}} my way.\n")
 		record, err := resolvePromptRecord(context.Background(), promptRecordOptions{ID: "spec-internal-high"})
 		Expect(err).NotTo(HaveOccurred())

@@ -3,9 +3,11 @@ package cli
 import (
 	"context"
 	"errors"
+	"github.com/flanksource/captain/pkg/ai"
 	"io"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky/task"
 )
 
 // PromptInvocation runs the same prompt sources and runtime options as the CLI.
@@ -16,6 +18,14 @@ type PromptInvocation struct {
 	// Tools are caller tools exposed to the agent on every runtime the prompt
 	// resolves to. Rendering fails when one of those runtimes cannot expose them.
 	Tools []api.ToolDefinition
+	// Group places a launched run's task in the caller's own run group instead
+	// of a `prompt <name>` group of its own; the group's concurrency then governs
+	// it. Name names that task (default: the prompt's name); each variant of a
+	// multi-runtime prompt joins as `<Name>:<selector>`. Only LaunchPrompt reads
+	// them.
+	Group   *task.Group
+	Name    string
+	OnEvent func(int, ai.Event)
 }
 
 // LaunchPrompt starts the prompt as an async run, the same run an HTTP
@@ -29,7 +39,9 @@ func LaunchPrompt(ctx context.Context, invocation PromptInvocation) (PromptRunRe
 		return PromptRunResult{}, err
 	}
 	logRuntimeWarnings(rendered.Resolution.Warnings)
-	return launchRendered(ctx, invocation.Reference, rendered, false)
+	return launchRendered(ctx, promptLaunch{
+		ID: invocation.Reference, Rendered: rendered, Group: invocation.Group, Name: invocation.Name, OnEvent: invocation.OnEvent,
+	})
 }
 
 func RenderPrompt(ctx context.Context, invocation PromptInvocation) (PromptRenderResult, error) {

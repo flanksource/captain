@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const PromptLookupHelp = `- Embedded examples and built-in prompts ship with the binary (read-only).
+const PromptLookupHelp = `- Embedded examples ship with the binary (read-only).
 - Configured directories: prompts.dirs in ~/.captain.yaml; relative paths resolve from that config file's directory.
 - Caller-provided directories and embedded filesystems are also included when registered by a host application.
 - Project directory: ./.captain/prompts, used only when no configured or caller-provided writable source exists.
@@ -46,12 +46,12 @@ var promptCommandHelp = map[string]struct {
 	Examples    string
 }{
 	"list": {
-		Description: "Discover embedded, built-in, configured, project and user prompts. Filter by name, description, model or path with --query, and by source with --source. Local files shadow embedded prompts of the same name.",
+		Description: "Discover embedded, configured, project and user prompts. Filter by name, description, model or path with --query, and by source with --source. Local files shadow embedded prompts of the same name.",
 		Examples:    "captain prompt list\ncaptain prompt list --query review --source local\ncaptain prompt list --json",
 	},
 	"get": {
 		Description: "Inspect a prompt's raw content, variables, schemas and version. Accepts a catalog ID, bare name or .prompt path. Invalid files remain readable with parseError so they can be repaired.",
-		Examples:    "captain prompt get proposal-review\ncaptain prompt get .captain/prompts/review.prompt --json",
+		Examples:    "captain prompt get commit\ncaptain prompt get .captain/prompts/review.prompt --json",
 	},
 	"create": {
 		Description: "Create a local .prompt file from content. Choose a writable source with target and a relative destination with relPath or name. Embedded prompts are read-only; create a local copy to customize one. Content is validated before writing.",
@@ -62,7 +62,7 @@ var promptCommandHelp = map[string]struct {
 		Examples:    `captain prompt update .captain/prompts/hello.prompt 'content=Hello {{name}}!' baseVersion=VERSION_FROM_GET`,
 	},
 	"delete": {
-		Description: "Delete a writable local prompt file. Embedded, built-in and linked prompts cannot be deleted. Removing a local override exposes the embedded prompt again.",
+		Description: "Delete a writable local prompt file. Embedded and linked prompts cannot be deleted. Removing a local override exposes the embedded prompt again.",
 		Examples:    "captain prompt delete .captain/prompts/hello.prompt",
 	},
 	"render": {
