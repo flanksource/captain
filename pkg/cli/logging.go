@@ -6,7 +6,7 @@ import (
 
 	"github.com/flanksource/commons/har"
 	commonshttp "github.com/flanksource/commons/http"
-	"github.com/flanksource/commons/http/middlewares"
+	"github.com/flanksource/commons/http/middlewares/tracing"
 	"github.com/flanksource/commons/logger"
 )
 
@@ -79,7 +79,7 @@ func wrapHTTPLogging(base http.RoundTripper) http.RoundTripper {
 	if !ok {
 		return base
 	}
-	return middlewares.NewLogger(cfg)(base)
+	return tracing.NewLogger(cfg)(base)
 }
 
 // httpTraceConfig maps the effective HTTP log level onto commons' trace ladder,
