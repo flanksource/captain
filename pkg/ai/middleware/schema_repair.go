@@ -33,7 +33,7 @@ func (v *validatingProvider) executeRepair(ctx context.Context, parent ai.Reques
 	if c, ok := p.(io.Closer); ok {
 		defer func() { _ = c.Close() }()
 	}
-	return p.Execute(ctx, req)
+	return (&observingProvider{provider: p}).Execute(ctx, req)
 }
 
 func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMessage, verrs string, prev *ai.Response, attempt int) (ai.Request, ai.Config, bool, error) {
