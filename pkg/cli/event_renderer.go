@@ -137,6 +137,11 @@ func (r *EventRenderer) handle(iteration int, event ai.Event) {
 		return
 	}
 	r.clearProgress()
+	if event.Kind == ai.EventText && event.Rejected {
+		r.flushPending()
+		r.write(clicky.Text("").Add(promptResponseMarkdown(event.Text)).ANSI() + "\n")
+		return
+	}
 
 	if event.Kind == ai.EventTurnStart {
 		r.flushPending()

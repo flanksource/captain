@@ -54,7 +54,7 @@ var _ = Describe("captain permissions explain", func() {
 		Expect(err).NotTo(HaveOccurred())
 		ctx := ContextWithRuntimeCatalog(context.Background(), catalog)
 
-		out, err := RunPermissionsExplain(ctx, PermissionsExplainOptions{Prompt: "proposal-review",
+		out, err := RunPermissionsExplain(ctx, PermissionsExplainOptions{Prompt: "../../examples/proposal-review.prompt",
 			Models: []string{"agent:sonnet", "agent:gpt-6.1-sol"}, Presets: []string{"lint"}})
 		Expect(err).NotTo(HaveOccurred())
 		result := out.(PermissionsExplainResult)

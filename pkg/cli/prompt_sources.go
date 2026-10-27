@@ -29,12 +29,6 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 		WalkRoot: "testdata",
 		FS:       promptlib.Examples,
 		Writable: false,
-	}, {
-		Kind:     "embedded",
-		ID:       "builtin",
-		Label:    "Built-in prompts",
-		WalkRoot: "builtin",
-		FS:       promptlib.Builtin,
 	}}
 
 	seen := map[string]bool{}

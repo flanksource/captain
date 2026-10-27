@@ -5,33 +5,25 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/clicky/task"
 	flanksourceContext "github.com/flanksource/commons/context"
 )
 
-func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResult, runtimes []api.Model, chat bool) (PromptRunResult, error) {
+func launchAsyncBatch(ctx context.Context, launch promptLaunch) (PromptRunResult, error) {
+	rendered, chat := launch.Rendered, launch.Chat
 	if err := rendered.validateVariants(); err != nil {
 		return PromptRunResult{}, err
 	}
 	if rendered.Input.SessionID != "" {
 		return PromptRunResult{}, errors.New("a multi-model run cannot resume one provider session")
 	}
-	batch, err := createPromptBatchSessions(ctx, rendered, runtimes)
+	batch, err := createPromptBatchSessions(ctx, rendered, rendered.Runtimes)
 	if err != nil {
 		return PromptRunResult{}, err
 	}
 	updatePromptSessionLifecycle(ctx, batch.ID, database.SessionLifecycleRunning, "")
-	group := task.StartGroup[PromptRunSummary](
-		"prompt "+rendered.Name,
-		task.WithGroupID(batch.ID.String()),
-		task.WithKind("prompt"),
-		task.WithLabels(promptTaskLabelsWithID(rendered, id, "multi")),
-		task.WithConcurrency(len(batch.Runs)),
-		// Followed over HTTP like launchAsyncRun, never on the host's terminal.
-		task.WithNoRender(),
-	)
+	group := launch.runGroup(batch.ID.String(), "multi", task.WithConcurrency(len(batch.Runs)))
 	handles := make([]task.TypedTask[PromptRunSummary], len(batch.Runs))
 	result := PromptRunResult{
 		BatchID: batch.ID.String(), Status: "running", Chat: chat,
@@ -44,6 +36,7 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 		variant := renderVariant(rendered, rendered.variants[i])
 		runID := run.SessionID.String()
 		stream := promptRuns.create(runID)
+		stream.observer = launch.OnEvent
 		capabilities := chatCapabilitiesFor(variant.Provider, variant.Mode)
 		stream.setRun(PromptRunFrame{
 			RunID: runID, SessionID: runID, Status: "running", Chat: chat,
@@ -55,7 +48,7 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 			Status: "running", Model: run.Runtime.Name, Provider: providerName(run.Runtime.Provider), Mode: string(run.Runtime.Mode),
 			Effort: string(run.Runtime.Effort), Chat: chat, Capabilities: capabilities,
 		}
-		handles[i] = group.Add(runtimeSelector(run.Runtime), func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+		handles[i] = task.StartTask(launch.taskName(runtimeSelector(run.Runtime)), func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
 			timeout, err := renderedTimeout(variant)
 			if err != nil {
 				return PromptRunSummary{}, err
@@ -66,7 +59,7 @@ func launchAsyncBatch(ctx context.Context, id string, rendered PromptRenderResul
 				return chatSession.run(t)
 			}
 			return runPromptStream(t, variant, timeout, runID, stream, binding)
-		}, task.WithModel(run.Runtime.Name), task.WithPrompt(rendered.Input.Prompt.User))
+		}, task.WithGroup(group), task.WithModel(run.Runtime.Name), task.WithPrompt(rendered.Input.Prompt.User))
 	}
 
 	task.StartTask("finalize prompt batch", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {

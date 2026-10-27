@@ -30,7 +30,7 @@ var _ = Describe("Prompt list lookup locations", func() {
 		out, err := promptLookupFooter(context.Background(), clicky.FormatOptions{NoColor: true})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(ContainSubstring("Lookup locations"))
-		Expect(out).To(ContainSubstring("Built-in prompts"))
+		Expect(out).NotTo(ContainSubstring("Built-in prompts"))
 		Expect(out).To(ContainSubstring("Embedded examples"))
 		Expect(out).To(ContainSubstring(filepath.Join(cwd, ".captain", "prompts")))
 		Expect(out).To(ContainSubstring(filepath.Join(home, "prompts")))
