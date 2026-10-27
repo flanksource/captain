@@ -6,7 +6,7 @@ spec:
   prompt:
     outputSchemaType: json-schema
     typeSafeQuestions: null
-    schemaStrictness: error
+    schemaStrictness: repair
     schemaJSON:
       type: object
       additionalProperties: false
