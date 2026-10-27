@@ -51,7 +51,7 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
+	return completePromptRender(promptRenderInput{Directory: renderReq.Directory, Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
 }
 
 func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (PromptRenderResult, error) {
@@ -70,7 +70,7 @@ func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
+	return completePromptRender(promptRenderInput{Directory: renderReq.Directory, Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
 }
 
 // draftPromptRecord names an unsaved draft posted without a saved prompt id.
@@ -92,8 +92,9 @@ description: Ephemeral prompt
 }
 
 type promptRenderInput struct {
-	Record  promptRecord
-	Content string
+	Directory string
+	Record    promptRecord
+	Content   string
 	// Literal marks Content as caller data, so it is not inspected for
 	// frontmatter, input/output schemas or template variables.
 	Literal  bool
@@ -139,9 +140,13 @@ func literalOrParsedDetail(input promptRenderInput) (PromptDetail, error) {
 
 func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
 	saved := input.Saved
-	cwd, err := os.Getwd()
-	if err != nil {
-		return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
+	cwd := input.Directory
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
+		}
 	}
 	flags, err := input.Options.requestSpec()
 	if err != nil {

@@ -109,6 +109,7 @@ type PromptWriteRequest struct {
 }
 
 type PromptRenderRequest struct {
+	Directory string         `json:"-"`
 	Variables map[string]any `json:"variables,omitempty"`
 	// Presets selects ordered reusable task specs. A present empty list clears
 	// a frontmatter selection.

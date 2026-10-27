@@ -12,6 +12,7 @@ import (
 
 // PromptInvocation runs the same prompt sources and runtime options as the CLI.
 type PromptInvocation struct {
+	Prepared  *PreparedPrompt
 	Reference string
 	Options   AIPromptOptions
 	Stdin     io.Reader
@@ -34,9 +35,15 @@ type PromptInvocation struct {
 // multi-runtime prompt launches a batch whose BatchID is not itself a run; each
 // Runs[i].RunID is.
 func LaunchPrompt(ctx context.Context, invocation PromptInvocation) (PromptRunResult, error) {
-	rendered, err := RenderPrompt(ctx, invocation)
-	if err != nil {
-		return PromptRunResult{}, err
+	var rendered PromptRenderResult
+	if invocation.Prepared != nil {
+		rendered = invocation.Prepared.rendered
+	} else {
+		var err error
+		rendered, err = RenderPrompt(ctx, invocation)
+		if err != nil {
+			return PromptRunResult{}, err
+		}
 	}
 	logRuntimeWarnings(rendered.Resolution.Warnings)
 	return launchRendered(ctx, promptLaunch{
