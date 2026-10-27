@@ -9,6 +9,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/clicky/task"
+	"github.com/google/uuid"
 )
 
 func runPromptStream(t *task.Task, rendered PromptRenderResult, timeout time.Duration, runID string, stream *runStream, binding *promptSessionBinding) (PromptRunSummary, error) {
@@ -34,6 +35,7 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	if err != nil {
 		return failRun(t, stream, err)
 	}
+	admitted := announceAdmittedSession(t, stream, rec, rendered.Model)
 	req := rendered.Input
 	if err := preparePromptRun(ctx, &req, rendered.Config); err != nil {
 		return failRun(t, stream, errors.Join(err, recordCompleted(ctx, rec, unstartedRun(rendered, err))))
@@ -52,6 +54,13 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 			renderer.Handle(iteration, event)
 		}
 	}
+	if stream.observer != nil {
+		previous := onEvent
+		onEvent = func(iteration int, event ai.Event) {
+			previous(iteration, event)
+			stream.observer(iteration, event)
+		}
+	}
 	result, err := promptrun.Run(ctx, promptrun.Input{
 		Resolved: promptResolution(rendered, req),
 		Config:   rendered.Config,
@@ -62,15 +71,46 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	})
 	stream.setRunMetadata(result.SessionID, firstNonEmpty(result.Model, rendered.Model))
 	if err != nil {
-		return failRun(t, stream, err)
+		if result.Response == nil {
+			return failRun(t, stream, err)
+		}
+		if stream.wasStopped() {
+			err = errors.New("stopped")
+		}
+		summary, summaryErr := completedRunSummary(runID, rendered, result, binding, admitted, time.Since(start))
+		if summaryErr != nil {
+			err = errors.Join(err, summaryErr)
+		}
+		summary.Success, summary.Error = false, err.Error()
+		stream.finish(&summary, err.Error())
+		_, _ = t.FailedWithError(err)
+		return summary, err
 	}
-	summary, err := completedRunSummary(runID, rendered, result, binding, time.Since(start))
+	summary, err := completedRunSummary(runID, rendered, result, binding, admitted, time.Since(start))
 	if err != nil {
 		return failRun(t, stream, err)
 	}
 	stream.complete(summary)
 	t.Success()
 	return summary, nil
+}
+
+// announceAdmittedSession names the captain session a recorded run is admitted
+// on — in the run frame and the task log — before anything is dispatched, so a
+// follower can open it while a provider that reports no session of its own
+// (an API run) is still working. It returns that id, or "" when the run is
+// unrecorded or its admission session's id is assigned only on admission.
+func announceAdmittedSession(t *task.Task, stream *runStream, rec *promptrun.Recording, model string) string {
+	if rec == nil {
+		return ""
+	}
+	id := rec.Placement.AdmittedSessionID()
+	if id == uuid.Nil {
+		return ""
+	}
+	stream.setRunMetadata(id.String(), model)
+	t.Infof("session %s", id)
+	return id.String()
 }
 
 // stoppedAsStopped files a run the stop button ended the way the stream
@@ -99,8 +139,9 @@ func preparePromptRun(ctx context.Context, req *ai.Request, cfg ai.Config) error
 // completedRunSummary is the finished run as the CLI prints it and the stream
 // reports it: the answer as text and as structured output, and the failure
 // reason of a run whose checks said no. The session it names is the captain
-// session when the run is bound to one, not the provider's own id.
-func completedRunSummary(runID string, rendered PromptRenderResult, result promptrun.Result, binding *promptSessionBinding, elapsed time.Duration) (PromptRunSummary, error) {
+// session when the run is bound to one, not the provider's own id; a run whose
+// provider reports no session names the session it was admitted on.
+func completedRunSummary(runID string, rendered PromptRenderResult, result promptrun.Result, binding *promptSessionBinding, admittedSessionID string, elapsed time.Duration) (PromptRunSummary, error) {
 	structured, err := structuredOutputMap(result.StructuredData)
 	if err != nil {
 		return PromptRunSummary{}, err
@@ -114,7 +155,7 @@ func completedRunSummary(runID string, rendered PromptRenderResult, result promp
 	if err != nil {
 		return PromptRunSummary{}, err
 	}
-	sessionID := result.SessionID
+	sessionID := firstNonEmpty(result.SessionID, admittedSessionID)
 	if binding != nil {
 		sessionID = binding.SessionID.String()
 	}
