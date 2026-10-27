@@ -54,7 +54,7 @@ With no runtime-default flags, selecting an API provider opens a secure token pr
 
 ## Sources and presets
 
-Prompt sources include embedded examples, built-in review prompts, configured directories, server `--prompt-dir` directories, project `.captain/prompts`, and the user config prompt directory. Local names shadow embedded names; conflicting local names require an explicit path or ID. See [Sources and API](/prompts/sources-api/) for discovery and write destinations.
+Prompt sources include embedded examples, configured directories, server `--prompt-dir` directories, project `.captain/prompts`, and the user config prompt directory. Local names shadow embedded names; conflicting local names require an explicit path or ID. See [Sources and API](/prompts/sources-api/) for discovery and write destinations.
 
 Select runtime presets in frontmatter with `presets: [Plan]`, with repeated `--preset` flags, or through the runtime editor. `--no-presets` clears the selection. `runtimeProfile` and `--runtime-profile` are deprecated and ignored. Built-in presets can be overridden by a local preset of the same name; see [Built-in runtime presets](/prompts/runtime/#built-in-runtime-presets).
 

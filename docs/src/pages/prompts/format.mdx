@@ -309,7 +309,7 @@ What each mode protects against:
 
 Supervisors and sidecars must run the same captain release. A task names the payload features it needs, and a sidecar that does not know one refuses the task instead of running it without its tools.
 
-Chat mode and `captain prompt observe` refuse prompts with inline tools, because neither runs through the tool runner.
+A chat binds its inline tools once, when it starts. Every turn shares one tool environment, prepared where setup left the chat and torn down when the chat ends. A chat attaches no approval broker, so a tool that would ask is refused when the chat starts; mark it `readonly` or set `permission: allow`. `captain prompt observe` refuses prompts with inline tools, because it does not run through the tool runner.
 
 The frontmatter is rendered as Handlebars before it is decoded, so `exec` can use run variables, for example `--project {{shq project}}`. A literal `{{` in a script must be written as `\{{`. Tool arguments never pass through the template: they only arrive on stdin.
 
@@ -433,7 +433,7 @@ Human output shows the number of files checked and separate error and warning co
 
 ## Review documents with Gavel
 
-`gavel lint prompt` runs a prompt with the `lint` preset, which replaces the prompt's output schema with Gavel's violation contract, so any prompt that asks for located findings works as a linter. Captain ships five built-in document review prompts, resolved by name from any directory. They run as read-only agents: they read the listed files themselves, search the working tree to check concrete references, and report each finding with its file, line, quoted text, severity and a stable `family/name` rule id. Errors fail the lint; warnings and info do not.
+`gavel lint prompt` runs a prompt with the `lint` preset, which replaces the prompt's output schema with Gavel's violation contract, so any prompt that asks for located findings works as a linter. Captain provides five document review examples in `examples/`. They run as read-only agents: they read the listed files themselves, search the working tree to check concrete references, and report each finding with its file, line, quoted text, severity and a stable `family/name` rule id. Errors fail the lint; warnings and info do not.
 
 <table>
   <thead>
@@ -450,23 +450,23 @@ Human output shows the number of files checked and separate error and warning co
 
 `req/` checks requirement quality (verifiable, unambiguous, singular, with units, consistent). `doc/` catches defects common in generated documents: unsourced numbers, cross-section inconsistencies, placeholders, boilerplate, and planned behavior described as existing. `hl/` and `ll/` hold each level to its job, so a PRD is not asked for field types and an API reference is not asked for market rationale. `int/` verifies references against the repository; `pub/` catches internal leaks, undefined terms and missing versioning. `prop/` traces every mandatory RFP requirement to the response when `rfp` is supplied.
 
-Each review prompt declares `permissions: {access: read-only}` rather than a tool list. The same file therefore runs read-only on claude, where it compiles to Edit, Write, Bash and sub-agent denies, and on codex, where it compiles to a read-only sandbox that never asks. Web tools stay available on both. `captain permissions explain proposal-review --model agent:sonnet --model agent:gpt-6.1-sol` shows both postures; see [Portable access](/prompts/runtime/#portable-access).
+Each review prompt declares `permissions: {access: read-only}` rather than a tool list. The same file therefore runs read-only on claude, where it compiles to Edit, Write, Bash and sub-agent denies, and on codex, where it compiles to a read-only sandbox that never asks. Web tools stay available on both. `captain permissions explain examples/proposal-review.prompt --model agent:sonnet --model agent:gpt-6.1-sol` shows both postures; see [Portable access](/prompts/runtime/#portable-access).
 
-To customize a built-in prompt, copy it from `pkg/ai/prompt/builtin/` into `~/.config/captain/prompts/`, or into a repository's `.captain/prompts/`, under the same name. The local copy shadows the built-in.
+To use an example by name from any directory, copy it from `examples/` into `~/.config/captain/prompts/`, or into a repository's `.captain/prompts/` for project use. These examples are not embedded in the binary.
 
 <CodeExample client:load language="bash" title="Review documents" source={`
 # Validate the prompt declarations without calling a model.
-captain lint promptfile pkg/ai/prompt/builtin/spec-internal-high.prompt --var files=docs/prd.md
+captain lint promptfile examples/spec-internal-high.prompt --var files=docs/prd.md
 
 # Show the rendered request, including the lint schema and read-only permissions.
-gavel lint prompt spec-internal-high -V files=docs/prd.md --dry-run
+gavel lint prompt examples/spec-internal-high.prompt -V files=docs/prd.md --dry-run
 
 # Review a design against the high-level spec it implements.
-gavel lint prompt spec-internal-low -V files=docs/design.md -V parent=docs/prd.md
+gavel lint prompt examples/spec-internal-low.prompt -V files=docs/design.md -V parent=docs/prd.md
 
 # Review several public documents with an extra focus, grouped by rule.
-gavel lint prompt spec-public-low -V files="docs/api.md docs/errors.md" -V focus="pagination" --summary
+gavel lint prompt examples/spec-public-low.prompt -V files="docs/api.md docs/errors.md" -V focus="pagination" --summary
 
 # Trace an RFP response against the RFP.
-gavel lint prompt proposal-review -V files=bid/response.md -V rfp=bid/rfp.md
+gavel lint prompt examples/proposal-review.prompt -V files=bid/response.md -V rfp=bid/rfp.md
 `} />

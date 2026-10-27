@@ -59,6 +59,12 @@ Explicit `false`, zero, empty collections and null values retain their authored 
 }
 `} />
 
+## Schema repair
+
+Set `prompt.schemaStrictness: repair` to correct responses that do not match the output schema. Captain shows each rejected Markdown response, then asks the model to repair its answer with the schema and validation errors. It makes at most two repair attempts; if neither produces valid output, the run returns a schema error and retains the rejected response and reported findings. Token usage and cost include every attempt.
+
+`retry` remains a compatibility alias for `repair` in existing prompts, API requests, and stored presets. Saving or serializing the policy writes `repair`. Use `error` to fail immediately, `warning` to report local validation violations without repair, and `none` to disable local post-validation. Native provider output constraints still apply.
+
 ## Built-in runtime presets
 
 `permissions.presets: ["edit"]` above is a permission bundle: acceptEdits plus a curated Read/Edit/Write/Glob/Grep allowlist, the same thing `--edit` sets. Runtime presets are named, reusable spec layers stored in the database or preset directories, selected by id or name. Captain ships four runtime presets that every catalog lists last, with source `builtin`:
@@ -68,7 +74,7 @@ Explicit `false`, zero, empty collections and null values retain their authored 
 | Edit | `mode: acceptEdits`, `presets: [edit]` (uses the bundle above) |
 | Plan | `mode: plan`; `read: allow`, `shell: deny`; sets no `web_search` or `web_fetch` policy |
 | Read-only | no mode; `edit`, `write`, `shell`, `web_search`, `web_fetch` denied; sets no `read` policy |
-| Lint | Structured `violations` output schema with `schemaStrictness: error`; `scope: surface`, `order: 100` |
+| Lint | Structured `violations` output schema with `schemaStrictness: repair`; `scope: surface`, `order: 100` |
 
 A built-in only names the tools it has an opinion about, so layering one never loosens a deny another layer set: `presets: [Read-only, Plan]` keeps Read-only's web denies.
 
