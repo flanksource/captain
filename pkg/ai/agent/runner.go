@@ -19,6 +19,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/logger"
@@ -365,6 +366,16 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 // recordEvent updates the workspace from one streamed event: session id and the
 // set of files the agent changed (repo-relative).
 func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
+	phase := ""
+	switch ev.Kind {
+	case ai.EventTurnStart:
+		phase = "iteration"
+	case ai.EventToolUse, ai.EventToolResult, ai.EventToolProgress:
+		phase = "tool"
+	}
+	if phase != "" && middleware.ObservingProvider() {
+		middleware.PublishProvider(middleware.ProviderEvent{Phase: phase, Iter: hc.Iteration, Model: r.Provider.GetModel(), Backend: r.Provider.GetRuntime().String(), Event: &ev})
+	}
 	ws := hc.Workspace()
 	switch ev.Kind {
 	case ai.EventSystem:
