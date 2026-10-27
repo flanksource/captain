@@ -53,6 +53,13 @@
     "priority": 0,
     "aliases": null
   },
+  "gpt-6.1-terra": {
+    "preferred": true,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "priority": 4,
+    "defaultEffort": "medium",
+    "aliases": ["terra"]
+  },
   "gpt-6-luna": {
     "preferred": true,
     "availability": ["api", "cli", "agent", "cmux"],
@@ -99,9 +106,7 @@
       "max",
       "ultra"
     ],
-    "aliases": [
-      "terra"
-    ]
+    "aliases": null
   },
   "gpt-5.6-luna": {
     "preferred": false,

@@ -104,6 +104,8 @@ type TurnStart struct {
 type Event struct {
 	Kind EventKind
 	Text string // text content; tool output when Kind == EventToolResult
+	// Rejected marks a complete response shown for diagnosis, not an accepted answer.
+	Rejected bool
 
 	Tool  string         // when Kind == EventToolUse
 	Input map[string]any // when Kind == EventToolUse

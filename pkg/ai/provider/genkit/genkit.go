@@ -111,8 +111,10 @@ func (p *Provider) Execute(ctx context.Context, req ai.Request) (*ai.Response, e
 		err = p.generationError(ctx, resp, err)
 		// A rejected answer rides back with the error, so schema repair can show
 		// the model what it got wrong.
-		if rejected := rejectedAnswer(resp, err); rejected != "" {
-			return &ai.Response{Text: rejected, Model: p.cfg.Model.Name, Runtime: ai.RuntimeOf(p.provider, ai.ModeAPI)}, err
+		if rejectedAnswer(resp, err) != "" {
+			out := responseToResponse(ctx, resp, turns.total(), p.provider, p.cfg.Model.Name, start)
+			out.CostUSD = p.costUSD(out.Usage)
+			return out, err
 		}
 		return nil, err
 	}
@@ -166,6 +168,9 @@ func (p *Provider) generationError(ctx context.Context, resp *gkai.ModelResponse
 	// so schema-validation middleware can act on buffered calls and streamed
 	// callers receive the same failure class.
 	if isSchemaMismatch(err) {
+		if resp != nil && resp.Message != nil && ai.IsMarkdown(resp.Message.Text()) {
+			return fmt.Errorf("%w: expected JSON, received Markdown: %v", ai.ErrSchemaValidation, err)
+		}
 		return fmt.Errorf("%w: %v", ai.ErrSchemaValidation, err)
 	}
 	return fmt.Errorf("genkit %s generate: %w", p.provider.Name, err)
