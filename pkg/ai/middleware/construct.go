@@ -11,7 +11,7 @@ import (
 // ai.NewProvider, because middleware imports ai (wrapping ai.Provider) and the
 // reverse import would be a cycle.
 func DefaultOptions(cfg ai.Config, runtime ai.Runtime) []Option {
-	opts := []Option{WithLogging()}
+	opts := []Option{WithLogging(), WithObservers()}
 	if runtime.Provider != "jev" {
 		opts = append(opts, WithSchemaValidation(cfg))
 	}
