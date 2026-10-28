@@ -12,8 +12,8 @@ Captain runs prompts across API and local agent runtimes, records sessions, brok
 ```sh
 captain configure
 captain prompt list
-captain prompt render proposal-review -V files=proposal.md --json
-captain prompt run proposal-review -V files=proposal.md
+captain prompt render proposal-review -V 'files:=["proposal.md"]' --json
+captain prompt run proposal-review -V 'files:=["proposal.md"]'
 captain serve --open
 ```
 

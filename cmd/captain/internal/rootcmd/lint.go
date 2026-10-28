@@ -16,7 +16,7 @@ import (
 
 type promptfileLintOptions struct {
 	Paths []string `args:"true" help:"Promptfiles or directories (default: current directory)"`
-	Var   []string `flag:"var" short:"V" help:"Sample template input as key=value; repeat for multiple inputs"`
+	Var   []string `flag:"var" short:"V" split:"false" help:"Sample template input (repeatable): key=value, key:=json, or key[]=@file for a list of lines"`
 	Vars  string   `flag:"vars" clicky:"cli-file-read" help:"Sample template inputs as a JSON object, or @file"`
 }
 
