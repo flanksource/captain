@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -361,7 +362,9 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 		}
 		*field.dst = expanded
 	}
-	o.Var = flagSlice(f["var"])
+	if o.Var, err = flagRecords("var", f["var"]); err != nil {
+		return o, err
+	}
 	if attach := strings.TrimSpace(f["attach"]); attach != "" {
 		o.Attach = []string{attach}
 	}
@@ -395,6 +398,22 @@ func flagInt(name, s string) (int, error) {
 		return 0, fmt.Errorf("invalid --%s %q: %w", name, s, err)
 	}
 	return n, nil
+}
+
+// flagRecords decodes a repeatable flag whose values must stay whole: clicky
+// passes a slice flag to an action as one CSV record, so a value holding a
+// comma or quotes (a key:=json --var) cannot be split on commas.
+func flagRecords(name, s string) ([]string, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	reader := csv.NewReader(strings.NewReader(s))
+	reader.FieldsPerRecord = -1
+	values, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("decode --%s %q: %w", name, s, err)
+	}
+	return values, nil
 }
 
 func flagSlice(s string) []string {

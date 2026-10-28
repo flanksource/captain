@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -54,28 +55,94 @@ func expandValueRef(raw string) (string, error) {
 	return out.Value, nil
 }
 
-// parseVars turns repeated --var key=value flags into the template data map.
-// A value of "-" binds the piped stdin (reported back so the caller does not
-// also append it), and an "@file"/"@url" value is expanded to its contents.
+// parseVars turns repeated --var flags into the template data map:
+//
+//	key=value    string; "-" binds the piped stdin, "@file"/"@url" its contents
+//	key:=json    typed JSON (array, number, bool, object); "@file" reads the JSON
+//	key[]=-      list of stdin lines; key[]=@file lists the file's lines
+//	key[sub]=v   nested object
+//
+// Typed and nested pairs are parsed by clicky's HTTPie-style argument parser.
+// Every @ reference is read through expandValueRef, never by clicky's own
+// unguarded file reads. boundStdin reports that a var consumed stdin, so the
+// caller does not also append it.
 func parseVars(pairs []string, stdin string) (data map[string]any, boundStdin bool, err error) {
 	data = make(map[string]any, len(pairs))
+	var typed []string
 	for _, p := range pairs {
 		k, v, ok := strings.Cut(p, "=")
 		if !ok {
-			return nil, false, fmt.Errorf("invalid --var %q: want key=value", p)
+			return nil, false, fmt.Errorf("invalid --var %q: want key=value, key:=json or key[]=@file", p)
 		}
-		if v == "-" {
+		switch {
+		case strings.HasSuffix(k, "[]"):
+			key := strings.TrimSuffix(k, "[]")
+			if strings.ContainsAny(key, "[]:") {
+				return nil, false, fmt.Errorf("invalid --var %q: a list var needs a plain key", p)
+			}
+			lines, err := varLines(k, v, stdin)
+			if err != nil {
+				return nil, false, err
+			}
+			data[key], boundStdin = lines, boundStdin || v == "-"
+		case strings.HasSuffix(k, ":"):
+			if strings.HasPrefix(v, "@") {
+				if v, err = expandValueRef(v); err != nil {
+					return nil, false, fmt.Errorf("--var %s: %w", k, err)
+				}
+			}
+			typed = append(typed, k+"="+v)
+		case strings.Contains(k, "["):
+			typed = append(typed, p)
+		case v == "-":
 			if strings.TrimSpace(stdin) == "" {
 				return nil, false, fmt.Errorf("--var %s=- reads stdin, but nothing was piped in", k)
 			}
 			data[k], boundStdin = strings.TrimSpace(stdin), true
-			continue
-		}
-		if data[k], err = expandValueRef(v); err != nil {
-			return nil, false, fmt.Errorf("--var %s: %w", k, err)
+		default:
+			if data[k], err = expandValueRef(v); err != nil {
+				return nil, false, fmt.Errorf("--var %s: %w", k, err)
+			}
 		}
 	}
+	if len(typed) == 0 {
+		return data, boundStdin, nil
+	}
+	parsed, headers, query, err := clicky.ParseArgumentsComplete(typed)
+	if err != nil {
+		return nil, false, fmt.Errorf("--var: %w", err)
+	}
+	if len(headers) > 0 || len(query) > 0 {
+		return nil, false, fmt.Errorf("invalid --var %v: want key:=json or key[sub]=value", typed)
+	}
+	maps.Copy(data, parsed)
 	return data, boundStdin, nil
+}
+
+// varLines reads a key[]= value as a list of its nonblank, non-# lines, from
+// piped stdin ("-") or an @file/@url reference.
+func varLines(key, value, stdin string) ([]string, error) {
+	content := stdin
+	switch {
+	case value == "-":
+		if strings.TrimSpace(stdin) == "" {
+			return nil, fmt.Errorf("--var %s=- reads stdin, but nothing was piped in", key)
+		}
+	case strings.HasPrefix(value, "@"):
+		var err error
+		if content, err = expandValueRef(value); err != nil {
+			return nil, fmt.Errorf("--var %s: %w", key, err)
+		}
+	default:
+		return nil, fmt.Errorf("--var %s=%s: a list var reads - (stdin) or @file", key, value)
+	}
+	var lines []string
+	for _, line := range strings.Split(content, "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	return lines, nil
 }
 
 // normalizePromptContextDir resolves the complete Setup through its owning

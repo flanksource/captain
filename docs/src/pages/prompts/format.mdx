@@ -455,18 +455,19 @@ Each review prompt declares `permissions: {access: read-only}` rather than a too
 To use an example by name from any directory, copy it from `examples/` into `~/.config/captain/prompts/`, or into a repository's `.captain/prompts/` for project use. These examples are not embedded in the binary.
 
 <CodeExample client:load language="bash" title="Review documents" source={`
-# Validate the prompt declarations without calling a model.
-captain lint promptfile examples/spec-internal-high.prompt --var files=docs/prd.md
+# Validate the prompt declarations without calling a model. files is a list.
+captain lint promptfile examples/spec-internal-high.prompt --var 'files:=["docs/prd.md"]'
 
 # Show the rendered request, including the lint schema and read-only permissions.
-gavel lint prompt examples/spec-internal-high.prompt -V files=docs/prd.md --dry-run
+# gavel passes the paths as the files list, in one run.
+gavel lint prompt --dry-run examples/spec-internal-high.prompt docs/prd.md
 
 # Review a design against the high-level spec it implements.
-gavel lint prompt examples/spec-internal-low.prompt -V files=docs/design.md -V parent=docs/prd.md
+gavel lint prompt examples/spec-internal-low.prompt docs/design.md -- -V parent=docs/prd.md
 
-# Review several public documents with an extra focus, grouped by rule.
-gavel lint prompt examples/spec-public-low.prompt -V files="docs/api.md docs/errors.md" -V focus="pagination" --summary
+# Review several public documents together with an extra focus, grouped by rule.
+gavel lint prompt --summary examples/spec-public-low.prompt docs/api.md docs/errors.md -- -V focus=pagination
 
 # Trace an RFP response against the RFP.
-gavel lint prompt examples/proposal-review.prompt -V files=bid/response.md -V rfp=bid/rfp.md
+gavel lint prompt examples/proposal-review.prompt bid/response.md -- -V rfp=bid/rfp.md
 `} />
