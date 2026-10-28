@@ -166,7 +166,7 @@ type PromptActionFlags struct {
 	RuntimeProfile string   `flag:"runtime-profile" help:"Deprecated and ignored; use --preset" category:"Model runtime"`
 	System         string   `flag:"system" clicky:"cli-file-read" help:"System prompt (or @file/@url)" short:"s"`
 	AppendSystem   string   `flag:"append-system" clicky:"cli-file-read" help:"Append text to the default system prompt (or @file/@url)"`
-	Var            []string `flag:"var" help:"Template variable key=value (repeatable); a value of @file loads it, - reads stdin" short:"V"`
+	Var            []string `flag:"var" split:"false" help:"Template variable (repeatable): key=value (@file loads it, - reads stdin), key:=json, key[]=@file or key[]=- for a list of lines" short:"V"`
 	Attach         []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	Vars           string   `flag:"vars" clicky:"cli-file-read" help:"JSON object of template variables (or @file.json)"`
 	MultiModels    []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M" category:"Model selection"`

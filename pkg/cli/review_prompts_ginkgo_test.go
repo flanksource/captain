@@ -4,7 +4,6 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/flanksource/captain/pkg/aiflags"
 	"github.com/flanksource/captain/pkg/api"
@@ -48,9 +47,13 @@ var _ = Describe("Example document review prompts", func() {
 			}
 			rendered, err := RenderPrompt(ctx, PromptInvocation{Reference: name, Options: AIPromptOptions{Var: vars}})
 			Expect(err).NotTo(HaveOccurred())
-			for _, v := range vars {
-				_, value, _ := strings.Cut(v, "=")
-				Expect(rendered.Input.Prompt.User).To(ContainSubstring(value))
+			parsed, _, err := parseVars(vars, "")
+			Expect(err).NotTo(HaveOccurred())
+			for _, value := range parsed {
+				if files, ok := value.([]any); ok {
+					value = files[0]
+				}
+				Expect(rendered.Input.Prompt.User).To(ContainSubstring(value.(string)))
 			}
 			for _, family := range allFamilies {
 				if slices.Contains(families, family) {
@@ -60,11 +63,11 @@ var _ = Describe("Example document review prompts", func() {
 				}
 			}
 		},
-		Entry("internal high-level", "spec-internal-high", []string{"files=docs/prd.md"}, []string{"req/", "doc/", "hl/", "int/"}),
-		Entry("internal low-level", "spec-internal-low", []string{"files=docs/design.md", "parent=docs/prd.md"}, []string{"req/", "doc/", "ll/", "int/"}),
-		Entry("public high-level", "spec-public-high", []string{"files=docs/overview.md"}, []string{"req/", "doc/", "hl/", "pub/"}),
-		Entry("public low-level", "spec-public-low", []string{"files=docs/api.md", "parent=docs/overview.md"}, []string{"req/", "doc/", "ll/", "pub/"}),
-		Entry("proposal", "proposal-review", []string{"files=bid/response.md", "rfp=bid/rfp.md"}, []string{"req/", "doc/", "prop/"}),
+		Entry("internal high-level", "spec-internal-high", []string{`files:=["docs/prd.md"]`}, []string{"req/", "doc/", "hl/", "int/"}),
+		Entry("internal low-level", "spec-internal-low", []string{`files:=["docs/design.md"]`, "parent=docs/prd.md"}, []string{"req/", "doc/", "ll/", "int/"}),
+		Entry("public high-level", "spec-public-high", []string{`files:=["docs/overview.md"]`}, []string{"req/", "doc/", "hl/", "pub/"}),
+		Entry("public low-level", "spec-public-low", []string{`files:=["docs/api.md"]`, "parent=docs/overview.md"}, []string{"req/", "doc/", "ll/", "pub/"}),
+		Entry("proposal", "proposal-review", []string{`files:=["bid/response.md"]`, "rfp=bid/rfp.md"}, []string{"req/", "doc/", "prop/"}),
 	)
 })
 

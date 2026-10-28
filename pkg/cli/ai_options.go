@@ -133,7 +133,7 @@ type AIPromptOptions struct {
 	Prompt          string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text, or @file to load and render a .prompt template" short:"p"`
 	System          string   `flag:"system" clicky:"cli-file-read" help:"System prompt" short:"s"`
 	AppendSystem    string   `flag:"append-system" clicky:"cli-file-read" help:"Append text to the default system prompt"`
-	Var             []string `flag:"var" help:"Template variable key=value (repeatable)" short:"V"`
+	Var             []string `flag:"var" split:"false" help:"Template variable (repeatable): key=value (@file loads it, - reads stdin), key:=json, key[]=@file or key[]=- for a list of lines" short:"V"`
 	Attach          []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	MultiModels     []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M" category:"Model selection"`
 	Timeout         string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)" category:"Model runtime"`
