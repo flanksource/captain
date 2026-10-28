@@ -34,6 +34,13 @@ var _ = Describe("ParsePromptArgs", func() {
 		Expect(opts.PromptRef).To(BeEmpty())
 	})
 
+	It("keeps each --var whole, so a typed JSON value or a comma in a string is not split", func() {
+		vars := []string{`files:=["a.go","b.go"]`, "focus=errors, then style"}
+		opts, _, err := ParsePromptArgs([]string{"-V", vars[0], "--var", vars[1]})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(opts.Var).To(Equal(vars))
+	})
+
 	It("fails on a flag Captain does not define", func() {
 		_, _, err := ParsePromptArgs([]string{"--not-a-flag"})
 		Expect(err).To(MatchError(ContainSubstring("not-a-flag")))
