@@ -17,8 +17,10 @@ input:
     required: [files]
     properties:
       files:
-        type: string
-        description: Document paths relative to the working directory, separated by spaces or commas.
+        type: array
+        items: {type: string}
+        minItems: 1
+        description: Document paths relative to the working directory (--var 'files:=["a.md","b.md"]' or files[]=@list.txt).
       parent:
         type: string
         description: Optional path to the high-level spec these documents implement.
@@ -82,7 +84,7 @@ Internal audience:
 
 Required sections: interfaces or data model, behavior, errors, edge cases, security, testing.
 {{role "user"}}
-Review these documents: {{{files}}}
+Review these documents: {{join files ", "}}
 {{#if parent}}
 
 Parent high-level spec: {{{parent}}}

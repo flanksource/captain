@@ -17,8 +17,10 @@ input:
     required: [files]
     properties:
       files:
-        type: string
-        description: Proposal document paths relative to the working directory, separated by spaces or commas.
+        type: array
+        items: {type: string}
+        minItems: 1
+        description: Proposal document paths relative to the working directory (--var 'files:=["a.md","b.md"]' or files[]=@list.txt).
       rfp:
         type: string
         description: Optional path to the RFP or requirements document the proposal responds to.
@@ -76,7 +78,7 @@ Proposal content:
 
 Required sections: executive summary, approach, deliverables, timeline, pricing basis, assumptions and exclusions, risks.
 {{role "user"}}
-Review these proposal documents: {{{files}}}
+Review these proposal documents: {{join files ", "}}
 {{#if rfp}}
 
 RFP: {{{rfp}}}
