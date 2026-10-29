@@ -27,7 +27,7 @@ func ctx() context.Context { return context.Background() }
 // renderedUser is the prompt body as the provider would receive it: literal or
 // templated, with any unconsumed stdin appended.
 func renderedUser(body promptBody, vars promptVarsResult, stdin string) string {
-	req, err := promptFrontmatter(body, vars, stdin)
+	req, _, err := promptFrontmatter(ctx(), body, vars, stdin, false)
 	Expect(err).ToNot(HaveOccurred())
 	return req.Prompt.User
 }

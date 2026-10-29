@@ -89,7 +89,8 @@ func (rendered PromptRenderResult) validateVariants() error {
 
 // withCallerTools appends tools to the rendered config and to every runtime
 // variant, refusing any runtime that cannot expose them rather than running it
-// with the tools silently missing.
+// with the tools silently missing. A runtime that ignores tools takes them: its
+// resolution records the tool fields as ignored.
 func (rendered PromptRenderResult) withCallerTools(tools []api.ToolDefinition) (PromptRenderResult, error) {
 	if len(tools) == 0 {
 		return rendered, nil
@@ -100,7 +101,7 @@ func (rendered PromptRenderResult) withCallerTools(tools []api.ToolDefinition) (
 		configs = append(configs, &rendered.variants[i].Config)
 	}
 	for _, cfg := range configs {
-		if !api.SupportsCallerTools(cfg.Model.Provider, cfg.Model.Mode) {
+		if !api.SupportsCallerTools(cfg.Model.Provider, cfg.Model.Mode) && !api.IgnoresTools(cfg.Model.Provider, cfg.Model.Mode) {
 			return PromptRenderResult{}, fmt.Errorf("runtime %q cannot expose caller tools; choose a runtime that supports them (e.g. api:sonnet or agent:sonnet)", api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode))
 		}
 		cfg.Tools = slices.Concat(cfg.Tools, tools)

@@ -293,7 +293,7 @@ func promptRunModels(models []api.Model) []api.Model {
 
 func promptSummaryFromContent(record promptRecord, content string) (PromptSummary, error) {
 	tmpl := promptlib.Load(content)
-	req, cfg, err := tmpl.Render(promptlib.RenderOptions{Data: map[string]any{}, Declared: true})
+	req, cfg, err := tmpl.Render(promptlib.RenderOptions{Data: map[string]any{}, Declared: true, Dir: promptDir(record)})
 	if err != nil {
 		return PromptSummary{}, err
 	}

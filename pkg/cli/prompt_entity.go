@@ -14,6 +14,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
@@ -150,6 +151,9 @@ type PromptRenderResult struct {
 	// the final request after saved defaults, so the trace explains Input.
 	Resolution      api.ResolvedSpec `json:"resolution"`
 	ValidationError string           `json:"validationError,omitempty"`
+	// Skip is set when an input hook asked not to run the prompt; a run reports
+	// it as status skipped without calling a model.
+	Skip *promptrun.Skip `json:"skip,omitempty"`
 }
 
 // PromptActionFlags is the full flag surface for `captain prompt run|render` —
@@ -172,6 +176,8 @@ type PromptActionFlags struct {
 	MultiModels    []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M" category:"Model selection"`
 	Timeout        string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)" category:"Model runtime"`
 	NoStream       bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)" category:"Model runtime"`
+	Batch          int      `flag:"batch" help:"Split the input files (positional files after the prompt, plus --attach) into runs of N files each (spec batch.size)" category:"Model runtime"`
+	BatchConc      int      `flag:"batch-concurrency" help:"How many batched runs execute at once (spec batch.concurrency, default 1)" category:"Model runtime"`
 }
 
 func (PromptActionFlags) ClickyActionFlags() {}
@@ -426,6 +432,17 @@ func deletePrompt(ctx context.Context, id string) error {
 // and frontmatter layers); the CLI passes explicit flags plus
 // filepath/-p/stdin sources.
 func renderPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRenderResult, error) {
+	rendered, err := renderPromptRequest(ctx, id, flags)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	if err := previewSchemaHooks(ctx, &rendered); err != nil {
+		return PromptRenderResult{}, err
+	}
+	return rendered, nil
+}
+
+func renderPromptRequest(ctx context.Context, id string, flags map[string]string) (PromptRenderResult, error) {
 	if _, isHTTP := clickyrpc.RequestFromContext(ctx); isHTTP {
 		req, err := readRenderRequest(ctx, flags)
 		if err != nil {
@@ -435,6 +452,10 @@ func renderPromptAction(ctx context.Context, id string, flags map[string]string)
 	}
 	opts, err := actionFlagsToOptions(flags)
 	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	opts.InputFiles = inputFilesFromContext(ctx)
+	if err := validateInputFiles(opts.InputFiles); err != nil {
 		return PromptRenderResult{}, err
 	}
 	stdin, err := readStdinIfCLI(ctx)
