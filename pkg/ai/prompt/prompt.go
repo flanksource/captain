@@ -26,7 +26,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -37,18 +36,17 @@ import (
 )
 
 // frontmatterRe splits a .prompt source into YAML frontmatter (group 1) and body
-// (group 2). The pattern is copied from google/dotprompt's FrontmatterAndBodyRegex
-// so the split matches exactly what the dotprompt library re-parses.
-var frontmatterRe = regexp.MustCompile(
-	`^(?:(?:#[^\n]*|[ \t]*)\n)*---\s*(?:\r\n|\r|\n)([\s\S]*?)(?:\r\n|\r|\n)---\s*(?:\r\n|\r|\n)([\s\S]*)$`)
+// (group 2) exactly as the dotprompt library re-parses it.
+var frontmatterRe = dp.FrontmatterAndBodyRegex
 
-// renderFrontmatter templates the YAML frontmatter of a .prompt source with data
+// RenderFrontmatter templates the YAML frontmatter of a .prompt source with data
 // (the same map used to render the body), so authors can parametrize frontmatter —
 // notably output.schema constraints like `maxItems: {{maxCommits}}`. Only the
 // frontmatter is rendered here; the body is left for dotprompt so its {{role …}}
 // helpers and partials render normally. No-op when the source has no frontmatter or
-// the frontmatter contains no `{{`.
-func renderFrontmatter(source string, data map[string]any) (string, error) {
+// the frontmatter contains no `{{`. Empty data yields the declared frontmatter,
+// which is what Parse and Hook read.
+func RenderFrontmatter(source string, data map[string]any) (string, error) {
 	loc := frontmatterRe.FindStringSubmatchIndex(source)
 	if loc == nil {
 		return source, nil
@@ -129,7 +127,7 @@ type RenderOptions struct {
 // Declared leaves model selection authored for subsequent layer resolution.
 func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) {
 	data, out := options.Data, options.Output
-	src, err := renderFrontmatter(t.source, data)
+	src, err := RenderFrontmatter(t.source, data)
 	if err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("render prompt %s frontmatter: %w", t.name, err)
 	}

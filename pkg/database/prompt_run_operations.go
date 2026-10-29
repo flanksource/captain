@@ -162,6 +162,12 @@ func (db *DB) ListPromptRuns(ctx context.Context, filter PromptRunFilter) ([]Pro
 		}
 		query = query.Where("execution_session_id = ?", *filter.ExecutionSessionID)
 	}
+	if filter.ParentRunID != nil {
+		if *filter.ParentRunID == uuid.Nil {
+			return nil, fmt.Errorf("%w: parent run ID filter cannot be empty", ErrInvalidPromptRun)
+		}
+		query = query.Where("parent_run_id = ?", *filter.ParentRunID)
+	}
 	if filter.State != nil {
 		if !validPromptRunState(*filter.State) {
 			return nil, fmt.Errorf("%w: unknown state %q", ErrInvalidPromptRun, *filter.State)

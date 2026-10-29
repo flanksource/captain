@@ -140,7 +140,7 @@ var _ = Describe("promptrun.Run", func() {
 			request.Workflow = &api.Workflow{
 				Verify:  &api.Verify{Commands: []string{"true"}, Prompts: []string{judge}, Fixture: "acceptance"},
 				Commits: []api.Commit{{On: api.CommitOnRun}},
-				After:   []api.AfterStep{{Commands: []string{"true"}}},
+				After:   []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"true"}}}},
 			}
 			request.Setup = &shell.Setup{}
 			var log []string
