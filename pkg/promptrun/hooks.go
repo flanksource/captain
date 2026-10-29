@@ -44,6 +44,10 @@ func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
 		// one the runner executes — and read-only to a factory.
 		opts.RunSpec = &in.Resolved.Spec
 	}
+	actions := newHookActions(in)
+	if opts.Actions == nil {
+		opts.Actions = actions
+	}
 	verifyHooks, err := verify.HooksFor(ctx, in.Resolved.Spec.Workflow, opts)
 	if err != nil {
 		return nil, err
@@ -66,6 +70,11 @@ func Hooks(ctx context.Context, in Input, provider ai.Provider) ([]any, error) {
 	// run, and torn down after it at PhaseRun.
 	if in.inlineTools != nil {
 		hooks = append(hooks, in.inlineTools)
+	}
+	// After the inline tools: a schema hook's tool runs in its prepared
+	// environment, and the turns that follow see the schema it emitted.
+	if len(in.Resolved.Spec.Prompt.SchemaHooks) > 0 {
+		hooks = append(hooks, &schemaHooks{actions: actions})
 	}
 	return hooks, nil
 }

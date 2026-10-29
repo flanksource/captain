@@ -16,8 +16,8 @@ section: Prompts
 | `captain prompt create key=value ...` | Validate and create a writable local prompt |
 | `captain prompt update SOURCE key=value ...` | Validate and replace local content |
 | `captain prompt delete SOURCE` | Delete a local file; built-ins remain read-only |
-| `captain prompt render [SOURCE]` | Preview messages, spec, schemas, provenance and validation |
-| `captain prompt run [SOURCE]` | Render, validate and execute |
+| `captain prompt render [SOURCE] [FILES...]` | Preview messages, spec, schemas, provenance and validation |
+| `captain prompt run [SOURCE] [FILES...]` | Render, validate and execute |
 | `captain prompt observe [SOURCE]` | Execute one `--runtime` and emit observation JSON |
 
 `SOURCE` can be an opaque catalog ID, a bare name, a `.prompt` path, or `-` for stdin on render/run. An existing file in the current directory wins over catalog discovery. Local sources shadow embedded names; ambiguous local names need an explicit path or ID.
@@ -43,6 +43,19 @@ captain prompt render review.prompt --vars @inputs.json --json
 ```
 
 Choose one positional source or `-p`; with neither, Captain reads stdin. `.prompt` files are templates. Inline and piped text are literal data unless supplied variables or `{{input}}` opt into templating. Piped input binds to `input`, or to a named variable with `-V key=-`; unused piped input is appended to the body. `-V key=@file` reads one variable from a file. `-p`, `-s`, `--append-system` and `--vars` also accept `@file` or `@url`.
+
+## Input files and batches
+
+```sh
+captain prompt run classify.prompt .gavel/jira/10304/*.md
+captain prompt run classify.prompt .gavel/jira/10304/*.md --batch=1 --batch-concurrency=4
+captain prompt run describe.prompt -A a.png -A b.png --batch=1
+captain prompt render classify.prompt .gavel/jira/10304/KEY-1.md --json
+```
+
+Arguments after the prompt are input files; the shell expands globs. Each must be an existing regular file. A run binds them as the `files` variable (a list of paths), and as `file` when it has exactly one. Setting `file` or `files` yourself with `-V`, `--vars` or stdin while passing input files is an error. Input files are not attached; `--attach`/`-A` files are, as before.
+
+Without a batch, every input file goes to one run. `--batch=N` splits them into runs of N files, so `--batch=1` processes files one at a time; under a batch the `--attach` files are split too, each run attaching only its own. `--batch-concurrency=M` runs M batches at once (default 1). The flags override the prompt's `batch` field. Each batch is its own recorded run, and its input hooks may skip it. The result lists one row per batch with its inputs, status and answer, skip reason or error. The totals count succeeded, failed and skipped runs; tokens and cost are summed over the runs that executed. When any batch fails, the others still run and the command exits non-zero. A batch cannot be combined with a multi-runtime run (`runtimes:` or `-M`).
 
 ## Runtime and output
 

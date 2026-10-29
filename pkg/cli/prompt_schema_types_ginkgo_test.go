@@ -33,4 +33,20 @@ output:
 			"type": "noul", "instructions": "Is this input valid?",
 		}))
 	})
+
+	It("renders templated frontmatter with the inspection data", func() {
+		content := `---
+output:
+  schema:
+    type: array
+    minItems: 1
+{{#if maxCommits}}
+    maxItems: {{maxCommits}}
+{{/if}}
+---
+{{table}}`
+		inspection, err := inspectPrompt(content, map[string]any{"maxCommits": 3, "table": "x"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inspection.OutputSchema).To(Equal(map[string]any{"type": "array", "minItems": 1.0, "maxItems": 3.0}))
+	})
 })

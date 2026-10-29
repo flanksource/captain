@@ -10,7 +10,6 @@ package promptcontext
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"regexp"
 
@@ -31,12 +30,8 @@ const MetadataKey = "captain.context"
 // re-apply (resume, preview then run) starts from the authored prompt.
 var blocks = promptlib.NewHookBlocks("captain:context")
 
-// Source is one place hook prompts are loaded from; Label names it in errors
-// and provenance.
-type Source struct {
-	FS    fs.FS
-	Label string
-}
+// Source is one place prompt.context hook prompts are loaded from.
+type Source = promptlib.HookSource
 
 // Hook is one discovered prompt.context hook, compiled and ready to apply.
 type Hook struct {

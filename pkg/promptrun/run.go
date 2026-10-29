@@ -129,6 +129,9 @@ type Input struct {
 	// inlineTools is the workspace the spec's inline tools run in, bound by
 	// bindInlineTools; Hooks orders its refresh after setup.
 	inlineTools *exectool.Workspace
+	// recorder is the recorded run's own recorder, set once it is admitted, so a
+	// child prompt a hook starts is filed under it.
+	recorder *Recorder
 }
 
 type ApprovalOptions struct {
@@ -288,6 +291,7 @@ func recordOn(in *Input, rec *Recorder, runtime api.Runtime, model api.Model) er
 			callerProgress(report)
 		}
 	}
+	in.recorder = rec
 	return nil
 }
 

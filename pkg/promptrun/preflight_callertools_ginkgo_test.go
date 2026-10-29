@@ -138,6 +138,15 @@ var _ = Describe("promptrun.Preflight caller tools", func() {
 		expectRefused(`runtime "google cli" cannot expose caller tools`)
 	})
 
+	It("admits an asking inline tool on Jev, which ignores tools and leaves them to hooks", func() {
+		in.Config.Tools = nil
+		in.Resolved.Spec.Model = api.Model{Name: "jev-latest", Mode: api.ModeAPI}
+		in.Resolved.Spec.Tools = api.InlineTools{"drop_table": {Exec: "true", Destructive: true}}
+		in.Resolved.Spec.ToolPolicy = api.PermissionPolicy{{ToolMatch: api.ToolMatch{Name: api.MatchPatterns{"drop_table"}}, Policy: api.ToolPolicyAsk}}
+		_, err := promptrun.Preflight(in)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("checks every fallback candidate, not only the primary model", func() {
 		in.Config.OnApproval = broker
 		in.Resolved.Spec.Fallbacks = []api.Model{{Name: "gemini-2.5-pro", Mode: api.ModeCLI}}
