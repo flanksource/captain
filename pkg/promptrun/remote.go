@@ -50,7 +50,7 @@ func RemoteProvider(req *ai.Request, cfg ai.Config) (ai.Provider, error) {
 		return nil, err
 	}
 	remote := &remoteExecProvider{executor: executor, sandbox: sandbox, cfg: cfg, model: cfg.Model.Name, runtime: api.RuntimeOf(cfg.Model.Provider, cfg.Model.Mode)}
-	wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
+	wrapped, err := middleware.Wrap(remote, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
 	if err != nil {
 		_ = remote.Close()
 		return nil, err

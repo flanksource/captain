@@ -71,14 +71,33 @@ func RenderPrompt(ctx context.Context, invocation PromptInvocation) (PromptRende
 	return rendered.withCallerTools(invocation.Tools)
 }
 
+// RunPrompt renders and runs the prompt synchronously. Input files
+// (Options.InputFiles, and --attach under a batch) run as one run, or as one
+// run per batch when the spec sets batch.
 func RunPrompt(ctx context.Context, invocation PromptInvocation) (PromptRunResult, error) {
+	if len(invocation.Options.InputFiles) > 0 || len(invocation.Options.Attach) > 0 {
+		return runInputFiles(ctx, invocation)
+	}
 	rendered, err := RenderPrompt(ctx, invocation)
 	if err != nil {
 		return PromptRunResult{}, err
+	}
+	return runRendered(ctx, rendered, invocation.Options)
+}
+
+// runRendered runs a rendered prompt, or reports the skip its input hooks
+// asked for without calling a model or recording a run.
+func runRendered(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
+	if rendered.Skip != nil {
+		return skippedRunResult(rendered), nil
 	}
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
 	logRuntimeWarnings(rendered.Resolution.Warnings)
-	return executeSyncRun(ctx, rendered, invocation.Options)
+	return executeSyncRun(ctx, rendered, opts)
+}
+
+func skippedRunResult(rendered PromptRenderResult) PromptRunResult {
+	return PromptRunResult{Status: "skipped", SkipReason: rendered.Skip.Reason, Model: rendered.Model, Provider: rendered.Provider, Mode: rendered.Mode}
 }
