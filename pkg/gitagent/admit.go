@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/flanksource/captain/pkg/ai/agent/commit"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // RefUpdate is one "old new ref" line of the pre-receive stdin.
@@ -286,7 +286,7 @@ func admitContent(ctx context.Context, req AdmitRequest, st *TaskState, from, to
 		return fmt.Errorf("gate:path-denied %s", strings.Join(denied, " "))
 	}
 	for _, p := range paths {
-		if commit.LooksSecret(p) {
+		if workspace.LooksSecret(p) {
 			return fmt.Errorf("gate:secret-name %s looks like a credential; the push is rejected (A5.4)", p)
 		}
 	}
