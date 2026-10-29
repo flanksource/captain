@@ -35,7 +35,7 @@ func InspectWorkspace(cwd string) (*api.WorkspaceRecord, error) {
 			if gitDir == commonDir {
 				return workspace, nil
 			}
-			workspace.Worktree, err = recordWorktree(path, false)
+			workspace.Worktree, err = recordWorktree(path)
 			return workspace, err
 		}
 		if !os.IsNotExist(err) {

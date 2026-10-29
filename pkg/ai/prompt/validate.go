@@ -58,7 +58,7 @@ func (t *Template) Validate(options ValidationOptions) []Diagnostic {
 	}
 	loc := frontmatterRe.FindStringSubmatchIndex(t.source)
 	frontmatterOffset := strings.Count(t.source[:loc[2]], "\n")
-	program, err := parser.Parse(frontmatter)
+	program, err := parser.Parse(deferHookExpressions(frontmatter))
 	if err != nil {
 		return append(diagnostics, validationError("promptfile/template", err, frontmatterOffset))
 	}
@@ -71,7 +71,7 @@ func (t *Template) Validate(options ValidationOptions) []Diagnostic {
 	if err != nil {
 		return append(diagnostics, validationError("promptfile/frontmatter", err, frontmatterOffset))
 	}
-	declarations := validateDeclarations(source)
+	declarations := validateDeclarations(source, t.dir)
 	if source != t.source {
 		for i := range declarations {
 			declarations[i].Line, declarations[i].Column = 0, 0
@@ -81,7 +81,7 @@ func (t *Template) Validate(options ValidationOptions) []Diagnostic {
 	return append(diagnostics, declarations...)
 }
 
-func validateDeclarations(source string) []Diagnostic {
+func validateDeclarations(source, dir string) []Diagnostic {
 	frontmatter, _, _ := splitFrontmatter(source)
 	if strings.TrimSpace(frontmatter) == "" {
 		return nil
@@ -105,6 +105,9 @@ func validateDeclarations(source string) []Diagnostic {
 	}
 	if err := validateDeclaredSpec(document); err != nil {
 		diagnostics = append(diagnostics, validationError("promptfile/spec", err, 0))
+	}
+	if err := validateHookPrompts(document.Spec, dir); err != nil {
+		diagnostics = append(diagnostics, validationError("promptfile/hooks", err, 0))
 	}
 	if _, err := Load(source).Hook(); err != nil {
 		diagnostics = append(diagnostics, validationError("promptfile/hook", err, offset))

@@ -38,9 +38,9 @@ func TestSetupWorktreeCommitsShellEdits(t *testing.T) {
 
 	var stage api.CommitStage
 	h := New(api.Commit{On: api.CommitOnRun, Message: "feat: via shell"})
-	h.Do = func(_ *agent.HookContext, plan Plan) (string, error) {
+	h.HostMessage = func(_ *agent.HookContext, plan Plan) (string, error) {
 		stage = plan.Stage
-		return h.run(plan)
+		return plan.Subject, nil
 	}
 	wt := hc.Workspace().Cwd
 	write(t, wt, "via-shell.go", "package main\n")

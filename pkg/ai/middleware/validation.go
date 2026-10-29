@@ -62,7 +62,9 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 		return resp, err
 	}
 
-	if strictness == api.SchemaStrictnessNone {
+	// TypeSafe questions carry no JSON Schema; the jev provider validates its
+	// native answers itself.
+	if strictness == api.SchemaStrictnessNone || req.Prompt.OutputSchemaType == api.SchemaTypeTypeSafe {
 		return resp, nil
 	}
 	schema, err := ai.SchemaJSONFor(req.Prompt)

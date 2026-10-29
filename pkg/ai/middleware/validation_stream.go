@@ -90,6 +90,9 @@ func (v *validatingProvider) ExecuteStream(ctx context.Context, req ai.Request) 
 	if v.provider.GetRuntime().Provider == "jev" && strictness == api.SchemaStrictnessRepair {
 		return nil, fmt.Errorf("jev does not support schema repair retries")
 	}
+	if req.Prompt.OutputSchemaType == api.SchemaTypeTypeSafe {
+		return streamer.ExecuteStream(ctx, req)
+	}
 	schema, serr := ai.SchemaJSONFor(req.Prompt)
 	if serr != nil {
 		return nil, serr

@@ -116,6 +116,24 @@ func TestValidation_NoStrictnessSkipsValidation(t *testing.T) {
 	}
 }
 
+func TestValidation_TypeSafeQuestionsPassThroughUnderStrictness(t *testing.T) {
+	inner := &scriptedProvider{responses: []string{`{"value":{"product":"Group Life"}}`}}
+	p, err := WithSchemaValidation()(inner)
+	if err != nil {
+		t.Fatalf("WithSchemaValidation: %v", err)
+	}
+	req := ai.Request{Prompt: api.Prompt{
+		User: "classify", OutputSchemaType: api.SchemaTypeTypeSafe, SchemaStrictness: api.SchemaStrictnessError,
+		TypeSafeQuestions: json.RawMessage(`{"product":{"type":"choice","instructions":"Which?","criteria":{"a":"A","unknown":"U"}}}`),
+	}}
+	if _, err := p.Execute(context.Background(), req); err != nil {
+		t.Fatalf("a TypeSafe request has no JSON Schema to validate: %v", err)
+	}
+	if inner.calls != 1 {
+		t.Errorf("want 1 provider call, got %d", inner.calls)
+	}
+}
+
 func TestValidation_AnthropicNoStrictnessDefaultsToRetry(t *testing.T) {
 	inner := &scriptedProvider{runtime: ai.RuntimeOf(ai.Anthropic, ai.ModeAPI), responses: []string{overCapJSON, validJSON}}
 	p, err := WithSchemaValidation()(inner)

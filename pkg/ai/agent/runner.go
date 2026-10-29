@@ -19,6 +19,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/history"
+	"github.com/flanksource/captain/pkg/ai/tracing"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
 	"github.com/flanksource/commons/logger"
@@ -59,11 +60,36 @@ type Result[T any] struct {
 // Post hooks declaring it and always runs, including on the failure path. An
 // empty prompt body runs verify-only (no generation, and so no turn phase); no
 // Verify hooks runs generate-only.
+//
+// The whole run is one OpenTelemetry "invoke_agent" span, parent of every model
+// call, tool call and query it makes.
 func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
-	var zero Result[T]
 	if err := r.Request.ValidateRunnable(); err != nil {
-		return zero, fmt.Errorf("agent: %w", err)
+		return Result[T]{}, fmt.Errorf("agent: %w", err)
 	}
+	scope := r.Scope
+	if scope == "" {
+		scope = ScopeAll
+	}
+	ctx, trace := tracing.StartRun(ctx, tracing.RunOptions{
+		Agent:         r.Request.Prompt.Source,
+		Scope:         string(scope),
+		MaxIterations: max(r.MaxIterations, 1),
+		BudgetCostUSD: r.Request.Budget.Cost,
+	})
+	result, err := r.run(ctx, scope, trace)
+	outcome := tracing.RunResult{Verified: VerifyPassed(result.Verdicts)}
+	if result.Loop != nil {
+		outcome.Iterations = len(result.Loop.Iterations)
+		outcome.CostUSD = result.Loop.TotalCost
+		outcome.StopReason = result.Loop.StopReason
+	}
+	trace.End(outcome, err)
+	return result, err
+}
+
+func (r *Runner[T]) run(ctx context.Context, scope Scope, trace *tracing.Run) (Result[T], error) {
+	var zero Result[T]
 	// The spec's budget.timeout bounds the whole run, not one model call. Only
 	// pkg/cli applied it before, so every caller driving the Runner directly
 	// (gavel's `pr status --ai-fix`) ran unbounded and a wedged turn could hang
@@ -77,10 +103,6 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	scope := r.Scope
-	if scope == "" {
-		scope = ScopeAll
-	}
 	resp := &ai.Response{Workspace: &api.Workspace{Repo: r.Repo, Cwd: r.Cwd}}
 	hc := &HookContext{
 		Context: ctx,
@@ -91,11 +113,13 @@ func (r *Runner[T]) Run(ctx context.Context) (Result[T], error) {
 		Response: resp,
 		Scope:    scope,
 		Hooks:    r.Hooks,
+		trace:    trace,
 	}
 	// Hook notices join the model's own events on one stream, attributed to the
 	// iteration whose boundary the hook is standing on — hc.Iteration still names
 	// the turn that just completed when PhaseTurn dispatches.
 	hc.emit = func(ev ai.Event) {
+		trace.Observe(ev)
 		if r.OnEvent != nil {
 			r.OnEvent(hc.Iteration, ev)
 		}
@@ -375,6 +399,7 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 // recordEvent updates the workspace from one streamed event: session id and the
 // set of files the agent changed (repo-relative).
 func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
+	hc.trace.Observe(ev)
 	ws := hc.Workspace()
 	switch ev.Kind {
 	case ai.EventSystem:
