@@ -67,7 +67,7 @@ func (t *Template) Validate(options ValidationOptions) []Diagnostic {
 		return append(diagnostics, Diagnostic{Rule: "promptfile/variables", Severity: "warning", Line: frontmatterOffset + 1,
 			Message: "frontmatter declaration checks deferred; supply --var or --vars for: " + strings.Join(missing, ", ")})
 	}
-	source, err := renderFrontmatter(t.source, options.Data)
+	source, err := RenderFrontmatter(t.source, options.Data)
 	if err != nil {
 		return append(diagnostics, validationError("promptfile/frontmatter", err, frontmatterOffset))
 	}

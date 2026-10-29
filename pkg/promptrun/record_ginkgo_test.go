@@ -257,6 +257,62 @@ var _ = Describe("a recorded prompt run", func() {
 		Expect(iterations[0].State).To(Equal(database.PromptRunIterationStateSucceeded))
 	})
 
+	Describe("an admission session that already holds a transcript", func() {
+		// seedTranscript files the host tree and the transcript child an earlier
+		// run of the given agent left on its admission session, bound as that
+		// run left it.
+		seedTranscript := func(ctx context.Context, rec *promptrun.Recording, source, providerSessionID string) *database.Session {
+			rec.Placement.Sessions[1].ProviderSessionID = providerSessionID
+			for _, input := range rec.Placement.Sessions {
+				_, err := db.CreateOrGetSession(ctx, input)
+				Expect(err).NotTo(HaveOccurred())
+			}
+			admission := rec.Placement.Sessions[1]
+			transcript, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+				Source: source, ProviderSessionID: providerSessionID, HostID: admission.HostID,
+				ParentSessionID: &admission.ID, ParentRelation: database.SessionParentRelationTranscript,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			return transcript
+		}
+
+		It("refuses a run of another agent family and files no second conversation", func(ctx SpecContext) {
+			rec := recording(nil)
+			codex := seedTranscript(ctx, rec, "codex", "codex-rollout-1")
+			claudeSessionID := uuid.NewString()
+
+			_, err := promptrun.Run(ctx, promptrun.Input{
+				Resolved: resolved, Provider: &eventsProvider{events: answeredTurn(claudeSessionID)}, Timeout: testTimeout, Record: rec,
+			})
+
+			Expect(err).To(MatchError(database.ErrSessionConflict))
+			Expect(err).To(MatchError(ContainSubstring("is a codex conversation (codex-rollout-1); a claude run (" + claudeSessionID + ") cannot continue it")))
+			transcript, err := db.GetTranscriptSession(ctx, rec.Placement.Sessions[1].ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(transcript.ID).To(Equal(codex.ID))
+			_, err = db.GetSessionByIdentity(ctx, claudeSessionID, "claude", "", codex.HostID)
+			Expect(err).To(MatchError(database.ErrSessionNotFound))
+			admission, err := db.GetSession(ctx, rec.Placement.Sessions[1].ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(admission.ProviderSessionID).To(Equal("codex-rollout-1"), "a refused run leaves the admission bound to its conversation")
+		})
+
+		It("continues the transcript of the same agent conversation", func(ctx SpecContext) {
+			rec := recording(nil)
+			providerSessionID := uuid.NewString()
+			claude := seedTranscript(ctx, rec, "claude", providerSessionID)
+
+			res, err := promptrun.Run(ctx, promptrun.Input{
+				Resolved: resolved, Provider: &eventsProvider{events: answeredTurn(providerSessionID)}, Timeout: testTimeout, Record: rec,
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			run, err := db.GetPromptRun(ctx, res.PromptRunID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(run.ExecutionSessionID).To(HaveValue(Equal(claude.ID)))
+		})
+	})
+
 	It("records a failed verification with its progress, phase and reason", func(ctx SpecContext) {
 		verify.Register(verify.KindFixture, func(_ context.Context, _ api.Verify, _ verify.Options) ([]*verify.Plugin, error) {
 			return []*verify.Plugin{verify.New("fixture:acceptance", &failingVerifier{})}, nil

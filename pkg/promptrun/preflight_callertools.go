@@ -82,8 +82,14 @@ func askingCallerTools(definitions []api.ToolDefinition, spec api.Spec) ([]strin
 // work: the runtime must be able to expose them, and an ask must have a broker
 // to answer it. mcp.disabled is no obstacle: every runtime that exposes caller
 // tools keeps captain's caller-tool server while dropping configured servers.
+//
+// A runtime that ignores tools never offers them to the model, so it admits
+// them: they stay bound for the run's hooks.
 func (a callerToolAdmission) check(model api.Model) error {
 	runtime := api.RuntimeOf(model.Provider, model.Mode)
+	if api.IgnoresTools(model.Provider, model.Mode) {
+		return nil
+	}
 	if a.tools && !api.SupportsCallerTools(model.Provider, model.Mode) {
 		return fmt.Errorf("promptrun: runtime %q cannot expose caller tools, so the agent would have none of them; choose an agent-mode model (e.g. agent:sonnet)", runtime)
 	}

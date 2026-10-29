@@ -1,9 +1,15 @@
 package prompt
 
 import (
+	"errors"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+// templatedSchema is frontmatter that is YAML only once rendered, like gavel's
+// commit-grouping prompt capping its groups with an optional maxCommits.
+const templatedSchema = "output:\n  schema:\n    type: array\n    minItems: 1\n{{#if maxCommits}}\n    maxItems: {{maxCommits}}\n{{/if}}"
 
 func hookSource(hook string) *Template {
 	return LoadNamed("hook.prompt", "---\n"+hook+"\n---\n{{role \"user\"}}\nbody\n")
@@ -17,6 +23,25 @@ var _ = Describe("HookSpec", func() {
 			On: "prompt.context", Mode: HookSubstitute, Field: "text",
 			Match: `#(?P<num>\d+)`, When: "has(metadata.pr)", Render: HookRenderModel,
 		}))
+	})
+
+	It("reads no hook from templated frontmatter that declares none", func() {
+		spec, err := hookSource(templatedSchema).Hook()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(spec).To(BeNil())
+	})
+
+	It("reads the hook beside templated frontmatter, keeping hook-root expressions", func() {
+		spec, err := hookSource(templatedSchema + "\nhook:\n  on: prompt.context\n  mode: append\n  when: '\"{{metadata.pr}}\" != \"\"'").Hook()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(*spec).To(Equal(HookSpec{On: "prompt.context", Mode: HookAppend, When: `"{{metadata.pr}}" != ""`}))
+	})
+
+	It("reports malformed frontmatter as a HookParseError", func() {
+		_, err := LoadNamed("broken.prompt", "---\nhook: [unfinished\n---\nbody\n").Hook()
+		var parseErr *HookParseError
+		Expect(errors.As(err, &parseErr)).To(BeTrue())
+		Expect(parseErr.Prompt).To(Equal("broken.prompt"))
 	})
 
 	DescribeTable("rejects an invalid hook",

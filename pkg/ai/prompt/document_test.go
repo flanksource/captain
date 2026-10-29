@@ -153,3 +153,39 @@ func TestRender_RuntimeProfilePin(t *testing.T) {
 	assert.Equal(t, "claude-sonnet-4-6", req.Model.Name)
 	assert.Equal(t, "hello", req.Prompt.User)
 }
+
+// A templated frontmatter parses to its declared view (rendered with no
+// variables) and, unedited, reserializes to the authored source byte-for-byte.
+func TestParse_TemplatedFrontmatter(t *testing.T) {
+	src := "---\nmodel: claude-sonnet-4-6\n" + templatedSchema + "\n---\n{{role \"user\"}}\nGroup {{table}}.\n"
+
+	doc, err := Parse(src)
+	require.NoError(t, err)
+	assert.True(t, doc.Templated)
+	assert.Equal(t, "claude-sonnet-4-6", doc.Spec.Model.Name)
+	assert.Equal(t, map[string]any{"schema": map[string]any{"type": "array", "minItems": 1}}, doc.Frontmatter["output"])
+
+	out, err := doc.String()
+	require.NoError(t, err)
+	assert.Equal(t, src, out)
+
+	doc.Frontmatter["model"] = "claude-haiku-4-5"
+	_, err = doc.String()
+	assert.ErrorContains(t, err, "templated frontmatter")
+}
+
+// Expressions inside YAML values render at run time, so Parse keeps them as
+// authored instead of rendering them away.
+func TestParse_KeepsExpressionsInsideValues(t *testing.T) {
+	src := "---\nprompt:\n  system: >-\n    Review #{{number}} in {{workDir}}.\n    {{#if linters}}Linters: {{linters}}.{{/if}}\n---\nbody\n"
+
+	doc, err := Parse(src)
+	require.NoError(t, err)
+	assert.False(t, doc.Templated)
+	assert.Equal(t, "Review #{{number}} in {{workDir}}. {{#if linters}}Linters: {{linters}}.{{/if}}", doc.Spec.Prompt.System)
+}
+
+func TestParse_TemplatedFrontmatterRenderError(t *testing.T) {
+	_, err := Parse("---\nmodel: x\n{{#if open}}\n---\nbody\n")
+	assert.ErrorContains(t, err, "frontmatter template")
+}

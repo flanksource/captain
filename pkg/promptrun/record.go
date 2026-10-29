@@ -33,6 +33,9 @@ type Recording struct {
 	Origin       string
 	SpecProfile  string
 	BatchID      *uuid.UUID
+	// ParentRunID files the run as a child of another run in the same session
+	// tree, e.g. a prompt a hook of that run started.
+	ParentRunID *uuid.UUID
 	// InputPlanID / InputPlanRevisionID name the plan the run executes.
 	InputPlanID         *uuid.UUID
 	InputPlanRevisionID *uuid.UUID
@@ -128,7 +131,7 @@ func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 			return fmt.Errorf("promptrun: place run: %w", err)
 		}
 		run, err := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
-			ID: rec.PromptRunID, SessionID: session.ID, BatchID: rec.BatchID,
+			ID: rec.PromptRunID, SessionID: session.ID, BatchID: rec.BatchID, ParentRunID: rec.ParentRunID,
 			InputPlanID: rec.InputPlanID, InputPlanRevisionID: rec.InputPlanRevisionID,
 			Origin: rec.Origin, SpecProfile: rec.SpecProfile, AdmissionKey: rec.AdmissionKey,
 			RenderedSpec: rendered, Metadata: metadata, Runtime: rec.Runtime,

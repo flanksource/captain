@@ -3,12 +3,8 @@ package promptcontext
 import (
 	"context"
 	"fmt"
-	"io/fs"
-	"path"
 	"regexp"
 	"slices"
-	"sort"
-	"strings"
 
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/ai/prompt/hookrun"
@@ -19,62 +15,20 @@ import (
 // removes it. Each hook's pattern and predicate are compiled here, so a broken
 // hook fails discovery naming its source. Hooks are returned in name order.
 func Discover(sources ...Source) ([]Hook, error) {
-	byName := map[string]Hook{}
-	for _, src := range sources {
-		if src.FS == nil {
-			return nil, fmt.Errorf("prompt context source %q has no FS", src.Label)
-		}
-		if err := load(src, byName); err != nil {
-			return nil, err
-		}
+	files, err := promptlib.DiscoverHookFiles(Event, sources...)
+	if err != nil {
+		return nil, err
 	}
-	hooks := make([]Hook, 0, len(byName))
-	for _, hook := range byName {
+	hooks := make([]Hook, 0, len(files))
+	for _, file := range files {
+		hook, err := compile(file.Template, file.Name, file.Spec)
+		if err != nil {
+			return nil, fmt.Errorf("context hook %s (%s): %w", file.Name, file.Source, err)
+		}
+		hook.Source = file.Source
 		hooks = append(hooks, hook)
 	}
-	sort.Slice(hooks, func(i, j int) bool { return hooks[i].Name < hooks[j].Name })
 	return hooks, nil
-}
-
-func load(src Source, byName map[string]Hook) error {
-	return fs.WalkDir(src.FS, ".", func(file string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || path.Ext(file) != ".prompt" {
-			return nil
-		}
-		tmpl, err := promptlib.LoadFS(src.FS, file)
-		if err != nil {
-			return err
-		}
-		source := src.Label + ":" + file
-		spec, err := tmpl.Hook()
-		if err != nil {
-			return fmt.Errorf("%s: %w", source, err)
-		}
-		if spec == nil {
-			return nil
-		}
-		name := strings.TrimSuffix(path.Base(file), ".prompt")
-		if !promptlib.HookNameRe.MatchString(name) {
-			return fmt.Errorf("%s: hook name %q must match %s", source, name, promptlib.HookNameRe)
-		}
-		if spec.Disabled {
-			delete(byName, name)
-			return nil
-		}
-		if spec.On != Event {
-			return nil
-		}
-		hook, err := compile(tmpl, name, *spec)
-		if err != nil {
-			return fmt.Errorf("context hook %s (%s): %w", name, source, err)
-		}
-		hook.Source = source
-		byName[name] = hook
-		return nil
-	})
 }
 
 // compile validates spec for prompt.context and builds its matcher, predicate

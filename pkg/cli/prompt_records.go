@@ -359,7 +359,11 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 	if data == nil {
 		data = map[string]any{}
 	}
-	prepared, declarations, err := promptlib.PrepareSchemaSource(content)
+	source, err := promptlib.RenderFrontmatter(content, data)
+	if err != nil {
+		return promptInspection{}, err
+	}
+	prepared, declarations, err := promptlib.PrepareSchemaSource(source)
 	if err != nil {
 		return promptInspection{}, err
 	}

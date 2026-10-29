@@ -31,11 +31,11 @@ var prStatusHook = hookFile("  on: prompt.context\n  mode: append\n  when: '\""+
 var issueHook = hookFile("  on: prompt.context\n  mode: substitute\n  match: '#(?P<num>\\d+)'\n  when: captures.num != \"0\"",
 	"issue {{num}} ({{captures.num}})")
 
-func source(label string, files fstest.MapFS) promptcontext.Source {
-	return promptcontext.Source{FS: files, Label: label}
+func source(label string, files fstest.MapFS) promptlib.HookSource {
+	return promptlib.HookSource{FS: files, Label: label}
 }
 
-func discover(sources ...promptcontext.Source) []promptcontext.Hook {
+func discover(sources ...promptlib.HookSource) []promptcontext.Hook {
 	hooks, err := promptcontext.Discover(sources...)
 	Expect(err).NotTo(HaveOccurred())
 	return hooks
@@ -67,6 +67,17 @@ var _ = Describe("Discover", func() {
 			"retired.prompt": hookFile("  disabled: true", ""),
 		})
 		Expect(names(discover(base, local))).To(Equal([]string{"issue@local:issue.prompt", "pr-status@base:pr-status.prompt"}))
+	})
+
+	It("discovers hooks beside a prompt whose frontmatter is templated", func() {
+		templated := &fstest.MapFile{Data: []byte("---\noutput:\n  schema:\n    minItems: 1\n{{#if maxCommits}}\n    maxItems: {{maxCommits}}\n{{/if}}\n---\nbody\n")}
+		Expect(names(discover(source("dir", fstest.MapFS{"commit-grouping.prompt": templated, "pr-status.prompt": prStatusHook})))).
+			To(Equal([]string{"pr-status@dir:pr-status.prompt"}))
+	})
+
+	It("fails naming the source of a prompt whose frontmatter is malformed", func() {
+		_, err := promptcontext.Discover(source("dir", fstest.MapFS{"broken.prompt": &fstest.MapFile{Data: []byte("---\nmodel: [unfinished\n---\nx\n")}}))
+		Expect(err).To(MatchError(SatisfyAll(ContainSubstring("dir:broken.prompt"), ContainSubstring("yaml:"))))
 	})
 
 	DescribeTable("fails loudly naming the hook and its source",

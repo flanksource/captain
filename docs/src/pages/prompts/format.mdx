@@ -115,9 +115,21 @@ Refactor:
 {{target}}
 `} />
 
+### Batches
+
+`batch` splits the input files of `captain prompt run <prompt> [files...]` into runs of `size` files each, `concurrency` of them at a time (default 1). `batch: 1` is shorthand for `batch: {size: 1}`. Without it every input file goes to one run. `--batch` and `--batch-concurrency` override it; see [Input files and batches](/prompts/cli/#input-files-and-batches).
+
+```yaml
+---
+model: jev-latest
+batch: {size: 1, concurrency: 4}
+---
+Classify {{file}}.
+```
+
 ## Inline tools
 
-`tools` declares tools the model can call, keyed by tool name. Each tool runs its `exec` script and returns the result to the model. Inline tools are caller tools: API runtimes call them in-process and agent runtimes reach them through Captain's caller-tool MCP endpoint. A runtime that cannot expose caller tools (for example `google cli`) refuses the run before the first model call.
+`tools` declares tools the model can call, keyed by tool name. Each tool runs its `exec` script and returns the result to the model. Inline tools are caller tools: API runtimes call them in-process and agent runtimes reach them through Captain's caller-tool MCP endpoint. A runtime that cannot expose caller tools (for example `google cli`) refuses the run before the first model call. Jev is the exception: it ignores tools and leaves them to hooks (see [Jev typed decisions](#jev-typed-decisions)).
 
 <CodeExample client:load language="yaml" title="A prompt that ships its own tool" source={`
 ---
@@ -344,7 +356,9 @@ When no Go output target is passed to `Render`, Captain marshals a dotprompt `ou
 
 Set `model: jev-latest`, `mode: api`, and `TYPESAFE_API_KEY` to use TypeSafe's Jev API. Declare `output.schemaType: typesafe-schema` and put named Noul, Choice, or Score questions in `output.schema`. The rendered prompt body becomes the TypeSafe `state`; the frontmatter model becomes the native request model. Captain sends and logs the native request and response through the usual provider middleware, then returns `{"value": {...}, "typesafe": {...}}`. `value` contains the selected choice or numeric Noul and Score values; `typesafe` preserves all native answer details, including confidence and probability distributions.
 
-`input.schemaType` accepts `json-schema`. `output.schemaType` accepts `json-schema` or `typesafe-schema`; an omitted type keeps the existing JSON Schema behavior. With JSON Schema output, Jev converts required string enums to Choice, numbers bounded from 0 to 1 to Noul, and bounded numbers with an ordered `x-typesafe-criteria` rubric to Score. The rubric must contain 2 to 10 levels and `maximum` must be its last index. Unsupported schema keywords and shapes fail before the API call. Jev does not accept attachments, tools, or session history.
+`input.schemaType` accepts `json-schema`. `output.schemaType` accepts `json-schema` or `typesafe-schema`; an omitted type keeps the existing JSON Schema behavior. With JSON Schema output, Jev converts required string enums to Choice, numbers bounded from 0 to 1 to Noul, and bounded numbers with an ordered `x-typesafe-criteria` rubric to Score. The rubric must contain 2 to 10 levels and `maximum` must be its last index. Unsupported schema keywords and shapes fail before the API call.
+
+Jev ignores tools: inline `tools`, caller tools, `toolPolicy`, `toolPreferences` and `permissions.tools` are never sent to the model. Inline tools stay bound, so schema and lifecycle hooks can still call them. Each ignored field is recorded in the run's `specProvenance` with `ignored: {by: {kind: catalog, name: jev}, reason: ...}`, and `captain prompt render --json` shows the same marker under `resolution.provenance`. Jev still refuses attachments and session history.
 
 <CodeExample client:load language="yaml" title="Jev commit classifier" source={`
 ---
