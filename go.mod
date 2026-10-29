@@ -11,7 +11,7 @@ require (
 	github.com/firebase/genkit/go v1.13.1
 	github.com/flanksource/clicky v1.21.88-0.20261027204456-34e65b99d69d
 	github.com/flanksource/clicky/aichat v1.21.82
-	github.com/flanksource/commons v1.61.1-0.20261027203923-c5cfedcdae97
+	github.com/flanksource/commons v1.63.0
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/cel-go v0.31.0
