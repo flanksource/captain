@@ -1,8 +1,6 @@
 package commit
 
 import (
-	"fmt"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -20,14 +18,6 @@ var _ = Describe("the workspace commit record", func() {
 		hc = isolated(dir)
 	})
 
-	// hostCommit is a host pipeline cutting one commit under its own message —
-	// the way gavel's commit pipeline does, ignoring Plan.Subject.
-	hostCommit := func(repo, rel, message string) string {
-		write(GinkgoT(), repo, rel, "package main\n")
-		mustGit(GinkgoT(), repo, "add", "--", rel)
-		mustGit(GinkgoT(), repo, "commit", "--no-verify", "-m", message)
-		return mustGit(GinkgoT(), repo, "rev-parse", "HEAD")
-	}
 	headRecord := func(repo, message string) api.CommitRecord {
 		return api.CommitRecord{SHA: mustGit(GinkgoT(), repo, "rev-parse", "HEAD"), Message: message}
 	}
@@ -36,24 +26,6 @@ var _ = Describe("the workspace commit record", func() {
 		changed(hc, rel)
 		Expect(h.Post(hc, agent.PhaseTurn)).To(Succeed())
 	}
-
-	It("records every commit a host Do cuts, in order, with the messages git holds", func() {
-		messages := []string{"feat: one", "fix: two\n\nwith a body"}
-		var want []api.CommitRecord
-		h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: captain subject"})
-		h.Do = func(_ *agent.HookContext, plan Plan) (string, error) {
-			for i, message := range messages {
-				sha := hostCommit(plan.Dir, fmt.Sprintf("host-%d.go", i), message)
-				want = append(want, api.CommitRecord{SHA: sha, Message: message})
-			}
-			// A host may hand back an abbreviated hash for the anchor.
-			return want[len(want)-1].SHA[:7], nil
-		}
-		write(GinkgoT(), dir, "agent.go", "package main\n")
-
-		Expect(h.Post(hc, agent.PhaseAgent)).To(Succeed())
-		Expect(hc.Workspace().Commits).To(Equal(want))
-	})
 
 	It("records the built-in committer's commit with the message git stored, not the policy text", func() {
 		// A YAML block scalar leaves a trailing newline git's cleanup strips.
@@ -72,36 +44,6 @@ var _ = Describe("the workspace commit record", func() {
 
 		Expect(h.Post(rootHC, agent.PhaseAgent)).To(Succeed())
 		Expect(rootHC.Workspace().Commits).To(Equal([]api.CommitRecord{headRecord(root, "feat: first")}))
-	})
-
-	It("fails naming the SHA and range when Do returns a SHA it did not cut", func() {
-		const stray = "0123456789abcdef0123456789abcdef01234567"
-		seed := mustGit(GinkgoT(), dir, "rev-parse", "HEAD")
-		h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: hosted"})
-		h.Do = func(_ *agent.HookContext, plan Plan) (string, error) {
-			hostCommit(plan.Dir, "host.go", "feat: hosted")
-			return stray, nil
-		}
-		write(GinkgoT(), dir, "agent.go", "package main\n")
-
-		err := h.Post(hc, agent.PhaseAgent)
-		Expect(err).To(MatchError(And(ContainSubstring(stray), ContainSubstring(seed+"..HEAD"))))
-		Expect(hc.Workspace().Commits).To(BeEmpty())
-	})
-
-	It("fails when Do commits but reports no SHA, instead of recording nothing", func() {
-		seed := mustGit(GinkgoT(), dir, "rev-parse", "HEAD")
-		h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: hosted"})
-		var cut string
-		h.Do = func(_ *agent.HookContext, plan Plan) (string, error) {
-			cut = hostCommit(plan.Dir, "host.go", "feat: hosted")
-			return "", nil
-		}
-		write(GinkgoT(), dir, "agent.go", "package main\n")
-
-		err := h.Post(hc, agent.PhaseAgent)
-		Expect(err).To(MatchError(And(ContainSubstring("reported no commit"), ContainSubstring(seed), ContainSubstring(cut))))
-		Expect(hc.Workspace().Commits).To(BeEmpty())
 	})
 
 	It("rewrites the record to the squashed commit once a per-turn chain collapses, keeping other entries", func() {

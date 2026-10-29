@@ -45,8 +45,8 @@ Merge {{shq branch}} into {{repo}}.
 
 		Expect(req.Setup.Cwd).To(Equal("/src/wt"))
 		Expect(req.Workflow.After).To(Equal([]api.AfterStep{{
-			Cwd:      "/src/repo",
-			Commands: []string{`git -C /src/repo merge --ff-only 'topic'\''s $(rm -rf /)'`},
+			Cwd:        "/src/repo",
+			HookAction: api.HookAction{Commands: []string{`git -C /src/repo merge --ff-only 'topic'\''s $(rm -rf /)'`}},
 		}}))
 		Expect(req.Prompt.User).To(Equal(`Merge 'topic'\''s $(rm -rf /)' into /src/repo.`))
 	})

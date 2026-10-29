@@ -20,10 +20,12 @@
 package prompt
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -51,7 +53,7 @@ func renderFrontmatter(source string, data map[string]any) (string, error) {
 	if loc == nil {
 		return source, nil
 	}
-	fm := source[loc[2]:loc[3]]
+	fm := deferHookExpressions(source[loc[2]:loc[3]])
 	if !strings.Contains(fm, "{{") {
 		return source, nil
 	}
@@ -71,6 +73,9 @@ type Template struct {
 	dp     *dp.Dotprompt
 	source string
 	name   string
+	// dir is the directory of a template loaded from disk, which its hooks'
+	// relative child prompt paths resolve against.
+	dir string
 }
 
 // Load parses a .prompt source string.
@@ -96,6 +101,7 @@ func LoadFile(path string) (*Template, error) {
 	}
 	t := Load(string(b))
 	t.name = path
+	t.dir = filepath.Dir(path)
 	return t, nil
 }
 
@@ -114,6 +120,9 @@ type RenderOptions struct {
 	Data     map[string]any
 	Output   any
 	Declared bool
+	// Dir is the directory relative hook prompt paths resolve against; empty
+	// uses the directory of a template loaded with LoadFile.
+	Dir string
 }
 
 // Render executes the body and preserves frontmatter and output schemas.
@@ -148,6 +157,12 @@ func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) 
 	var req ai.Request
 	if err := decodeSpecFrontmatter(rendered.Raw, &req); err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("decode prompt %s frontmatter into ai.Request: %w", t.name, err)
+	}
+	if err := resolveHookPrompts(&req, cmp.Or(options.Dir, t.dir)); err != nil {
+		return ai.Request{}, ai.Config{}, fmt.Errorf("prompt %s: %w", t.name, err)
+	}
+	if declaresHooks(req) {
+		req.Prompt.Variables = data
 	}
 
 	// The rendered template body wins over any frontmatter prompt.user/system.
@@ -221,6 +236,22 @@ func decodeSpecFrontmatter(raw map[string]any, req *ai.Request) error {
 	if len(raw) == 0 {
 		return nil
 	}
+	schemaHooks, err := decodeSectionHooks(raw, "output")
+	if err != nil {
+		return err
+	}
+	inputHooks, err := decodeSectionHooks(raw, "input")
+	if err != nil {
+		return err
+	}
+	if err := decodeSpecFields(raw, req); err != nil {
+		return err
+	}
+	req.Prompt.SchemaHooks, req.Prompt.InputHooks = schemaHooks, inputHooks
+	return nil
+}
+
+func decodeSpecFields(raw map[string]any, req *ai.Request) error {
 	// dotprompt spells tools as a list of registered tool names; captain declares
 	// them inline, and a list would otherwise fail as an opaque type mismatch.
 	if tools, ok := raw["tools"]; ok {

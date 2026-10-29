@@ -64,7 +64,7 @@ func (t *Template) Hook() (*HookSpec, error) {
 		Hook *HookSpec `yaml:"hook"`
 	}
 	if err := yaml.Unmarshal([]byte(loc[1]), &fm); err != nil {
-		return nil, fmt.Errorf("parse prompt %s frontmatter: %w", t.name, err)
+		return nil, &HookParseError{Prompt: t.name, Err: err}
 	}
 	if fm.Hook == nil || fm.Hook.Disabled {
 		return fm.Hook, nil
