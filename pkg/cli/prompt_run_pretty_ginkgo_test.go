@@ -108,6 +108,44 @@ var _ = Describe("Jev prompt response", func() {
 		Expect(pretty.HTML()).To(And(ContainSubstring("new gridjs.Grid"), ContainSubstring("1.25 / 2")))
 	})
 
+	Context("a batched run's block", func() {
+		const base = "/x/jira/10303"
+
+		It("names the input relative to the common directory and renders the full answer table", func() {
+			block := inputRunBlock(PromptRunItem{
+				Inputs: []string{base + "/RALT-1321.md"}, Status: "completed", Provider: "jev", Text: response, Duration: "1.7s",
+			}, base)
+			Expect(block.String()).To(And(
+				ContainSubstring("✓ RALT-1321.md"), ContainSubstring("1.7s"), Not(ContainSubstring(base)),
+				ContainSubstring("80% yes"), ContainSubstring("no 10%, yes 90%"), Not(ContainSubstring(`"typesafe"`)),
+			))
+		})
+
+		It("shows a skip reason without the common directory, and a failure's error", func() {
+			skipped := inputRunBlock(PromptRunItem{
+				Inputs: []string{base + "/RALT-1400.md"}, Status: "skipped", SkipReason: base + "/RALT-1400.md: already classified",
+			}, base)
+			Expect(skipped.String()).To(And(ContainSubstring("⊘ RALT-1400.md"), ContainSubstring("RALT-1400.md: already classified"), Not(ContainSubstring(base))))
+
+			failed := inputRunBlock(PromptRunItem{Inputs: []string{base + "/RALT-1401.md"}, Status: "failed", Error: "API key not found"}, base)
+			Expect(failed.String()).To(And(ContainSubstring("✗ RALT-1401.md"), ContainSubstring("API key not found")))
+		})
+
+		It("leaves the batch's final print to a one-line tally", func() {
+			tally := PromptRunResult{Status: "partial", Total: 3, Succeeded: 1, Failed: 1, Skipped: 1, Duration: "6.2s", Runs: []PromptRunItem{
+				{Inputs: []string{base + "/a.md"}, Status: "completed", Provider: "jev", Text: response},
+				{Inputs: []string{base + "/b.md"}, Status: "failed", Error: "boom"},
+				{Inputs: []string{base + "/c.md"}, Status: "skipped", SkipReason: "done"},
+			}}.Pretty().String()
+			Expect(tally).To(And(
+				ContainSubstring("✓ 1 completed"), ContainSubstring("✗ 1 failed"), ContainSubstring("⊘ 1 skipped"),
+				ContainSubstring("3 files in "+base), ContainSubstring("6.2s"),
+				Not(ContainSubstring("80% yes")), Not(ContainSubstring("boom")), Not(ContainSubstring("Inputs")),
+			))
+			Expect(strings.Count(strings.TrimSpace(tally), "\n")).To(BeZero())
+		})
+	})
+
 	It("uses the same answer presentation in a multi-model run", func() {
 		pretty := (PromptRunResult{Runs: []PromptRunItem{{Provider: "jev", Selector: "api:jev-latest", Text: response}}}).Pretty()
 		Expect(pretty.String()).To(And(ContainSubstring("api:jev-latest"), ContainSubstring("80% yes")))

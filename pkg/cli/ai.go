@@ -168,7 +168,7 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 		cleanup()
 		return nil, func() {}, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg)); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg)); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}
@@ -409,7 +409,7 @@ func RunAITest(opts AITestOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithJevConversion()); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion()); err != nil {
 		return nil, err
 	}
 	if p.GetRuntime().Provider == "jev" {

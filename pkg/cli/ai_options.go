@@ -155,6 +155,18 @@ type AIPromptOptions struct {
 	// work, but it also erases the path — and the path is what says whether the
 	// caller pointed at an authored .prompt template or at a document.
 	PromptRef string
+
+	// InputFiles are the positional input files after the prompt; each run binds
+	// them as the `files` var, and as `file` when there is exactly one.
+	InputFiles []string `flag:"-" json:"-" yaml:"-"`
+	// Batch and BatchConcurrency split the input files into runs of Batch files,
+	// BatchConcurrency at a time (spec field batch).
+	Batch            int `flag:"batch" help:"Split the input files into runs of N files each (spec batch.size)" category:"Model runtime"`
+	BatchConcurrency int `flag:"batch-concurrency" help:"How many batched runs execute at once (spec batch.concurrency, default 1)" category:"Model runtime"`
+
+	// deferInputHooks renders the frontmatter without running its input hooks,
+	// for a render that only reads how to split the input files.
+	deferInputHooks bool
 }
 
 type AIPromptResult struct {
