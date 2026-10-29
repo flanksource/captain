@@ -11,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/hookaction"
 )
 
 // Kind names a family of verifier — one field of api.Verify and the factory that
@@ -60,6 +61,10 @@ type Options struct {
 	// and grades outside the bounds the run declared. Nil when the checks are
 	// driven with no run behind them.
 	RunSpec *api.Spec
+	// Actions runs the tool and prompt actions of workflow.after steps. Nil is
+	// fine for a workflow whose steps are all commands; a tool or prompt step
+	// with no runner is refused when the hooks are built.
+	Actions hookaction.Runner
 }
 
 // Factory builds the hooks one kind contributes. It returns *Plugin rather than

@@ -22,7 +22,7 @@ var _ = Describe("git commit guard", func() {
 		},
 		Entry("no workflow", nil, false),
 		Entry("verify only", &api.Workflow{Verify: &api.Verify{Commands: []string{"true"}}}, false),
-		Entry("after steps only", &api.Workflow{After: []api.AfterStep{{Commands: []string{"true"}}}}, false),
+		Entry("after steps only", &api.Workflow{After: []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"true"}}}}}, false),
 		Entry("declared commits", &api.Workflow{Commits: []api.Commit{{On: api.CommitOnRun}}}, true),
 	)
 

@@ -250,12 +250,16 @@ func TestRender_RuntimeFixtureExamples(t *testing.T) {
 				"patch":       "+registerJev()",
 			}
 		}
-		req, cfg, err := tmpl.Render(RenderOptions{Data: data})
+		options := RenderOptions{Data: data}
+		if path == "testdata/fixtures/jev-hooks.prompt" {
+			options = RenderOptions{Data: map[string]any{"file": "KEY-1.md", "issue": "Annuity quote fails"}, Dir: "testdata/fixtures"}
+		}
+		req, cfg, err := tmpl.Render(options)
 		require.NoError(t, err)
 		require.NoError(t, req.Validate())
 
 		assert.Equal(t, path, req.Prompt.Source)
-		if path != "testdata/fixtures/jev.prompt" {
+		if !strings.HasPrefix(path, "testdata/fixtures/jev") {
 			assert.Contains(t, req.Prompt.User, "summarize the change")
 		}
 		assert.Equal(t, want.model, req.Model.Name)

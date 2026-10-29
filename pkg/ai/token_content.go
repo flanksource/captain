@@ -75,7 +75,9 @@ func estimateTokenRequest(req api.Spec, cfg api.Config, model api.Model) (api.To
 		}
 		count.Tokens += estimateTokenText(string(data))
 	}
-	if req.Prompt.HasSchema() {
+	if req.Prompt.OutputSchemaType == api.SchemaTypeTypeSafe {
+		count.Tokens += estimateTokenText(string(req.Prompt.TypeSafeQuestions))
+	} else if req.Prompt.HasSchema() {
 		schema, err := SchemaJSONForRuntime(model.Provider, model.Mode, req.Prompt)
 		if err != nil {
 			return api.TokenCount{}, err

@@ -57,23 +57,20 @@ func PrepareSchemaSource(source string) (string, SchemaDeclarations, error) {
 		return source, declarations, nil
 	}
 	questions, ok := output["schema"].(map[string]any)
-	if !ok || len(questions) == 0 {
+	emitted := len(questions) == 0 && hasSchemaHooks(output)
+	if !emitted && (!ok || len(questions) == 0) {
 		return "", SchemaDeclarations{}, fmt.Errorf("output.schema must contain TypeSafe questions")
+	}
+	if questions == nil {
+		questions = map[string]any{}
 	}
 	declarations.TypeSafeQuestions, err = json.Marshal(questions)
 	if err != nil {
 		return "", SchemaDeclarations{}, fmt.Errorf("encode TypeSafe questions: %w", err)
 	}
-	var typed map[string]native.Question
-	if err := json.Unmarshal(declarations.TypeSafeQuestions, &typed); err != nil {
-		return "", SchemaDeclarations{}, fmt.Errorf("decode TypeSafe questions: %w", err)
-	}
-	for name, question := range typed {
-		if strings.TrimSpace(name) == "" {
-			return "", SchemaDeclarations{}, fmt.Errorf("TypeSafe question names must be non-empty")
-		}
-		if err := question.Validate(); err != nil {
-			return "", SchemaDeclarations{}, fmt.Errorf("TypeSafe question %q: %w", name, err)
+	if !emitted {
+		if err := ValidateTypeSafeQuestions(declarations.TypeSafeQuestions); err != nil {
+			return "", SchemaDeclarations{}, err
 		}
 	}
 	delete(output, "schema")
@@ -82,6 +79,27 @@ func PrepareSchemaSource(source string) (string, SchemaDeclarations, error) {
 		return "", SchemaDeclarations{}, fmt.Errorf("encode TypeSafe prompt frontmatter: %w", err)
 	}
 	return source[:loc[2]] + string(frontmatterRaw) + source[loc[3]:], declarations, nil
+}
+
+// ValidateTypeSafeQuestions checks a TypeSafe questions object: a non-empty map
+// of named questions, each valid on its own.
+func ValidateTypeSafeQuestions(raw json.RawMessage) error {
+	var typed map[string]native.Question
+	if err := json.Unmarshal(raw, &typed); err != nil {
+		return fmt.Errorf("decode TypeSafe questions: %w", err)
+	}
+	if len(typed) == 0 {
+		return fmt.Errorf("TypeSafe questions are empty")
+	}
+	for name, question := range typed {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("TypeSafe question names must be non-empty")
+		}
+		if err := question.Validate(); err != nil {
+			return fmt.Errorf("TypeSafe question %q: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func schemaSection(frontmatter map[string]any, name string) (map[string]any, error) {
@@ -106,4 +124,11 @@ func schemaType(section map[string]any, name string) (api.SchemaType, error) {
 		return "", fmt.Errorf("%s.schemaType must be a string", name)
 	}
 	return api.SchemaType(value), nil
+}
+
+// hasSchemaHooks reports whether the output block declares output.hooks, which
+// may emit every question; their emission is validated after they run.
+func hasSchemaHooks(output map[string]any) bool {
+	hooks, _ := output["hooks"].([]any)
+	return len(hooks) > 0
 }

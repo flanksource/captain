@@ -19,9 +19,9 @@ func validateSchemaSections(frontmatter map[string]any) error {
 		if err != nil {
 			return err
 		}
-		allowed := []string{"schemaType", "schema", "format"}
+		allowed := []string{"schemaType", "schema", "format", "hooks"}
 		if name == "input" {
-			allowed = []string{"schemaType", "schema", "default"}
+			allowed = []string{"schemaType", "schema", "default", "hooks"}
 		}
 		for key := range section {
 			if !slices.Contains(allowed, key) {
