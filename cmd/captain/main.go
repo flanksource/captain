@@ -28,6 +28,7 @@ func main() {
 	// Flush before exiting: PersistentPostRun does not run when a command
 	// fails, and a failed run is the one whose HAR you want.
 	cli.FlushHAR()
+	cli.FlushTelemetry()
 	if err != nil {
 		os.Exit(1)
 	}
@@ -69,6 +70,12 @@ func newRootCommand() *cobra.Command {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
+			// A configured collector that cannot be set up is a hard stop rather
+			// than a run whose traces silently go nowhere.
+			if err := cli.InitTelemetry(cmd.Context()); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 			// Bind the database context every command reads from, so an unknown
 			// --context fails before the command runs rather than at first query.
 			name, err := cli.ResolveDatabaseContextName(cmd.Context())
@@ -88,6 +95,7 @@ func newRootCommand() *cobra.Command {
 
 	clicky.BindAllFlagsToCommand(rootCmd, "format")
 	cli.BindDatabaseFlags(rootCmd.PersistentFlags())
+	cli.BindTelemetryFlags(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
 	// wire logging can be toggled, e.g. -Plog.level.http=trace or
 	// -Phttp.log.base-level=info.
@@ -358,6 +366,10 @@ func newRootCommand() *cobra.Command {
 	}
 	if err := cli.AttachPromptHelp(rootCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to attach prompt help: %v\n", err)
+		os.Exit(1)
+	}
+	if err := cli.AttachPromptInputFiles(rootCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach prompt input files: %v\n", err)
 		os.Exit(1)
 	}
 

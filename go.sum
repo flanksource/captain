@@ -346,6 +346,8 @@ github.com/flanksource/clicky/valkey v1.21.82 h1:6R0Uysg4pJfVu1RmUqdXQqHLhtutHqy
 github.com/flanksource/clicky/valkey v1.21.82/go.mod h1:ulGU+1dpyJZ106CS3fMinoVZ8lec2zaJDhWxqCLFa+o=
 github.com/flanksource/commons v1.60.1 h1:wSSZif0P7XvGLDq7/R4q5Ip3tgmBIg//eMo9drpNi7c=
 github.com/flanksource/commons v1.60.1/go.mod h1:S39cViO2i/cx6qufygtG4kGD8qLNvS6abBuzlty+mMk=
+github.com/flanksource/commons v1.63.0 h1:gI5DecATKbay5Q1o1hYRxQUSnbC+yWP7BmdHQjrpvTY=
+github.com/flanksource/commons v1.63.0/go.mod h1:RlVSQ+Jq96jKaJWf3WnwVO4DmDTdzkm3sremzJuYuVw=
 github.com/flanksource/commons-db v0.1.61 h1:1SPMLToLUMVCPgNVsyqpQEx+o+iJFe/PtYT2Ng7uIjA=
 github.com/flanksource/commons-db v0.1.61/go.mod h1:GO+KjECHjb4tUWoVnI1saqCMW517XtfsRaLkGKHpCNA=
 github.com/flanksource/commons-db/cmd/query v0.1.61 h1:FrO/tpQiKiq55Ef0c81t/Apn0+891oIkFoSNiwuHOUY=
