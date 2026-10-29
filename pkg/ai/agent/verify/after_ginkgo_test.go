@@ -57,7 +57,7 @@ var _ = Describe("workflow.after", func() {
 	It("runs after verification passed and reports each command on the run's stream", func() {
 		_, err := run(&silentProvider{}, &api.Workflow{
 			Verify: &api.Verify{Commands: []string{"true"}},
-			After:  []api.AfterStep{{Commands: []string{"touch landed"}}},
+			After:  []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"touch landed"}}}},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ran("landed")).To(BeTrue())
@@ -68,7 +68,7 @@ var _ = Describe("workflow.after", func() {
 	It("is skipped when verification failed", func() {
 		_, err := run(&silentProvider{}, &api.Workflow{
 			Verify: &api.Verify{Commands: []string{"false"}},
-			After:  []api.AfterStep{{Commands: []string{"touch landed"}}},
+			After:  []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"touch landed"}}}},
 		})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ran("landed")).To(BeFalse())
@@ -76,15 +76,15 @@ var _ = Describe("workflow.after", func() {
 	})
 
 	It("treats onVerify as onSuccess when the workflow declares no verification", func() {
-		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{Commands: []string{"touch landed"}}}})
+		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"touch landed"}}}}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ran("landed")).To(BeTrue())
 	})
 
 	It("fails the run at the first failing command, naming it and its output", func() {
-		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{
+		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{HookAction: api.HookAction{
 			Commands: []string{"touch first", "echo merge conflict in main.go; exit 3", "touch never"},
-		}}})
+		}}}})
 		Expect(err).To(MatchError(And(
 			ContainSubstring("echo merge conflict in main.go; exit 3"),
 			ContainSubstring("merge conflict in main.go"),
@@ -96,8 +96,8 @@ var _ = Describe("workflow.after", func() {
 
 	It("runs an always step after the run itself failed, and skips onSuccess", func() {
 		_, err := run(&failingProvider{}, &api.Workflow{After: []api.AfterStep{
-			{When: api.CommitWhenSuccess, Commands: []string{"touch landed"}},
-			{When: api.CommitWhenAlways, Commands: []string{"touch cleaned"}},
+			{When: api.CommitWhenSuccess, HookAction: api.HookAction{Commands: []string{"touch landed"}}},
+			{When: api.CommitWhenAlways, HookAction: api.HookAction{Commands: []string{"touch cleaned"}}},
 		}})
 		Expect(err).To(MatchError(ContainSubstring("provider exploded")))
 		Expect(ran("landed")).To(BeFalse())
@@ -105,7 +105,7 @@ var _ = Describe("workflow.after", func() {
 	})
 
 	It("does not land when an earlier post hook of the run failed", func() {
-		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{Commands: []string{"touch landed"}}}},
+		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"touch landed"}}}}},
 			&failingPost{})
 		Expect(err).To(MatchError(ContainSubstring("commit refused")))
 		Expect(ran("landed")).To(BeFalse())
@@ -113,14 +113,14 @@ var _ = Describe("workflow.after", func() {
 
 	It("resolves a relative cwd against the run's working directory", func() {
 		Expect(os.Mkdir(filepath.Join(cwd, "sub"), 0o755)).To(Succeed())
-		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{Cwd: "sub", Commands: []string{"touch here"}}}})
+		_, err := run(&silentProvider{}, &api.Workflow{After: []api.AfterStep{{Cwd: "sub", HookAction: api.HookAction{Commands: []string{"touch here"}}}}})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ran(filepath.Join("sub", "here"))).To(BeTrue())
 	})
 
 	It("refuses an invalid declaration before anything runs", func() {
-		_, err := AfterHooksFor(&api.Workflow{After: []api.AfterStep{{When: "later", Commands: []string{"true"}}}}, Options{})
-		Expect(err).To(MatchError(ContainSubstring("workflow.after[0].when")))
+		_, err := AfterHooksFor(&api.Workflow{After: []api.AfterStep{{When: "later", HookAction: api.HookAction{Commands: []string{"true"}}}}}, Options{})
+		Expect(err).To(MatchError(ContainSubstring("workflow.after[0]: when")))
 	})
 })
 

@@ -148,6 +148,31 @@ func TestValidationStream_RetryRepairsAnAnswerTheProviderRejected(t *testing.T) 
 	}
 }
 
+func TestValidationStream_ForwardsTypeSafeQuestionsUnvalidated(t *testing.T) {
+	inner := &streamingProvider{results: []string{`{"value":{"product":"Group Life"}}`}}
+	p, err := WithSchemaValidation()(inner)
+	if err != nil {
+		t.Fatalf("WithSchemaValidation: %v", err)
+	}
+	req := ai.Request{Prompt: api.Prompt{
+		User: "classify", OutputSchemaType: api.SchemaTypeTypeSafe,
+		TypeSafeQuestions: json.RawMessage(`{"product":{"type":"choice","instructions":"Which?","criteria":{"a":"A","unknown":"U"}}}`),
+	}}
+	events, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("a TypeSafe request has no JSON Schema to validate and must stream as-is: %v", err)
+	}
+	var results []ai.Event
+	for ev := range events {
+		if ev.Kind == ai.EventResult {
+			results = append(results, ev)
+		}
+	}
+	if len(results) != 1 || len(inner.requests) != 1 {
+		t.Fatalf("want one forwarded turn with one result, got %d turns, %d results", len(inner.requests), len(results))
+	}
+}
+
 func TestValidationStream_RetryFailsAfterTheBudget(t *testing.T) {
 	inner := &streamingProvider{results: []string{overCapJSON}}
 	events := streamWith(t, inner)
