@@ -20,11 +20,28 @@
 -- The predicate is unambiguous: only a Gavel admission root parents a provider
 -- session row, and the transcript child is the only child it creates. Rows
 -- already at 'transcript' are left alone, so this is safe to re-run.
+--
+-- captain_sessions_transcript_parent_key allows one transcript child per parent
+-- and, on an upgrade, already exists when this post-phase script runs. So only
+-- the oldest candidate of a root is relabelled, and only when the root has no
+-- transcript child yet; a later Claude/Codex child of the same root is a
+-- different conversation and stays 'agent' (see
+-- 04_demote_extra_transcript_children.sql).
 
 UPDATE public.captain_sessions AS child
 SET parent_relation = 'transcript'
-FROM public.captain_sessions AS root
-WHERE child.parent_session_id = root.id
-  AND child.parent_relation = 'agent'
-  AND child.source IN ('claude', 'codex')
-  AND root.source = 'gavel';
+FROM (
+  SELECT DISTINCT ON (candidate.parent_session_id) candidate.id
+  FROM public.captain_sessions AS candidate
+  JOIN public.captain_sessions AS root ON root.id = candidate.parent_session_id
+  WHERE candidate.parent_relation = 'agent'
+    AND candidate.source IN ('claude', 'codex')
+    AND root.source = 'gavel'
+    AND NOT EXISTS (
+      SELECT 1 FROM public.captain_sessions AS transcript
+      WHERE transcript.parent_session_id = root.id
+        AND transcript.parent_relation = 'transcript'
+    )
+  ORDER BY candidate.parent_session_id, candidate.created_at, candidate.id
+) AS oldest
+WHERE child.id = oldest.id;
