@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -132,6 +134,34 @@ func (composed *ComposedSpec) expandModel() error {
 	}
 	if len(composed.Spec.Explicit) == 0 {
 		composed.Spec.Explicit = nil
+	}
+	return nil
+}
+
+// toolGoverningFields are the spec roots a runtime that ignores tools drops.
+var toolGoverningFields = []string{"/tools", "/toolPolicy", "/toolPreferences", "/permissions/tools"}
+
+// recordIgnoredTools marks every set tool-governing field ignored when the
+// primary runtime takes no tools, so the record shows them declared-but-ignored
+// rather than silently dropped.
+func (resolved *ResolvedSpec) recordIgnoredTools() error {
+	p, mode, err := resolved.Spec.Runtime()
+	if err != nil {
+		return fmt.Errorf("model %q: %w", resolved.Spec.Name, err)
+	}
+	if !IgnoresTools(p, mode) {
+		return nil
+	}
+	ignore := FieldIgnore{
+		By:     FieldSource{Kind: FieldSourceCatalog, Name: p.Name, Key: "registry.IgnoresTools"},
+		Reason: p.Name + " takes no tools; inline tools run only from hooks",
+	}
+	for path, provenance := range resolved.Provenance {
+		if !slices.ContainsFunc(toolGoverningFields, func(root string) bool { return path == root || strings.HasPrefix(path, root+"/") }) {
+			continue
+		}
+		provenance.Ignored = &ignore
+		resolved.Provenance[path] = provenance
 	}
 	return nil
 }

@@ -238,6 +238,7 @@ func neutralize(s Spec) Spec {
 	// Fields the hand-written mergers simply forgot; the structural engine cannot
 	// forget one, so these now carry through.
 	s.Prompt.Attachments = nil
+	s.Prompt.SchemaHooks, s.Prompt.InputHooks, s.Prompt.Variables, s.Batch = nil, nil, nil, nil
 	s.Model.Streaming, s.Model.Resume, s.Model.Interrupt, s.Model.Steer, s.Model.CallerTools = false, false, false, false, false
 	s.Model.MediaTypes = nil
 	s.Model.Provider = nil

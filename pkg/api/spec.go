@@ -34,8 +34,8 @@ type Spec struct {
 	ToolPolicy   PermissionPolicy    `json:"toolPolicy,omitempty" yaml:"toolPolicy,omitempty" pretty:"-"`
 	ToolApproval *ToolApprovalResume `json:"toolApproval,omitempty" yaml:"toolApproval,omitempty" pretty:"-"`
 	// Tools are caller tools declared inline, keyed by name; each runs a script.
-	Tools InlineTools `json:"tools,omitempty" yaml:"tools,omitempty" pretty:"-"`
-	Setup        *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Tools InlineTools  `json:"tools,omitempty" yaml:"tools,omitempty" pretty:"-"`
+	Setup *shell.Setup `json:"setup,omitempty" yaml:"setup,omitempty"`
 
 	// Sandbox selects the sandbox backend the run executes under. Absent = the
 	// configured default, ultimately "none".
@@ -44,6 +44,10 @@ type Spec struct {
 	// Workflow declares the generate→verify loop (verification + finalize) around
 	// the run. Absent = single generation, no verification.
 	Workflow *Workflow `json:"workflow,omitempty" yaml:"workflow,omitempty"`
+
+	// Batch splits the run's input files into runs of batch.size files each.
+	// Absent = every input file goes to one run.
+	Batch *Batch `json:"batch,omitempty" yaml:"batch,omitempty"`
 
 	// SessionID resumes an existing session. (ai.Request.SessionID)
 	SessionID string `json:"sessionId,omitempty" yaml:"sessionId,omitempty" pretty:"label=Session"`
@@ -77,6 +81,7 @@ type specMarshal struct {
 	Setup       *shell.Setup        `json:"setup,omitempty" yaml:"setup,omitempty"`
 	Sandbox     *SandboxRef         `json:"sandbox,omitempty" yaml:"sandbox,omitempty"`
 	Workflow    *Workflow           `json:"workflow,omitempty" yaml:"workflow,omitempty"`
+	Batch       *Batch              `json:"batch,omitempty" yaml:"batch,omitempty"`
 	SessionID   string              `json:"sessionId,omitempty" yaml:"sessionId,omitempty"`
 	CLIArgs     map[string]any      `json:"cliArgs,omitempty" yaml:"cliArgs,omitempty"`
 	Labels      map[string]string   `json:"labels,omitempty" yaml:"labels,omitempty"`
@@ -176,9 +181,10 @@ func (s Spec) marshalValue() specMarshal {
 		ToolPolicy:  s.ToolPolicy,
 		Approval:    omitEmptyPointer(s.ToolApproval),
 		Tools:       s.Tools,
-		Setup:     omitEmptyPointer(s.Setup),
+		Setup:       omitEmptyPointer(s.Setup),
 		Sandbox:     omitEmptyPointer(s.Sandbox),
 		Workflow:    omitEmptyPointer(s.Workflow),
+		Batch:       s.Batch,
 		SessionID:   s.SessionID,
 		CLIArgs:     s.CLIArgs,
 		Labels:      s.Labels,
