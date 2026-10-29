@@ -48,6 +48,11 @@ type ModeCapabilities struct {
 	// run: silently dropping the one field whose whole purpose is to forbid a
 	// tool is the failure this flag exists to prevent.
 	ToolPolicy bool
+	// IgnoresTools reports that the adapter takes no tools at all and drops
+	// caller tools and every tool-governing field instead of refusing the run.
+	// The run's inline tools stay bound for its hooks; resolution records each
+	// dropped field as ignored in the spec provenance.
+	IgnoresTools bool
 	// MediaTypes is the adapter's attachment ceiling. A model's own declared
 	// types are clamped against it — the adapter cannot carry what it cannot send.
 	MediaTypes []string
