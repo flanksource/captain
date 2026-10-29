@@ -132,7 +132,7 @@ func (s *Spec) UnmarshalYAML(node *yaml.Node) error {
 func (wire specMarshal) toSpec() Spec {
 	s := Spec{Model: Model(wire.ModelFields), Messages: wire.Messages,
 		ToolPolicy: wire.ToolPolicy, ToolApproval: wire.Approval, Tools: wire.Tools, Setup: wire.Setup,
-		Sandbox: wire.Sandbox, Workflow: wire.Workflow, SessionID: wire.SessionID, CLIArgs: wire.CLIArgs,
+		Sandbox: wire.Sandbox, Workflow: wire.Workflow, Batch: wire.Batch, SessionID: wire.SessionID, CLIArgs: wire.CLIArgs,
 		Labels: wire.Labels}
 	if wire.Prompt != nil {
 		s.Prompt = *wire.Prompt
