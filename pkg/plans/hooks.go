@@ -4,11 +4,8 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
@@ -77,63 +74,22 @@ func HookDirs(cfg captainconfig.Config, workDir string) ([]string, error) {
 // replaces an earlier one; `hook: {disabled: true}` removes it. Hooks run in
 // name order.
 func DiscoverHooks(dirs ...string) ([]Hook, error) {
-	byName := map[string]Hook{}
-	sources := []fs.FS{defaultHooks}
-	labels := []string{"embedded"}
+	sources := []promptlib.HookSource{{FS: defaultHooks, Label: "embedded"}}
 	for _, dir := range dirs {
-		sources = append(sources, os.DirFS(dir))
-		labels = append(labels, dir)
+		sources = append(sources, promptlib.HookSource{FS: os.DirFS(dir), Label: dir})
 	}
-	for i, fsys := range sources {
-		if err := loadHooks(fsys, labels[i], byName); err != nil {
-			return nil, err
+	files, err := promptlib.DiscoverHookFiles(RevisionEvent, sources...)
+	if err != nil {
+		return nil, err
+	}
+	hooks := make([]Hook, 0, len(files))
+	for _, file := range files {
+		if err := validateRevisionHook(file.Spec); err != nil {
+			return nil, fmt.Errorf("%s: %w", file.Source, err)
 		}
+		hooks = append(hooks, Hook{Name: file.Name, Mode: file.Spec.Mode, Source: file.Source, Run: templateRun(file.Template, file.Name, file.Spec.Field)})
 	}
-	hooks := make([]Hook, 0, len(byName))
-	for _, hook := range byName {
-		hooks = append(hooks, hook)
-	}
-	sort.Slice(hooks, func(i, j int) bool { return hooks[i].Name < hooks[j].Name })
 	return hooks, nil
-}
-
-func loadHooks(fsys fs.FS, label string, byName map[string]Hook) error {
-	return fs.WalkDir(fsys, ".", func(file string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || path.Ext(file) != ".prompt" {
-			return nil
-		}
-		tmpl, err := promptlib.LoadFS(fsys, file)
-		if err != nil {
-			return err
-		}
-		source := label + ":" + file
-		spec, err := tmpl.Hook()
-		if err != nil {
-			return fmt.Errorf("%s: %w", source, err)
-		}
-		if spec == nil {
-			return nil
-		}
-		name := strings.TrimSuffix(path.Base(file), ".prompt")
-		if !promptlib.HookNameRe.MatchString(name) {
-			return fmt.Errorf("%s: hook name %q must match %s", source, name, promptlib.HookNameRe)
-		}
-		if spec.Disabled {
-			delete(byName, name)
-			return nil
-		}
-		if spec.On != RevisionEvent {
-			return nil
-		}
-		if err := validateRevisionHook(*spec); err != nil {
-			return fmt.Errorf("%s: %w", source, err)
-		}
-		byName[name] = Hook{Name: name, Mode: spec.Mode, Source: source, Run: templateRun(tmpl, name, spec.Field)}
-		return nil
-	})
 }
 
 // validateRevisionHook rejects the hook keys plan.revision has no meaning for:

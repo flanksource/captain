@@ -41,3 +41,4 @@ hack/*
 *.test
 .codegraph/
 /assets/brand/captain-formation/presentation/
+/.new

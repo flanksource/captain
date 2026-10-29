@@ -426,7 +426,7 @@ func vetTree(ctx context.Context, repo string, req vetRequest) TierVerdict {
 	}
 	stop := StartProgress(os.Stderr, req.tier+" hooks", 30*time.Second)
 	defer stop()
-	return RunHookSet(ctx, HookWorkspace{Dir: dir, Changed: changed}, HookSetOptions{
+	return RunHookSet(ctx, HookWorkspace{Dir: dir, Changed: changed, Repo: repo, From: req.from, To: req.to}, HookSetOptions{
 		Workflow: req.workflow,
 		Tier:     req.tier,
 		Task:     req.task,
