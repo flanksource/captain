@@ -3,6 +3,8 @@ package api
 import (
 	"strings"
 	"testing"
+
+	"github.com/flanksource/commons-db/workspace"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -16,7 +18,6 @@ func TestCommitDefaults(t *testing.T) {
 		wantPhase  CommitPhase
 		wantMode   CommitMode
 		wantSquash bool
-		wantGates  CommitGates
 	}{
 		{
 			name:       "empty stanza commits once at the end",
@@ -24,7 +25,6 @@ func TestCommitDefaults(t *testing.T) {
 			wantPhase:  CommitOnRun,
 			wantMode:   CommitModeCommit,
 			wantSquash: false,
-			wantGates:  CommitGatesCheap,
 		},
 		{
 			name:       "per-turn defaults to a squashed fixup chain",
@@ -32,7 +32,6 @@ func TestCommitDefaults(t *testing.T) {
 			wantPhase:  CommitOnTurn,
 			wantMode:   CommitModeFixup,
 			wantSquash: true,
-			wantGates:  CommitGatesCheap,
 		},
 		{
 			name:       "per-turn with squash off keeps the chain",
@@ -40,7 +39,6 @@ func TestCommitDefaults(t *testing.T) {
 			wantPhase:  CommitOnTurn,
 			wantMode:   CommitModeFixup,
 			wantSquash: false,
-			wantGates:  CommitGatesCheap,
 		},
 		{
 			name:       "explicit plain commits per turn are never squashed",
@@ -48,15 +46,6 @@ func TestCommitDefaults(t *testing.T) {
 			wantPhase:  CommitOnTurn,
 			wantMode:   CommitModeCommit,
 			wantSquash: false,
-			wantGates:  CommitGatesCheap,
-		},
-		{
-			name:       "gates are honoured verbatim",
-			commit:     Commit{On: CommitOnAgent, Gates: CommitGatesNone},
-			wantPhase:  CommitOnAgent,
-			wantMode:   CommitModeCommit,
-			wantSquash: false,
-			wantGates:  CommitGatesNone,
 		},
 	}
 
@@ -70,9 +59,6 @@ func TestCommitDefaults(t *testing.T) {
 			}
 			if got := tc.commit.ShouldSquash(); got != tc.wantSquash {
 				t.Errorf("ShouldSquash() = %v, want %v", got, tc.wantSquash)
-			}
-			if got := tc.commit.EffectiveGates(); got != tc.wantGates {
-				t.Errorf("EffectiveGates() = %q, want %q", got, tc.wantGates)
 			}
 		})
 	}
@@ -90,7 +76,7 @@ func TestCommitValidate(t *testing.T) {
 		{name: "unknown mode", commit: Commit{Mode: "rebase"}, wantErr: "invalid commit mode"},
 		{name: "unknown when", commit: Commit{When: "onFailure"}, wantErr: "invalid commit when"},
 		{name: "unknown stage", commit: Commit{Stage: "session"}, wantErr: "invalid commit stage"},
-		{name: "unknown gates", commit: Commit{Gates: "some"}, wantErr: "invalid commit gates"},
+		{name: "unnamed gate", commit: Commit{Gates: []workspace.GateSpec{{Config: map[string]any{"bytes": 1}}}}, wantErr: "commit gates[0]: name is required"},
 		{
 			// Silently ignoring squash on a non-fixup policy would leave the
 			// author believing their chain collapses when nothing squashes it.

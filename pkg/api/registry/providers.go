@@ -105,7 +105,7 @@ var (
 		EnvVars:       []string{"TYPESAFE_API_KEY"},
 		DefaultMode:   ModeAPI,
 		modes: map[RuntimeMode]ModeCapabilities{
-			ModeAPI: {Streaming: true},
+			ModeAPI: {Streaming: true, IgnoresTools: true},
 		},
 		claimPrefixes: []string{"jev"},
 		families:      []string{"jev"},
