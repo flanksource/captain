@@ -37,16 +37,52 @@ type Document struct {
 	Warnings       []string
 	// Body is the unrendered Handlebars template body.
 	Body string
+	// Templated reports that the authored frontmatter is a template, so
+	// Frontmatter and Spec are its rendered view rather than its text.
+	Templated bool
+	// RawFrontmatter is the authored frontmatter text, verbatim.
+	RawFrontmatter string
+
+	// header is the authored source up to the body; declaredYAML is the
+	// rendered view as Parse decoded it. String re-emits header for a templated
+	// document whose Frontmatter is unchanged.
+	header       string
+	declaredYAML string
 }
 
 // Parse splits a .prompt source into frontmatter and body WITHOUT rendering the
-// body, then decodes the spec-native frontmatter into Spec. It fails loud on
-// malformed YAML or on a spec-native key the spec does not model — the opposite
-// of the dotprompt library's ParseDocument, which prints and swallows YAML
-// errors.
+// body, then decodes the spec-native frontmatter into Spec. A frontmatter whose
+// YAML structure is templated is read as declared (see declaredSource). It
+// fails loud on a broken frontmatter template, malformed YAML or a spec-native
+// key the spec does not model — the opposite of the dotprompt library's
+// ParseDocument, which prints and swallows YAML errors.
 func Parse(source string) (*Document, error) {
-	frontmatter, body, hasFrontmatter := splitFrontmatter(source)
-	doc := &Document{Body: body}
+	declared, err := declaredSource(source)
+	if err != nil {
+		return nil, fmt.Errorf("parse prompt frontmatter: %w", err)
+	}
+	return parseRendered(source, declared)
+}
+
+// declaredSource is source with its frontmatter as declared before any runtime
+// data. Expressions inside YAML values render at run time and stay as
+// authored. A frontmatter that is YAML only once rendered — its structure is
+// templated, e.g. a `{{#if x}}` line adding a key — is rendered with no
+// variables, so such blocks drop out and `{{x}}` renders empty.
+func declaredSource(source string) (string, error) {
+	authored, _, _ := splitFrontmatter(source)
+	if !strings.Contains(authored, "{{") || yaml.Unmarshal([]byte(authored), new(any)) == nil {
+		return source, nil
+	}
+	return RenderFrontmatter(source, map[string]any{})
+}
+
+// parseRendered decodes rendered, the source with its frontmatter already
+// rendered, keeping the authored text of source for reserialization.
+func parseRendered(source, rendered string) (*Document, error) {
+	authored, body, _ := splitFrontmatter(source)
+	frontmatter, _, hasFrontmatter := splitFrontmatter(rendered)
+	doc := &Document{Body: body, RawFrontmatter: authored, header: source[:len(source)-len(body)]}
 	if !hasFrontmatter || strings.TrimSpace(frontmatter) == "" {
 		return doc, nil
 	}
@@ -55,6 +91,13 @@ func Parse(source string) (*Document, error) {
 		return nil, fmt.Errorf("parse prompt frontmatter: %w", err)
 	}
 	doc.Frontmatter = raw
+	if frontmatter != authored {
+		declaredYAML, err := yaml.Marshal(raw)
+		if err != nil {
+			return nil, fmt.Errorf("marshal declared prompt frontmatter: %w", err)
+		}
+		doc.Templated, doc.declaredYAML = true, string(declaredYAML)
+	}
 	runtimes, err := decodePromptRuntimes(raw)
 	if err != nil {
 		return nil, fmt.Errorf("decode prompt runtimes: %w", err)
@@ -164,14 +207,22 @@ func decodePromptRuntimes(raw map[string]any) ([]api.Model, error) {
 
 // String reserializes the document to .prompt text: "---\n<yaml>\n---\n<body>",
 // or the body alone when there is no frontmatter. The output satisfies the
-// dotprompt frontmatter grammar so Parse can read it back.
+// dotprompt frontmatter grammar so Parse can read it back. A templated
+// document re-emits its authored frontmatter; once its Frontmatter is edited it
+// cannot be reserialized without losing the template, which is an error.
 func (d *Document) String() (string, error) {
-	if len(d.Frontmatter) == 0 {
+	if len(d.Frontmatter) == 0 && !d.Templated {
 		return d.Body, nil
 	}
 	y, err := yaml.Marshal(d.Frontmatter)
 	if err != nil {
 		return "", fmt.Errorf("marshal prompt frontmatter: %w", err)
+	}
+	if d.Templated {
+		if string(y) != d.declaredYAML {
+			return "", fmt.Errorf("cannot reserialize edited templated frontmatter without losing its template; edit RawFrontmatter instead")
+		}
+		return d.header + d.Body, nil
 	}
 	return "---\n" + string(y) + "---\n" + d.Body, nil
 }
