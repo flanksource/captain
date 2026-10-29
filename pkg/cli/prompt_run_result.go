@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/flanksource/clicky"
@@ -15,6 +16,7 @@ type PromptRunResult struct {
 	RunID        string           `json:"runId,omitempty"`
 	BatchID      string           `json:"batchId,omitempty"`
 	Status       string           `json:"status,omitempty" pretty:"label=Status"`
+	SkipReason   string           `json:"skipReason,omitempty" pretty:"label=Skipped"`
 	Model        string           `json:"model,omitempty" pretty:"label=Model"`
 	Provider     string           `json:"provider,omitempty" pretty:"label=Provider"`
 	Mode         string           `json:"mode,omitempty" pretty:"label=Mode"`
@@ -34,13 +36,16 @@ type PromptRunResult struct {
 	Total     int             `json:"total,omitempty" pretty:"label=Total"`
 	Succeeded int             `json:"succeeded,omitempty" pretty:"label=Succeeded"`
 	Failed    int             `json:"failed,omitempty" pretty:"label=Failed"`
+	Skipped   int             `json:"skipped,omitempty" pretty:"label=Skipped"`
 	Runs      []PromptRunItem `json:"runs,omitempty" pretty:"label=Runs"`
 }
 
 type PromptRunItem struct {
 	RunID            string           `json:"runId,omitempty" pretty:"label=Run"`
+	Inputs           []string         `json:"inputs,omitempty" pretty:"label=Inputs"`
 	Selector         string           `json:"selector,omitempty" pretty:"label=Selector"`
 	Status           string           `json:"status,omitempty" pretty:"label=Status"`
+	SkipReason       string           `json:"skipReason,omitempty" pretty:"label=Skipped"`
 	Model            string           `json:"model,omitempty" pretty:"label=Model"`
 	Provider         string           `json:"provider,omitempty" pretty:"label=Provider"`
 	Mode             string           `json:"mode,omitempty" pretty:"label=Mode"`
@@ -64,7 +69,13 @@ func (r PromptRunResult) Pretty() clickyapi.Text {
 		if r.Text != "" {
 			return clickyapi.Text{}.Add(promptResponsePretty(r.Text, r.Provider))
 		}
+		if r.SkipReason != "" {
+			return clickyapi.Text{}.Append("skipped: " + r.SkipReason)
+		}
 		return clickyapi.Text{}.Append(r.Status)
+	}
+	if slices.ContainsFunc(r.Runs, func(run PromptRunItem) bool { return len(run.Inputs) > 0 }) {
+		return inputBatchTally(r)
 	}
 	t := clickyapi.Text{}.
 		Append(fmt.Sprintf("Status: %s  Total: %d  Succeeded: %d  Failed: %d  Duration: %s",

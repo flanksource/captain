@@ -21,7 +21,7 @@ var _ = Describe("Prompt runs that declare inline tools", func() {
 		},
 		Entry("a plain prompt runs directly", api.Spec{}, false),
 		Entry("inline tools need the runner", api.Spec{Tools: tools}, true),
-		Entry("a workflow needs the runner", api.Spec{Workflow: &api.Workflow{After: []api.AfterStep{{Commands: []string{"true"}}}}}, true),
+		Entry("a workflow needs the runner", api.Spec{Workflow: &api.Workflow{After: []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"true"}}}}}}, true),
 	)
 
 	It("binds them for a chat, which refuses one nobody could approve before building a provider", func() {

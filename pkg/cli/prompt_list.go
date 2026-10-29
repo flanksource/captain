@@ -41,20 +41,9 @@ func AttachPromptListOutput(root *cobra.Command) error {
 }
 
 func promptLookupFooter(ctx context.Context, opts clicky.FormatOptions) (string, error) {
-	if err := opts.ParseFormatSpec(); err != nil {
+	format, err := terminalFormat(opts)
+	if err != nil || format == "" {
 		return "", err
-	}
-	format := "pretty"
-	if len(opts.Sinks) > 0 {
-		format = ""
-		for _, sink := range opts.Sinks {
-			if sink.File == "" {
-				format = sink.Format
-			}
-		}
-	}
-	if format != "pretty" && format != "markdown" {
-		return "", nil
 	}
 	sources, err := buildPromptSources(ctx, promptSourceOptions{})
 	if err != nil {

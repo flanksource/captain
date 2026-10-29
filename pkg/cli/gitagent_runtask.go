@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -14,6 +12,8 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/gitagent"
+	dbcontext "github.com/flanksource/commons-db/context"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // GitAgentRunTaskOptions configures the detached sidecar task runner.
@@ -137,57 +137,35 @@ func runTaskPrompt(ctx context.Context, worktree string, payload gitagent.TaskPa
 	return nil
 }
 
-// submitWork performs the agent's half of the protocol: stage everything the
-// run produced, commit, and push. A run that changed nothing is reported as
-// such rather than pushed as an empty success. The boolean becomes true once
-// push starts, because a failed push may already have produced an authoritative
-// hook verdict that the runner must not replace with a terminal worker error.
+// submitWork performs the agent's half of the protocol: commit everything the
+// run produced through the workspace pipeline, and push the task branch. A run
+// that changed nothing is reported as such rather than pushed as an empty
+// success. The boolean becomes true once push starts, because a failed push may
+// already have produced an authoritative hook verdict that the runner must not
+// replace with a terminal worker error.
 func submitWork(ctx context.Context, worktree, task string) (bool, error) {
-	log.Infof("git-agent task %s staging workspace changes", task)
-	if err := git(ctx, worktree, "add", "-A"); err != nil {
-		return false, err
-	}
-	staged, err := hasStagedChanges(ctx, worktree)
+	branch, err := gitagent.AgentBranch(task)
 	if err != nil {
 		return false, err
 	}
-	if !staged {
-		return false, fmt.Errorf("the agent produced no changes for task %s; nothing to submit", task)
+	dbctx := dbcontext.NewContext(ctx)
+	ws, err := workspace.Open(dbctx, worktree)
+	if err != nil {
+		return false, err
 	}
 	log.Infof("git-agent task %s committing workspace changes", task)
-	if err := git(ctx, worktree, "commit", "-m", "captain: "+task); err != nil {
+	// GitHooks: the agent's clone keeps whatever hooks its repository runs.
+	_, err = ws.Commit(dbctx, workspace.CommitOptions{Message: "captain: " + task, GitHooks: true})
+	if errors.Is(err, workspace.ErrNothingStaged) {
+		return false, fmt.Errorf("the agent produced no changes for task %s; nothing to submit", task)
+	}
+	if err != nil {
 		return false, err
 	}
 	// The push carries the work through both hook tiers and blocks until the
-	// verdict, so its output is the agent's most important log line.
-	log.Infof("git-agent task %s pushing for sidecar and supervisor verification", task)
-	return true, git(ctx, worktree, "push")
-}
-
-func git(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
-	}
-	return nil
-}
-
-// hasStagedChanges reports whether the index differs from HEAD. `diff --cached
-// --quiet` exits 1 when it does, which is the answer rather than a failure.
-func hasStagedChanges(ctx context.Context, dir string) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--cached", "--quiet")
-	cmd.Dir = dir
-	err := cmd.Run()
-	if err == nil {
-		return false, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return true, nil
-	}
-	return false, fmt.Errorf("git diff --cached: %w", err)
+	// verdict; a rejection's error carries the hooks' sideband feedback.
+	log.Infof("git-agent task %s pushing %s for sidecar and supervisor verification", task, branch)
+	return true, ws.Push(dbctx, workspace.PushOptions{Remote: "origin", Ref: branch})
 }
 
 // DefaultAgentCommand is the coding agent a sidecar launches when the backend

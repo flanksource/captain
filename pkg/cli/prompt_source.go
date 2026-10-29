@@ -17,6 +17,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 )
@@ -188,8 +189,26 @@ type promptVarsResult struct {
 }
 
 // ParsePromptVariables builds template data from --var key=value pairs and a --vars
-// JSON blob; unused stdin is exposed as {{input}}.
+// JSON blob; unused stdin is exposed as {{input}}, and the input files as
+// {{files}} (and {{file}} when there is one).
 func ParsePromptVariables(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (promptVarsResult, error) {
+	result, err := parseCallerVariables(opts, varsJSON, stdin, usedStdin)
+	if err != nil || len(opts.InputFiles) == 0 {
+		return result, err
+	}
+	for _, name := range []string{"file", "files"} {
+		if _, set := result.Data[name]; set {
+			return promptVarsResult{}, fmt.Errorf("variable %q is bound from the input files; drop it from -V/--vars/stdin or pass no input files", name)
+		}
+	}
+	result.Data["files"] = slices.Clone(opts.InputFiles)
+	if len(opts.InputFiles) == 1 {
+		result.Data["file"] = opts.InputFiles[0]
+	}
+	return result, nil
+}
+
+func parseCallerVariables(opts AIPromptOptions, varsJSON, stdin string, usedStdin bool) (promptVarsResult, error) {
 	data := map[string]any{}
 	if s := strings.TrimSpace(varsJSON); s != "" {
 		if err := json.Unmarshal([]byte(s), &data); err != nil {
@@ -220,11 +239,16 @@ func ParsePromptVariables(opts AIPromptOptions, varsJSON, stdin string, usedStdi
 // downstream reader agrees on what was sent: the layer trace, the persisted
 // spec, task labels, and each --multi-models variant (which re-derives its own
 // request from the resolved spec and would drop a later mutation).
-func renderLoadedLayers(ctx context.Context, body promptBody, vars promptVarsResult, stdin string, opts AIPromptOptions, saved captainconfig.Config) ([]api.SpecLayer, []string, error) {
-	frontmatter, err := promptFrontmatter(body, vars, stdin)
+func renderLoadedLayers(ctx context.Context, body promptBody, vars promptVarsResult, stdin string, opts AIPromptOptions, saved captainconfig.Config) ([]api.SpecLayer, []string, *promptrun.Skip, error) {
+	frontmatter, skip, err := promptFrontmatter(ctx, body, vars, stdin, opts.deferInputHooks)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	layers, warnings, err := frontmatterLayers(ctx, body, frontmatter, opts, saved)
+	return layers, warnings, skip, err
+}
+
+func frontmatterLayers(ctx context.Context, body promptBody, frontmatter ai.Request, opts AIPromptOptions, saved captainconfig.Config) ([]api.SpecLayer, []string, error) {
 	presets := opts.Presets
 	if opts.NoPresets || (opts.PresetsSet && presets == nil) {
 		presets = []string{}
@@ -258,20 +282,28 @@ func renderLoadedLayers(ctx context.Context, body promptBody, vars promptVarsRes
 }
 
 // promptFrontmatter turns the resolved body into the prompt's own spec — the
-// layer everything else resolves on top of.
-func promptFrontmatter(body promptBody, vars promptVarsResult, stdin string) (ai.Request, error) {
-	var frontmatter ai.Request
-	if body.Literal {
-		frontmatter = ai.Request{Prompt: api.Prompt{User: body.Text}}
-	} else {
+// layer everything else resolves on top of — after its input hooks have run,
+// unless deferHooks asks for the frontmatter alone. A hook's skip is returned
+// with the spec rendered from the original vars.
+func promptFrontmatter(ctx context.Context, body promptBody, vars promptVarsResult, stdin string, deferHooks bool) (ai.Request, *promptrun.Skip, error) {
+	frontmatter := ai.Request{Prompt: api.Prompt{User: body.Text}}
+	var skip *promptrun.Skip
+	if !body.Literal {
+		tmpl := promptlib.LoadNamed(body.Source, body.Text)
+		opts := promptlib.RenderOptions{Data: vars.Data, Declared: true, Dir: promptDir(body.Record)}
 		var err error
-		if frontmatter, _, err = promptlib.LoadNamed(body.Source, body.Text).Render(promptlib.RenderOptions{Data: vars.Data, Declared: true}); err != nil {
-			return ai.Request{}, err
+		if deferHooks {
+			frontmatter, _, err = tmpl.Render(opts)
+		} else {
+			frontmatter, _, skip, err = promptrun.RenderTemplate(ctx, tmpl, opts, ai.Config{})
+		}
+		if err != nil {
+			return ai.Request{}, nil, err
 		}
 	}
 	appendUnboundStdin(&frontmatter, body, vars, stdin)
 	frontmatter.Prompt.Source = body.Source
-	return frontmatter, nil
+	return frontmatter, skip, nil
 }
 
 // appendUnboundStdin appends piped bytes that nothing consumed. Stdin reaches a
@@ -367,6 +399,12 @@ func actionFlagsToOptions(f map[string]string) (AIPromptOptions, error) {
 	}
 	if attach := strings.TrimSpace(f["attach"]); attach != "" {
 		o.Attach = []string{attach}
+	}
+	if o.Batch, err = flagInt("batch", f["batch"]); err != nil {
+		return o, err
+	}
+	if o.BatchConcurrency, err = flagInt("batch-concurrency", f["batch-concurrency"]); err != nil {
+		return o, err
 	}
 	o.MultiModels = flagSlice(f["multi-models"])
 	o.Timeout = f["timeout"]

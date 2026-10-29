@@ -50,6 +50,7 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		if err != nil {
 			return PromptRunResult{}, err
 		}
+		opts.InputFiles = inputFilesFromContext(ctx)
 		return RunPrompt(ctx, PromptInvocation{Reference: id, Options: opts})
 	}
 	req, err := readRenderRequest(ctx, flags)
@@ -107,6 +108,9 @@ func (l promptLaunch) taskName(selector string) string {
 // and LaunchPrompt share.
 func launchRendered(ctx context.Context, launch promptLaunch) (PromptRunResult, error) {
 	rendered, chat := launch.Rendered, launch.Chat
+	if rendered.Skip != nil {
+		return skippedRunResult(rendered), nil
+	}
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}

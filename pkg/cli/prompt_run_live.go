@@ -200,7 +200,7 @@ func remoteWorkflowProvider(req *ai.Request, cfg ai.Config) (ai.Provider, error)
 	if remote == nil {
 		return nil, fmt.Errorf("sandbox %q relocates the run but built no remote provider", cfg.SandboxSelection.Kind)
 	}
-	wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
+	wrapped, err := middleware.Wrap(remote, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
 	if err != nil {
 		closeProvider(remote)
 		return nil, err

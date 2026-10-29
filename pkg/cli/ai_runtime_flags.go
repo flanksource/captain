@@ -22,6 +22,7 @@ var runtimeFlagFields = map[string]string{
 	"no-hooks": "/memory/skipHooks", "no-skills": "/memory/skipSkills", "no-user": "/memory/skipUser",
 	"no-project": "/memory/skipProject", "no-memory": "/memory/skipMemory", "bare": "/memory/bare", "skill-dir": "/memory/skills",
 	"timeout": "/budget/timeout", "system": "/prompt/system", "append-system": "/prompt/appendSystem",
+	"batch": "/batch/size", "batch-concurrency": "/batch/concurrency",
 }
 
 // WithChangedFlags carries explicit false values through Cobra's typed binding.
@@ -80,7 +81,7 @@ func (o AIRuntimeOptions) requestSpec() (api.Spec, error) {
 	if strings.TrimSpace(o.Budget) != "" {
 		spec = spec.WithExplicit("/budget/cost")
 	}
-	for _, path := range []string{"/budget/timeout", "/prompt/system", "/prompt/appendSystem"} {
+	for _, path := range promptFlagPaths {
 		delete(spec.Explicit, path)
 	}
 	if selector := o.SandboxSelector(); selector != "" {
@@ -104,10 +105,17 @@ func (o AIPromptOptions) promptSpec() (api.Spec, error) {
 	}
 	spec := api.Spec{Prompt: api.Prompt{System: o.System, AppendSystem: o.AppendSystem, Attachments: attachments},
 		Budget: api.Budget{Timeout: o.Timeout}}
-	for _, path := range []string{"/budget/timeout", "/prompt/system", "/prompt/appendSystem"} {
+	if o.ExplicitFields.Has("/batch/size") || o.ExplicitFields.Has("/batch/concurrency") {
+		spec.Batch = &api.Batch{Size: o.Batch, Concurrency: o.BatchConcurrency}
+	}
+	for _, path := range promptFlagPaths {
 		if o.ExplicitFields.Has(path) {
 			spec = spec.WithExplicit(path)
 		}
 	}
 	return spec, nil
 }
+
+// promptFlagPaths are the explicit flag paths the prompt flags layer carries
+// rather than the runtime flags layer.
+var promptFlagPaths = []string{"/budget/timeout", "/prompt/system", "/prompt/appendSystem", "/batch/size", "/batch/concurrency"}

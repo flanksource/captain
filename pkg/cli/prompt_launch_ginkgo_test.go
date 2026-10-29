@@ -144,6 +144,20 @@ var _ = Describe("Prompt launch", func() {
 		Entry("one of several runtimes", "runtimes: [api:sonnet, cli:gemini-3.5-flash]"),
 	)
 
+	It("renders a Jev prompt with caller and inline tools, recording the inline tool as ignored by jev", func() {
+		path := writePrompt("---\nmodel: api:jev-latest\ntools:\n  emit-choices:\n    exec: echo {}\n    readonly: true\noutput:\n  schemaType: typesafe-schema\n  schema:\n    valid:\n      type: noul\n      instructions: Is this valid?\n---\nReview the change")
+
+		rendered, err := RenderPrompt(ctx, PromptInvocation{Reference: path, Stdin: strings.NewReader(""), Tools: []api.ToolDefinition{reporter}})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered.Resolution.Provenance["/tools/emit-choices"].Ignored).To(PointTo(MatchFields(IgnoreExtras, Fields{
+			"By": MatchFields(IgnoreExtras, Fields{"Kind": Equal(api.FieldSourceCatalog), "Name": Equal("jev")}),
+		})))
+		encoded, err := json.Marshal(rendered)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(encoded)).To(ContainSubstring(`"ignored":{"by":{"kind":"catalog","name":"jev"`))
+	})
+
 	It("stops a launched run, which then ends as stopped and cannot be stopped again", func() {
 		path := writePrompt("---\nmodel: api:sonnet\n---\nReview the change")
 		started, err := LaunchPrompt(ctx, PromptInvocation{Reference: path, Stdin: strings.NewReader("")})
