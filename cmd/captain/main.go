@@ -150,6 +150,9 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommandWithContext("live", sessionsCmd, cli.SessionLiveOptions{}, cli.RunSessionLive).Short = "List sessions with live process health"
 	clicky.AddNamedCommandWithContext("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
 	clicky.AddNamedCommandWithContext("tokens", sessionsCmd, cli.SessionTokensOptions{}, cli.RunSessionTokens).Short = "Size canonical transcript rows without changing recorded usage"
+	deliverCmd := clicky.AddNamedCommandWithContext("deliver", sessionsCmd, cli.SessionDeliverOptions{}, cli.RunSessionDeliver)
+	deliverCmd.Short = "Send a message into a live session through its own channel"
+	deliverCmd.Long = "Deliver --text into a running claude or codex session that captain did not launch: Claude Code's messaging socket, `codex queue`, or else typing into the agent's cmux pane. The session must be live; it is never resumed in a second process."
 
 	rootCmd.AddCommand(cli.NewBrowserCommand())
 	rootcmd.RegisterLintCommand(rootCmd, isStdinAvailable)
