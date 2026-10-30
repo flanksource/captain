@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/flanksource/captain/pkg/database"
@@ -22,7 +23,11 @@ import (
 )
 
 var _ = Describe("SessionHandler deliver", Ordered, func() {
-	const livePID = 24680
+	const (
+		livePID      = 24680
+		inboxWaitPID = 24690
+		mcpServerPID = 24691
+	)
 	var (
 		db       *database.DB
 		live     *database.Session
@@ -46,10 +51,17 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 			}
 			return env, nil
 		}
+		listChildProcesses = func(_ context.Context, pid int) ([]int, error) {
+			if pid != livePID {
+				return nil, nil
+			}
+			return []int{inboxWaitPID, mcpServerPID}, nil
+		}
 		DeferCleanup(func() {
 			setCaptainDBForTest(nil)
 			discoverSessionProcesses = discoverAgentProcesses
 			readProcessEnvironment = clickyprocess.Environment
+			listChildProcesses = childProcesses
 			Expect(db.Close()).To(Succeed())
 		})
 
@@ -79,11 +91,18 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 	})
 
 	BeforeEach(func() {
-		envByPID = map[int]map[string]string{livePID: {
-			"CLAUDE_CODE_SESSION_ID":   live.ProviderSessionID,
-			deliver.EnvMessagingSocket: socket,
-			deliver.EnvMessagingToken:  "token-acme",
-		}}
+		// Claude exports its messaging socket only to what it spawns, so the
+		// claude process's own environment carries none of it.
+		envByPID = map[int]map[string]string{
+			livePID:      {},
+			mcpServerPID: {},
+			inboxWaitPID: {
+				"CLAUDE_CODE_SESSION_ID":   live.ProviderSessionID,
+				deliver.EnvClaudePID:       strconv.Itoa(livePID),
+				deliver.EnvMessagingSocket: socket,
+				deliver.EnvMessagingToken:  "token-acme",
+			},
+		}
 	})
 
 	deliverTo := func(ctx context.Context, id, body string) (int, string) {
@@ -131,14 +150,27 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 	})
 
 	It("refuses a PID that now belongs to another session", func(ctx SpecContext) {
-		envByPID[livePID]["CLAUDE_CODE_SESSION_ID"] = ended.ProviderSessionID
+		envByPID[inboxWaitPID]["CLAUDE_CODE_SESSION_ID"] = ended.ProviderSessionID
 		status, body := deliverTo(ctx, live.ProviderSessionID, `{"text":"hello"}`)
 		Expect(status).To(Equal(http.StatusConflict))
 		Expect(body).To(ContainSubstring("now runs session " + ended.ProviderSessionID))
 	})
 
+	It("ignores the messaging socket a nested claude inherited from its parent", func(ctx SpecContext) {
+		envByPID[livePID] = map[string]string{
+			"CLAUDE_CODE_SESSION_ID":   ended.ProviderSessionID,
+			deliver.EnvClaudePID:       "13579",
+			deliver.EnvMessagingSocket: socket,
+			deliver.EnvMessagingToken:  "token-parent",
+		}
+		envByPID[inboxWaitPID] = map[string]string{}
+		status, body := deliverTo(ctx, live.ProviderSessionID, `{"text":"hello"}`)
+		Expect(status).To(Equal(http.StatusUnprocessableEntity), body)
+		Expect(body).To(ContainSubstring(deliver.EnvMessagingSocket))
+	})
+
 	It("answers 422 naming the missing channel for a live session outside cmux without a socket", func(ctx SpecContext) {
-		envByPID[livePID] = map[string]string{"CLAUDE_CODE_SESSION_ID": live.ProviderSessionID}
+		envByPID[inboxWaitPID] = map[string]string{}
 		status, body := deliverTo(ctx, live.ProviderSessionID, `{"text":"hello"}`)
 		Expect(status).To(Equal(http.StatusUnprocessableEntity))
 		Expect(body).To(ContainSubstring(deliver.EnvMessagingSocket))
