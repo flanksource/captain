@@ -45,6 +45,18 @@ func (r *run) submitAndConfirm(ctx context.Context, ref WorkspaceRef, label, tex
 	return r.confirmSubmitted(ctx, ref, label, sc)
 }
 
+// SubmitToSurface sends text to an agent that is already running on the cmux
+// surface at ref, which captain did not launch. It is the same paste, Enter and
+// confirmation as a captain-launched run's feedback: confirmation waits for the
+// agent's session log (sessionLog, empty when unknown) to grow, or the surface to
+// advance.
+func SubmitToSurface(ctx context.Context, client *Client, ref WorkspaceRef, sessionLog, text string) error {
+	r := &run{client: client, emit: func(ai.Event) {}}
+	return r.submitAndConfirm(ctx, ref, "message", text, submitConfirm{
+		logPath: sessionLog, baseOffset: fileSize(sessionLog), growth: true,
+	})
+}
+
 // confirmSubmitted re-presses Enter until the submit is confirmed (or the
 // back-off is exhausted). The post-send screen is the baseline the surface signal
 // is compared against: if the Enter was dropped the typed text sits here

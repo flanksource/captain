@@ -44,6 +44,10 @@ type sessionReadResponse struct {
 //     chat run when one is attached in this process, otherwise by resuming the
 //     saved session as a new agent-mode chat run. It answers 202 with a
 //     ChatMessageResponse.
+//   - POST /{id}/deliver sends a SessionDeliverRequest into the session's live
+//     process through its own channel (claude messaging socket, codex queue, or
+//     cmux pane) and answers 202 with a deliver.Result. It never resumes: a
+//     session with no live process is a 409, one with no channel a 422.
 //   - GET /{id}/chat answers the SessionChat projection of the session's live
 //     chat run in this process.
 //   - POST /{id}/interrupt pauses the live chat's active turn (a
@@ -58,6 +62,7 @@ func SessionHandler() http.Handler {
 	mux.HandleFunc("GET /{id}", sessionRead(captainDB))
 	mux.HandleFunc("POST /{id}/tokens", handleSessionTokens)
 	mux.Handle("POST /{id}/message", handleSessionMessage(promptChats))
+	mux.HandleFunc("POST /{id}/deliver", handleSessionDeliver)
 	mux.Handle("GET /{id}/chat", handleSessionChat(promptChats))
 	mux.Handle("POST /{id}/interrupt", handleSessionChatControl(promptChats, interruptChat))
 	mux.Handle("POST /{id}/permission-mode", handleSessionChatControl(promptChats, switchChatPermissionMode))
