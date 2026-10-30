@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/flanksource/captain/pkg/ai/provider/cmux"
 	"github.com/flanksource/captain/pkg/session/process"
@@ -35,13 +36,30 @@ const (
 const (
 	EnvMessagingSocket = "CLAUDE_CODE_MESSAGING_SOCKET"
 	EnvMessagingToken  = "CLAUDE_CODE_MESSAGING_TOKEN"
+	EnvClaudePID       = "CLAUDE_PID"
 	envCodexThread     = "CODEX_THREAD_ID"
 )
 
 // MessagingKeys are the environment variables a delivery reads off the live
 // agent process. They are read at delivery time and never stored, since the
 // token authenticates to the agent's inbox.
-var MessagingKeys = []string{"CLAUDE_CODE_SESSION_ID", envCodexThread, EnvMessagingSocket, EnvMessagingToken}
+var MessagingKeys = []string{"CLAUDE_CODE_SESSION_ID", envCodexThread, EnvClaudePID, EnvMessagingSocket, EnvMessagingToken}
+
+// ClaudeMessagingEnvironment picks the environment claude exported to its
+// children: claude creates its messaging socket after it starts, so its own
+// environment never holds it, but a child stamped CLAUDE_PID=claudePID does
+// (cmux's `hooks claude inbox-wait` helper for as long as the session lives).
+// An environment stamped with another CLAUDE_PID was inherited from an
+// ancestor claude and is skipped.
+func ClaudeMessagingEnvironment(claudePID int, children []map[string]string) map[string]string {
+	owner := strconv.Itoa(claudePID)
+	for _, env := range children {
+		if env[EnvClaudePID] == owner && env[EnvMessagingSocket] != "" {
+			return env
+		}
+	}
+	return nil
+}
 
 // Target is the live agent a message goes to.
 type Target struct {
@@ -85,7 +103,7 @@ func ChooseChannel(target Target) (Channel, error) {
 	case target.Surface != nil && target.Surface.SurfaceID != "" && target.Surface.WorkspaceID != "":
 		return ChannelCmux, nil
 	case target.Source == "claude":
-		return "", fmt.Errorf("claude session %s has no %s and is not in a cmux pane", target.SessionID, EnvMessagingSocket)
+		return "", fmt.Errorf("claude session %s has no child process carrying its %s and is not in a cmux pane", target.SessionID, EnvMessagingSocket)
 	case target.Source == "codex":
 		return "", fmt.Errorf("codex session %s has no %s and is not in a cmux pane", target.SessionID, envCodexThread)
 	default:

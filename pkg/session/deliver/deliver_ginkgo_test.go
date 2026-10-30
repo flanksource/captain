@@ -66,6 +66,29 @@ var _ = Describe("ChooseChannel", func() {
 	)
 })
 
+var _ = Describe("ClaudeMessagingEnvironment", func() {
+	const claudePID = 86227
+	owned := func(pid string) map[string]string {
+		env := claudeEnvironment("/tmp/cc-socks-501/" + pid + ".sock")
+		env[EnvClaudePID] = pid
+		return env
+	}
+	spoolForwarder := map[string]string{}
+
+	DescribeTable("takes the environment claude exported to a child it spawned",
+		func(children []map[string]string, expected map[string]string) {
+			Expect(ClaudeMessagingEnvironment(claudePID, children)).To(Equal(expected))
+		},
+		Entry("cmux's inbox-wait helper carries the socket",
+			[]map[string]string{spoolForwarder, owned("86227")}, owned("86227")),
+		Entry("children without a socket carry nothing",
+			[]map[string]string{spoolForwarder}, nil),
+		Entry("a child stamped with an ancestor claude's pid is not this claude's",
+			[]map[string]string{owned("2445")}, nil),
+		Entry("no children", nil, nil),
+	)
+})
+
 var _ = Describe("Deliver", func() {
 	ctx := context.Background()
 

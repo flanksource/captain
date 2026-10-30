@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"syscall"
 
 	"github.com/flanksource/captain/pkg/session/deliver"
 	sessionprocess "github.com/flanksource/captain/pkg/session/process"
@@ -23,8 +25,45 @@ type SessionDeliverRequest struct {
 
 var (
 	readProcessEnvironment = clickyprocess.Environment
+	listChildProcesses     = childProcesses
 	sessionDeliverer       = deliver.Deliverer{}
 )
+
+func childProcesses(ctx context.Context, pid int) ([]int, error) {
+	snapshot, err := clickyprocess.Discover(ctx, clickyprocess.SnapshotOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var children []int
+	for _, process := range snapshot.All() {
+		if process.PPID == pid {
+			children = append(children, process.PID)
+		}
+	}
+	return children, nil
+}
+
+// claudeMessagingEnvironment reads the messaging environment claude pid
+// exported to its children (see deliver.ClaudeMessagingEnvironment). A child
+// that exited between listing and reading is skipped.
+func claudeMessagingEnvironment(ctx context.Context, pid int) (map[string]string, error) {
+	children, err := listChildProcesses(ctx, pid)
+	if err != nil {
+		return nil, fmt.Errorf("listing children of claude process %d: %w", pid, err)
+	}
+	var environments []map[string]string
+	for _, child := range children {
+		env, err := readProcessEnvironment(ctx, child, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
+		if err != nil {
+			if errors.Is(syscall.Kill(child, 0), syscall.ESRCH) {
+				continue
+			}
+			return nil, fmt.Errorf("reading environment of claude %d's child %d: %w", pid, child, err)
+		}
+		environments = append(environments, env)
+	}
+	return deliver.ClaudeMessagingEnvironment(pid, environments), nil
+}
 
 // RunSessionDeliver sends text into a live claude or codex session that captain
 // did not launch, through its messaging socket, codex queue or cmux pane (see
@@ -49,8 +88,9 @@ func RunSessionDeliver(ctx context.Context, opts SessionDeliverOptions) (deliver
 }
 
 // liveDeliveryTarget finds the session's live process and re-reads its
-// environment now, so the target reflects the process as it is rather than the
-// last sample, and a PID since reused by another session is refused.
+// environment now (for claude, that of its children), so the target reflects
+// the process as it is rather than the last sample, and a PID since reused by
+// another session is refused.
 func liveDeliveryTarget(ctx context.Context, id string) (deliver.Target, error) {
 	item, err := resolveSessionItem(ctx, id)
 	if err != nil {
@@ -72,7 +112,12 @@ func liveDeliveryTarget(ctx context.Context, id string) (deliver.Target, error) 
 	if record == nil {
 		return deliver.Target{}, newChatError(http.StatusConflict, fmt.Sprintf("session %s has no live process", id))
 	}
-	env, err := readProcessEnvironment(ctx, record.Live.PID, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
+	var env map[string]string
+	if record.Source == "claude" {
+		env, err = claudeMessagingEnvironment(ctx, record.Live.PID)
+	} else {
+		env, err = readProcessEnvironment(ctx, record.Live.PID, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
+	}
 	if err != nil {
 		return deliver.Target{}, newChatError(http.StatusConflict,
 			fmt.Sprintf("session %s's process %d is no longer readable: %v", id, record.Live.PID, err))
