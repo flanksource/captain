@@ -29,8 +29,11 @@ type Session struct {
 	CWD               string `json:"cwd,omitempty"`
 	Slug              string `json:"slug,omitempty"`
 	Title             string `json:"title,omitempty"`
-	InitialPrompt     string `json:"initialPrompt,omitempty"`
-	Version           string `json:"version,omitempty"`
+	// Name is the title the user assigned (Claude's /rename). Unlike Title it is
+	// never derived, so listings can rank it above the initial prompt.
+	Name          string `json:"name,omitempty"`
+	InitialPrompt string `json:"initialPrompt,omitempty"`
+	Version       string `json:"version,omitempty"`
 	// Provider is the session's provider label (a family key for agent-backed
 	// sessions, or "captain"/"multi-model" for captain's own). ModelMode is the
 	// mechanism the latest model call ran on; ExecutionMode is the prompt RUN mode
