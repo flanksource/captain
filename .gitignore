@@ -42,3 +42,4 @@ hack/*
 .codegraph/
 /assets/brand/captain-formation/presentation/
 /.new
+/pkg/adapters/resources/anthropic.json
