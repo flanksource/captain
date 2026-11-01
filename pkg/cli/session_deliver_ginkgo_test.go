@@ -23,10 +23,13 @@ import (
 )
 
 var _ = Describe("SessionHandler deliver", Ordered, func() {
+	// Above every OS's pid limit, so PopulateEnvironments finds them gone and
+	// keeps the environments the stubbed snapshot carries.
 	const (
-		livePID      = 24680
-		inboxWaitPID = 24690
-		mcpServerPID = 24691
+		livePID      = 9_900_680
+		inboxWaitPID = 9_900_690
+		mcpServerPID = 9_900_691
+		zombiePID    = 9_900_692
 	)
 	var (
 		db       *database.DB
@@ -35,6 +38,8 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		server   *httptest.Server
 		socket   string
 		envByPID map[int]map[string]string
+		// withZombie adds an exited-but-unreaped child to the claude process.
+		withZombie bool
 	)
 
 	BeforeAll(func(ctx SpecContext) {
@@ -51,17 +56,21 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 			}
 			return env, nil
 		}
-		listChildProcesses = func(_ context.Context, pid int) ([]int, error) {
-			if pid != livePID {
-				return nil, nil
+		discoverProcesses = func(context.Context, clickyprocess.SnapshotOptions) (*clickyprocess.Snapshot, error) {
+			processes := []clickyprocess.Process{{PID: livePID, PPID: 1, Environment: envByPID[livePID]}}
+			for _, child := range []int{inboxWaitPID, mcpServerPID} {
+				processes = append(processes, clickyprocess.Process{PID: child, PPID: livePID, Environment: envByPID[child]})
 			}
-			return []int{inboxWaitPID, mcpServerPID}, nil
+			if withZombie {
+				processes = append(processes, clickyprocess.Process{PID: zombiePID, PPID: livePID, Status: "zombie"})
+			}
+			return clickyprocess.NewSnapshot(processes), nil
 		}
 		DeferCleanup(func() {
 			setCaptainDBForTest(nil)
 			discoverSessionProcesses = discoverAgentProcesses
 			readProcessEnvironment = clickyprocess.Environment
-			listChildProcesses = childProcesses
+			discoverProcesses = clickyprocess.Discover
 			Expect(db.Close()).To(Succeed())
 		})
 
@@ -91,6 +100,7 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 	})
 
 	BeforeEach(func() {
+		withZombie = false
 		// Claude exports its messaging socket only to what it spawns, so the
 		// claude process's own environment carries none of it.
 		envByPID = map[int]map[string]string{
@@ -114,7 +124,10 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		return response.StatusCode, string(text)
 	}
 
-	It("writes the message into the live claude session's messaging socket", func(ctx SpecContext) {
+	// listenOnSocket accepts one connection on the session's messaging socket
+	// and sends the lines written to it.
+	listenOnSocket := func() <-chan []string {
+		GinkgoHelper()
 		listener, err := net.Listen("unix", socket)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(listener.Close)
@@ -130,6 +143,21 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 			}
 			received <- lines
 		}()
+		return received
+	}
+
+	It("delivers past a child that exited but was not reaped", func(ctx SpecContext) {
+		withZombie = true
+		received := listenOnSocket()
+
+		status, body := deliverTo(ctx, live.ProviderSessionID, `{"text":"Handle thread acme-2"}`)
+
+		Expect(status).To(Equal(http.StatusAccepted), body)
+		Eventually(received).Should(Receive(ContainElement(ContainSubstring("Handle thread acme-2"))))
+	})
+
+	It("writes the message into the live claude session's messaging socket", func(ctx SpecContext) {
+		received := listenOnSocket()
 
 		status, body := deliverTo(ctx, live.ProviderSessionID, `{"text":"Handle thread acme-1"}`)
 

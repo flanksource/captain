@@ -2,11 +2,9 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"syscall"
 
 	"github.com/flanksource/captain/pkg/session/deliver"
 	sessionprocess "github.com/flanksource/captain/pkg/session/process"
@@ -25,42 +23,34 @@ type SessionDeliverRequest struct {
 
 var (
 	readProcessEnvironment = clickyprocess.Environment
-	listChildProcesses     = childProcesses
+	discoverProcesses      = clickyprocess.Discover
 	sessionDeliverer       = deliver.Deliverer{}
 )
 
-func childProcesses(ctx context.Context, pid int) ([]int, error) {
-	snapshot, err := clickyprocess.Discover(ctx, clickyprocess.SnapshotOptions{})
-	if err != nil {
-		return nil, err
-	}
-	var children []int
-	for _, process := range snapshot.All() {
-		if process.PPID == pid {
-			children = append(children, process.PID)
-		}
-	}
-	return children, nil
-}
-
 // claudeMessagingEnvironment reads the messaging environment claude pid
-// exported to its children (see deliver.ClaudeMessagingEnvironment). A child
-// that exited between listing and reading is skipped.
+// exported to its children (see deliver.ClaudeMessagingEnvironment). Children
+// with no environment left to read (exited, zombie or exiting) are skipped by
+// the snapshot; any other unreadable child fails the read.
 func claudeMessagingEnvironment(ctx context.Context, pid int) (map[string]string, error) {
-	children, err := listChildProcesses(ctx, pid)
+	snapshot, err := discoverProcesses(ctx, clickyprocess.SnapshotOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing children of claude process %d: %w", pid, err)
 	}
+	children := snapshot.Children(pid)
+	pids := make([]int, len(children))
+	for i, child := range children {
+		pids[i] = child.PID
+	}
+	snapshot.PopulateEnvironments(ctx, pids, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
 	var environments []map[string]string
-	for _, child := range children {
-		env, err := readProcessEnvironment(ctx, child, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
-		if err != nil {
-			if errors.Is(syscall.Kill(child, 0), syscall.ESRCH) {
-				continue
-			}
-			return nil, fmt.Errorf("reading environment of claude %d's child %d: %w", pid, child, err)
+	for _, childPID := range pids {
+		child, _ := snapshot.Get(childPID)
+		if child.EnvironmentError != "" {
+			return nil, fmt.Errorf("reading environment of claude %d's child %d: %s", pid, childPID, child.EnvironmentError)
 		}
-		environments = append(environments, env)
+		if child.Environment != nil {
+			environments = append(environments, child.Environment)
+		}
 	}
 	return deliver.ClaudeMessagingEnvironment(pid, environments), nil
 }
