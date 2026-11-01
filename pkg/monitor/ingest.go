@@ -44,9 +44,6 @@ type codexPreparation struct {
 type ingestor struct {
 	monitor *Monitor
 	db      *database.DB
-	// watchSubagents arms the watcher on a root transcript's subagents
-	// directory; nil outside watched (one-shot) runs.
-	watchSubagents func(rootTranscriptPath string)
 	// requeue schedules another pass when a descriptor-bounded parse observes
 	// that the path changed again before its database write completed.
 	requeue func(ctx context.Context, source, path string)
@@ -209,8 +206,7 @@ func (ing *ingestor) needsIngest(path string, info os.FileInfo) bool {
 }
 
 // ingestFile parses one transcript and persists it. Claude sub-agent files are
-// child sessions of the root transcript's session; root ingests also arm the
-// watcher on the session's subagents directory.
+// child sessions of the root transcript's session.
 func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error {
 	path, err := filepath.Abs(path)
 	if err != nil {
@@ -324,9 +320,6 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 			ing.dropCodexCheckpoint(path)
 		}
 		return err
-	}
-	if source == "claude" && input.Session.ParentSessionID == nil && ing.watchSubagents != nil {
-		ing.watchSubagents(path)
 	}
 	modTime := input.Source.ObservedModTime
 	ing.recordSourceState(database.SessionSourceState{

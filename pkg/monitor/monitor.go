@@ -197,6 +197,13 @@ func (m *Monitor) untrackTranscript(path string) {
 	m.mu.Lock()
 	delete(m.tracked, path)
 	m.mu.Unlock()
+	activeWatchers.mu.Lock()
+	defer activeWatchers.mu.Unlock()
+	for watcher := range activeWatchers.set {
+		if watcher.monitor == m {
+			watcher.untrack(path)
+		}
+	}
 }
 
 // Run acquires the single-writer advisory lock and drives the three loops:
