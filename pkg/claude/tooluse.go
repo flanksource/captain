@@ -250,7 +250,7 @@ func isVisibleTranscriptEvent(event *TranscriptEvent) bool {
 		return false
 	}
 	switch event.Type {
-	case "file-history-snapshot", "last-prompt", "permission-mode", "agent-name":
+	case "file-history-snapshot", "last-prompt", PermissionModeEvent, CustomTitleEvent, "agent-name":
 		return false
 	default:
 		return true

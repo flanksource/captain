@@ -216,12 +216,12 @@ export function UsageBarsCell({
   );
 }
 
-// identityTitle prefers the human prompt (collapsed to one line) so the session
-// list reads by what was asked, falling back to the derived title for live or
-// prompt-less rows.
+// identityTitle prefers a name the user assigned, then the human prompt
+// (collapsed to one line) so the session list reads by what was asked, falling
+// back to the derived title for live or prompt-less rows.
 function identityTitle(session: SessionRecord): string {
   const prompt = session.initialPrompt?.replace(/\s+/g, " ").trim();
-  return prompt || sessionTitle(session);
+  return session.name?.trim() || prompt || sessionTitle(session);
 }
 
 export function SessionIdentity({ session }: { session: SessionRecord }) {

@@ -655,6 +655,7 @@ func sessionMetadata(s *session.Session) map[string]any {
 	return session.Metadata{
 		Model: s.Model, Provider: s.Provider, Files: s.Files,
 		Todos: s.Todos, Approvals: s.Approvals, Plan: s.Plan, PermissionMode: s.PermissionMode,
+		Name: s.Name,
 	}.Encode()
 }
 
