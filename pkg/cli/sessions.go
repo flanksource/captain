@@ -78,6 +78,7 @@ type SessionRecord struct {
 	Project         string              `json:"project,omitempty"`
 	Slug            string              `json:"slug,omitempty"`
 	Title           string              `json:"title,omitempty"`
+	Name            string              `json:"name,omitempty"`
 	InitialPrompt   string              `json:"initialPrompt,omitempty"`
 	StartedAt       *time.Time          `json:"startedAt,omitempty"`
 	EndedAt         *time.Time          `json:"endedAt,omitempty"`

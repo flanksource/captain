@@ -20,6 +20,7 @@ type Metadata struct {
 	Approvals      ApprovalStats      `json:"approvals,omitempty"`
 	Plan           *Plan              `json:"plan,omitempty"`
 	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
+	Name           string             `json:"name,omitempty"`
 }
 
 // DecodeMetadata projects a stored blob. Rows carry sibling keys from other
@@ -78,6 +79,9 @@ func (m Metadata) Encode() map[string]any {
 	}
 	if m.PermissionMode != "" {
 		encoded["permissionMode"] = m.PermissionMode
+	}
+	if m.Name != "" {
+		encoded["name"] = m.Name
 	}
 	if len(encoded) == 0 {
 		return nil

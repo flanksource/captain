@@ -538,6 +538,9 @@ func dispatchEvent(sj streamJSONLine, raw []byte, lineNo int) []HistoryEntry {
 		// Claude Code rewrites this checkpoint whenever the posture changes, so the
 		// last one in the file is the session's current permission mode.
 		return metadataEventEntry(sj, PermissionModeEvent, "session", map[string]any{"permissionMode": sj.PermissionMode})
+
+	case CustomTitleEvent:
+		return metadataEventEntry(sj, CustomTitleEvent, "session", map[string]any{"customTitle": rawObject(raw)["customTitle"]})
 	}
 
 	if knownSessionStorageTypes[sj.Type] {

@@ -39,6 +39,11 @@ type HistoryEntry struct {
 // permission-mode checkpoint; Data["permissionMode"] holds the posture.
 const PermissionModeEvent = "permission-mode"
 
+// CustomTitleEvent is the TranscriptEvent type carrying the name a user gave
+// the session with /rename; Data["customTitle"] holds the name. Claude Code
+// rewrites it on resume, so the last one in the file is the current name.
+const CustomTitleEvent = "custom-title"
+
 // TranscriptEvent is a non-message, non-tool transcript line. It lets callers
 // preserve session/turn metadata without pretending discovery or budget records
 // are model messages.
