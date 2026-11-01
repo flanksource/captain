@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Prompt Hooks
-description: Prompts that decorate every saved plan revision or enrich a run's initial prompt.
+description: Prompts that decorate every saved plan revision, enrich a run's initial prompt, emit its output schema, or act on its result.
 section: Prompts
 ---
 
@@ -122,3 +122,136 @@ The applied hook names are recorded comma-joined in `metadata["captain.context"]
 ## Discovery
 
 `promptcontext.DefaultSources(cfg, workDir)` returns the plan hooks' search path: `prompts.dirs` from the Captain config, then `<workdir>/.captain/prompts`. A host puts its own sources, for example an embedded FS of the prompts it ships, as `promptcontext.Source{FS, Label}` ahead of them, so a user directory can shadow or disable what the host ships. Later sources shadow earlier ones by file name, and `hook: { disabled: true }` removes a hook. Captain ships no context hooks of its own.
+
+# Hook actions
+
+Input hooks, schema hooks and lifecycle hooks are declared inside the prompt that uses them, not discovered from directories. Each one is a hook action with exactly one of these:
+
+- `tool:` names an inline tool from the prompt's `tools:`. It runs through the same runner the model's calls use, so the tool's output schema, `timeout` and `retry` apply. Its stdin is the action's input as JSON.
+- `prompt:` names a child `.prompt`, relative to the declaring prompt's file. It runs as a child run with the parent's configuration and working directory. Its input becomes the child's variables, and its structured output (else its text) is the action's output.
+- `commands:` runs shell commands. Only lifecycle hooks accept this.
+
+Two optional fields shape an action:
+
+- `if:` is a CEL predicate over the hook's variables. It is compiled when the prompt is validated, in a strict environment, so a misspelled variable is an error rather than a predicate that never matches. An empty `if` always runs.
+- `with:` is the action's input. A string that is exactly one `{{path}}` expression binds the native value at that path: an object, list, number or boolean stays one. A path that names nothing is an error. Any other string renders as Handlebars to a string, and `{{json value}}` renders a value as JSON text. Maps and lists are rendered recursively.
+
+Frontmatter is rendered with the run's variables before the hooks run. An expression over a hook-only variable (`vars`, `metadata`, `output`, `result`, `steps`, `outcome`) is left verbatim for the hook to render, so write `{{vars.file}}`, not `{{file}}`, in a hook's `with`. An inline tool's `exec` is ordinary frontmatter, so `exec: emit-choices --product {{product}}` is rendered with the run's variables.
+
+A tool a hook runs is still governed by its permission: the tool's `permission`, `readonly` and `destructive`, then the spec's `toolPreferences` and `toolPolicy`. A denied tool fails the hook, and a tool that resolves to ask goes to the run's approval broker and fails the hook when there is none. This holds on a runtime that never offers tools to the model, such as Jev, whose inline tools exist only for hooks. Declare `permission: allow` on a destructive tool that a hook should run unattended.
+
+# Input hooks
+
+An input hook pre-processes the prompt's variables before the body renders, or skips the run. Declare them under `input.hooks`, beside the input schema:
+
+```yaml
+---
+model: jev-latest
+mode: api
+tools:
+  load_issue:
+    description: Load the issue without its earlier classification, or skip it when it is unchanged
+    readonly: true
+    exec: acme-cli issue load
+input:
+  schema:
+    file: string
+    force?: boolean
+  hooks:
+    - tool: load_issue
+      with: {source: jira}
+---
+{{issue}}
+```
+
+Hooks run in order. A `tool:` hook receives the run's variables and metadata on stdin, with its rendered `with` keys merged over them:
+
+```json
+{"vars": {"file": ".gavel/jira/KEY-1.md"}, "metadata": {}, "source": "jira"}
+```
+
+A `prompt:` hook gets the same object as its variables. Each hook returns a JSON object with exactly one of these keys, printed on stdout by a tool or returned as structured output by a prompt:
+
+- `{"vars": {...}}` replaces all of the variables. The hooks after it and the body render see the new ones.
+- `{"skip": "<reason>"}` stops the run before any model call.
+
+Anything else fails the run, naming the hook (`input.hooks[0] (tool load_issue): want an object with exactly one of "vars" or "skip", got keys [issue]`). A hook whose `if` is false is skipped and reported (`[pre-run] input.hooks[0] (tool load_issue) skipped: if … is false`).
+
+The prompt renders twice: first with the original variables, which yields the tools and the hooks, then again with the variables the hooks returned. Tool `exec` lines, `with` values and the body therefore all see the new variables.
+
+A skipped run reports status `skipped` with its `skipReason`, exits 0, calls no model and records no run. A child prompt that its own input hooks skip, run from a `workflow.after` step, is reported as a skipped step (`[post-run] after[1] skipped: <reason>`) and does not fail the parent.
+
+`if` reads `vars`, `metadata`, `labels` and `model`.
+
+`captain prompt render` runs input hooks too, so `captain prompt render classify.prompt KEY-1.md --json` shows the final variables in `input.prompt.variables`, or the hook's skip in `skip`. Because a render runs them, an input hook must not change anything: only a `readonly` tool may serve one, and a `commands:` input hook is rejected. `captain lint promptfile` checks input hooks like the other hook actions.
+
+# Schema hooks
+
+A schema hook emits or rewrites the prompt's output schema before the first model call. Declare them under `output.hooks`, beside the static schema they start from:
+
+```yaml
+---
+model: jev-latest
+mode: api
+tools:
+  product_choices:
+    description: Emit the products the classifier may choose from
+    readonly: true
+    exec: acme-cli choices --questions product
+output:
+  schemaType: typesafe-schema
+  hooks:
+    - tool: product_choices
+      with: {region: "{{vars.region}}"}
+  schema:
+    product:
+      type: choice
+      instructions: Which product does the issue concern?
+      criteria:
+        unknown: The issue names no product.
+---
+```
+
+Hooks run in order, and each one receives the schema the previous one left:
+
+```json
+{"schema": {"product": {"type": "choice", "...": "..."}}, "schemaType": "typesafe-schema", "vars": {"region": "emea"}, "metadata": {}, "region": "emea"}
+```
+
+`schema` is the TypeSafe questions object for `typesafe-schema` and the JSON Schema for `json-schema`. The rendered `with` keys are merged over the other keys. A `prompt:` hook gets the same object as its variables.
+
+The hook returns the whole new schema of the same type: a tool prints it on stdout, and a prompt returns it as its structured output. Captain validates it as it validates a declared schema, so TypeSafe questions must each be valid and a JSON Schema must compile. The result replaces the prompt's schema. An invalid emission fails the run before any model call, naming the hook (`output.hooks[0] (tool product_choices): emitted schema: …`). Every turn, every verify retry and the recorded spec see the emitted schema.
+
+`if` reads `vars`, `metadata`, `labels` and `model`.
+
+`captain prompt render` runs the same hooks, so `captain prompt render classify.prompt -V region=emea --json` shows the emitted schema in `outputSchema` without calling a model. Because a render runs them, a schema hook must not change anything: only a `readonly` tool may serve one, and a `commands:` schema hook is rejected.
+
+# Lifecycle hooks
+
+A lifecycle hook acts on the finished run. Lifecycle hooks extend `workflow.after`. Each step keeps its outcome gate `when:`, which is `onVerify` (the default), `onSuccess` or `always`. Each step may also add `if:` and run a `tool:`, a `prompt:` or `commands:`:
+
+```yaml
+workflow:
+  after:
+    - when: onSuccess
+      tool: record_classification
+      with: {file: "{{vars.file}}", values: "{{output.value}}"}
+    - when: onSuccess
+      if: output.value.product != "unknown"
+      prompt: transaction.prompt
+      with: {file: "{{vars.file}}", product: "{{output.value.product}}", recorded: "{{steps.0}}"}
+```
+
+`if` and `with` read these variables:
+
+- `output` is the run's structured output. On Jev it is `{value, typesafe}`.
+- `result` is the response text.
+- `vars` and `metadata` are the run's variables and metadata.
+- `outcome` is `{failed, verified}`.
+- `steps` lists the outputs of the earlier after steps by index. A skipped step or a `commands:` step contributes `null`.
+
+A step whose gate or `if` does not hold is skipped, and the reason is reported on the run's stream (`[post-run] after[1] skipped: if output.value.product != "unknown" is false`). A failing tool or child prompt fails the run, as a failing command does. That includes a child run that errors or fails its own verification. `cwd` sets where commands or a child prompt run, and is rejected on a tool step, whose tool runs in its own environment.
+
+When the parent run is recorded, the child is recorded as its own run with `parent_run_id` set to the parent's, in a new `agent` session under the parent run's session, so both share the parent's root session. `ListPromptRuns` with `PromptRunFilter{ParentRunID}` lists a run's children. An unrecorded parent records no child.
+
+`captain lint promptfile` checks every hook action. It rejects a `tool:` that `tools:` does not declare, a `prompt:` file that does not exist, a `with:` on commands, a `cwd` on a tool step, an `if` that does not compile, and an action that declares none or more than one of `tool:`, `prompt:` and `commands:`.

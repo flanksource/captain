@@ -1,11 +1,14 @@
 package setup
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
+	dbcontext "github.com/flanksource/commons-db/context"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // setupSnapshotMessage marks the commit that carries work-in-progress copied
@@ -24,31 +27,21 @@ const (
 // git runs `git <args...>` in dir and returns its trimmed stdout, failing loud
 // with the command, directory and stderr on any non-zero exit.
 func git(dir string, args ...string) (string, error) {
-	out, err := gitRaw(dir, args...)
-	return strings.TrimSpace(out), err
-}
-
-// gitRaw is git without the trim, for output whose leading whitespace or NUL
-// separators carry meaning.
-func gitRaw(dir string, args ...string) (string, error) {
 	res := exec.NewExec("git", args...).WithCwd(dir).Run().Result()
 	if res.Error != nil || res.ExitCode != 0 {
 		return "", fmt.Errorf("setup: git %s in %s: exit %d: %v: %s",
 			strings.Join(args, " "), dir, res.ExitCode, res.Error, strings.TrimSpace(res.Stderr))
 	}
-	return res.Stdout, nil
+	return strings.TrimSpace(res.Stdout), nil
 }
 
-// recordWorktree reads the state of a freshly prepared worktree: its branch, the
-// repository it was added to, and the commit it was branched from. With
-// snapshot set, work-in-progress the setup copied in is committed as a setup
-// snapshot, so the agent starts from a clean tree and its own work is exactly
-// Setup..Head.
+// recordWorktree reads the state of a prepared worktree: its branch, the
+// repository it was added to, and the commit it was branched from.
 //
 // Base is read from the worktree itself: `git worktree add` leaves HEAD on the
 // start point it resolved — the configured base, the checkout ref, or the
 // source's HEAD — and the copy of uncommitted work commits nothing.
-func recordWorktree(path string, snapshot bool) (*api.WorktreeState, error) {
+func recordWorktree(path string) (*api.WorktreeState, error) {
 	branch, repo, err := inspectWorktree(path)
 	if err != nil {
 		return nil, err
@@ -57,29 +50,29 @@ func recordWorktree(path string, snapshot bool) (*api.WorktreeState, error) {
 	if err != nil {
 		return nil, err
 	}
-	state := &api.WorktreeState{Repo: repo, Path: path, Branch: branch, Base: base, Setup: base}
-	if !snapshot {
-		return state, nil
+	return &api.WorktreeState{Repo: repo, Path: path, Branch: branch, Base: base, Setup: base}, nil
+}
+
+// snapshotSetup commits the work-in-progress the setup copied into a new
+// worktree as a setup snapshot, so the agent starts from a clean tree and its
+// own work is exactly Setup..Head. It commits through the workspace, so content
+// cloned from the source's gitignored files never enters the snapshot even when
+// the worktree's branch does not ignore it, and the run's configured commit
+// gates apply. Nothing to commit leaves Setup at Base.
+func snapshotSetup(ctx dbcontext.Context, ws *workspace.Workspace, state *api.WorktreeState, gates []workspace.Gate) error {
+	result, err := ws.Commit(ctx, workspace.CommitOptions{
+		Message:  setupSnapshotMessage,
+		Trailers: []string{setupSnapshotTrailer},
+		Gates:    gates,
+	})
+	if errors.Is(err, workspace.ErrNothingStaged) {
+		return nil
 	}
-	dirty, err := statusPaths(path)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("setup: snapshot uncommitted changes in %s: %w", ws.Dir, err)
 	}
-	if len(dirty) == 0 {
-		return state, nil
-	}
-	// `add -A` honours .gitignore, so ignored content the setup copied in stays
-	// on disk and out of the snapshot.
-	if _, err := git(path, "add", "-A"); err != nil {
-		return nil, err
-	}
-	if _, err := git(path, "commit", "--no-verify", "-m", setupSnapshotMessage, "-m", setupSnapshotTrailer); err != nil {
-		return nil, err
-	}
-	if state.Setup, err = git(path, "rev-parse", "HEAD"); err != nil {
-		return nil, err
-	}
-	return state, nil
+	state.Setup = result.SHA
+	return nil
 }
 
 // inspectWorktree reads the branch a worktree has checked out and the repository
@@ -87,8 +80,11 @@ func recordWorktree(path string, snapshot bool) (*api.WorktreeState, error) {
 // `git worktree list` — rather than the checkout's path, which a remote checkout
 // does not have.
 func inspectWorktree(dir string) (branch, repo string, err error) {
-	if branch, err = git(dir, "symbolic-ref", "--short", "HEAD"); err != nil {
+	if branch, err = git(dir, "rev-parse", "--abbrev-ref", "HEAD"); err != nil {
 		return "", "", err
+	}
+	if branch == "HEAD" {
+		branch = ""
 	}
 	list, err := git(dir, "worktree", "list", "--porcelain")
 	if err != nil {
@@ -102,45 +98,21 @@ func inspectWorktree(dir string) (branch, repo string, err error) {
 	return branch, repo, nil
 }
 
-// statusPaths lists the paths git reports as uncommitted in dir — modified,
-// staged, deleted and untracked, but never ignored.
-func statusPaths(dir string) ([]string, error) {
-	out, err := gitRaw(dir, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	if err != nil {
-		return nil, err
-	}
-	var paths []string
-	records := strings.Split(out, "\x00")
-	for i := 0; i < len(records); i++ {
-		record := records[i]
-		if record == "" {
-			continue
-		}
-		if len(record) < 4 {
-			return nil, fmt.Errorf("setup: git status in %s: malformed record %q", dir, record)
-		}
-		paths = append(paths, record[3:])
-		// A rename or copy is followed by its source path as a record of its own.
-		if record[0] == 'R' || record[0] == 'C' {
-			i++
-		}
-	}
-	return paths, nil
-}
-
 // teardownWorktree decides the worktree's fate from its real git state. A dirty
 // tree is kept — commons-db's cleanup force-removes, which would discard the
 // agent's uncommitted edits — and so is one the run was told to keep (retain).
+// Dirty is the workspace's Changes: content cloned from the source's gitignored
+// files is not the agent's work, so it never keeps a worktree.
 // A clean tree is removed, and its branch deleted when it holds nothing past
 // Setup: the setup snapshot alone is not work worth a branch — unless the run
 // continued on a branch that already existed, which is never the run's to delete.
-func teardownWorktree(wt *api.WorktreeState, moved *relocation, cleanup func() error) error {
+func teardownWorktree(ctx dbcontext.Context, ws *workspace.Workspace, wt *api.WorktreeState, moved *relocation, cleanup func() error) error {
 	retain := moved.retainReason()
 	head, err := git(wt.Path, "rev-parse", "HEAD")
 	if err != nil {
 		return err
 	}
-	dirty, err := statusPaths(wt.Path)
+	dirty, err := ws.Changes(ctx)
 	if err != nil {
 		return err
 	}

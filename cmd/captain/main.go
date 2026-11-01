@@ -9,6 +9,7 @@ import (
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/clicky"
+	"github.com/flanksource/clicky/extensions"
 	"github.com/flanksource/clicky/flags"
 	"github.com/flanksource/clicky/mcp"
 	"github.com/flanksource/commons/properties"
@@ -27,6 +28,7 @@ func main() {
 	// Flush before exiting: PersistentPostRun does not run when a command
 	// fails, and a failed run is the one whose HAR you want.
 	cli.FlushHAR()
+	cli.FlushTelemetry()
 	if err != nil {
 		os.Exit(1)
 	}
@@ -68,6 +70,12 @@ func newRootCommand() *cobra.Command {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
+			// A configured collector that cannot be set up is a hard stop rather
+			// than a run whose traces silently go nowhere.
+			if err := cli.InitTelemetry(cmd.Context()); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
 			// Bind the database context every command reads from, so an unknown
 			// --context fails before the command runs rather than at first query.
 			name, err := cli.ResolveDatabaseContextName(cmd.Context())
@@ -85,8 +93,9 @@ func newRootCommand() *cobra.Command {
 		Dirty:   dirty,
 	})
 
-	clicky.BindAllFlags(rootCmd.PersistentFlags(), "format")
+	clicky.BindAllFlagsToCommand(rootCmd, "format")
 	cli.BindDatabaseFlags(rootCmd.PersistentFlags())
+	cli.BindTelemetryFlags(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
 	// wire logging can be toggled, e.g. -Plog.level.http=trace or
 	// -Phttp.log.base-level=info.
@@ -141,8 +150,12 @@ func newRootCommand() *cobra.Command {
 	clicky.AddNamedCommandWithContext("live", sessionsCmd, cli.SessionLiveOptions{}, cli.RunSessionLive).Short = "List sessions with live process health"
 	clicky.AddNamedCommandWithContext("get", sessionsCmd, cli.SessionGetOptions{}, cli.RunSessionGet).Short = "Show a session transcript"
 	clicky.AddNamedCommandWithContext("tokens", sessionsCmd, cli.SessionTokensOptions{}, cli.RunSessionTokens).Short = "Size canonical transcript rows without changing recorded usage"
+	deliverCmd := clicky.AddNamedCommandWithContext("deliver", sessionsCmd, cli.SessionDeliverOptions{}, cli.RunSessionDeliver)
+	deliverCmd.Short = "Send a message into a live session through its own channel"
+	deliverCmd.Long = "Deliver --text into a running claude or codex session that captain did not launch: Claude Code's messaging socket, `codex queue`, or else typing into the agent's cmux pane. The session must be live; it is never resumed in a second process."
 
 	rootCmd.AddCommand(cli.NewBrowserCommand())
+	rootcmd.RegisterLintCommand(rootCmd, isStdinAvailable)
 
 	psCmd := clicky.AddNamedCommandWithContext("ps", rootCmd, cli.PSOptions{}, cli.RunPS)
 	psCmd.Short = "List live agent sessions, or inspect specific process IDs"
@@ -159,6 +172,10 @@ func newRootCommand() *cobra.Command {
 	rootCmd.AddCommand(permissionsCmd)
 	clicky.AddNamedCommand("matrix", permissionsCmd, cli.PermissionsMatrixOptions{}, cli.RunPermissionsMatrix).Short =
 		"Print the declared permission capability matrix (settings × runtimes)"
+	clicky.AddNamedCommandWithContext("explain", permissionsCmd, cli.PermissionsExplainOptions{}, cli.RunPermissionsExplain).Short =
+		"Show what a prompt's permissions compile to on each runtime, and the portable form"
+	clicky.AddNamedCommand("convert", permissionsCmd, cli.PermissionsConvertOptions{}, cli.RunPermissionsConvert).Short =
+		"Rewrite a prompt or preset's permissions as permissions.access when the conversion is exact or tighter"
 
 	sandboxCmd := &cobra.Command{
 		Use:   "sandbox",
@@ -342,12 +359,20 @@ func newRootCommand() *cobra.Command {
 	cli.RegisterRuntimeEntities()
 	cli.RegisterBudgetEntities()
 	clicky.GenerateCLI(rootCmd)
+	if err := cli.AttachPromptListOutput(rootCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach prompt list output: %v\n", err)
+		os.Exit(1)
+	}
 	if err := cli.AttachPromptSchemaFlag(rootCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to attach prompt schema flag: %v\n", err)
 		os.Exit(1)
 	}
 	if err := cli.AttachPromptHelp(rootCmd); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to attach prompt help: %v\n", err)
+		os.Exit(1)
+	}
+	if err := cli.AttachPromptInputFiles(rootCmd); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to attach prompt input files: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -391,6 +416,7 @@ func newRootCommand() *cobra.Command {
 	portKillCmd.Short = "Kill the process listening on a TCP port"
 	portKillCmd.Long = "Find the process bound to the specified TCP port using lsof and kill it with SIGKILL. Reports the process name and PID before killing."
 
+	extensions.CobraExtensions(rootCmd).Interactive()
 	return rootCmd
 }
 

@@ -14,21 +14,41 @@ import (
 )
 
 func TestParseVars(t *testing.T) {
+	dir := t.TempDir()
+	jsonFile, listFile := filepath.Join(dir, "files.json"), filepath.Join(dir, "files.txt")
+	if err := os.WriteFile(jsonFile, []byte(`["a.go","b.go"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(listFile, []byte("a.go\nb.go\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name    string
 		in      []string
+		stdin   string
 		want    map[string]any
 		wantErr bool
 	}{
-		{"empty", nil, map[string]any{}, false},
-		{"simple", []string{"lang=go"}, map[string]any{"lang": "go"}, false},
-		{"value has equals", []string{"q=a=b"}, map[string]any{"q": "a=b"}, false},
-		{"multiple", []string{"a=1", "b=2"}, map[string]any{"a": "1", "b": "2"}, false},
-		{"missing equals", []string{"oops"}, nil, true},
+		{name: "empty", want: map[string]any{}},
+		{name: "simple", in: []string{"lang=go"}, want: map[string]any{"lang": "go"}},
+		{name: "value has equals", in: []string{"q=a=b"}, want: map[string]any{"q": "a=b"}},
+		{name: "string value keeps double equals", in: []string{"expr=a==b"}, want: map[string]any{"expr": "a==b"}},
+		{name: "string value keeps colons and backslashes", in: []string{`url=http://x\y`}, want: map[string]any{"url": `http://x\y`}},
+		{name: "multiple", in: []string{"a=1", "b=2"}, want: map[string]any{"a": "1", "b": "2"}},
+		{name: "json array", in: []string{`files:=["a.go","b.go"]`}, want: map[string]any{"files": []any{"a.go", "b.go"}}},
+		{name: "json number and bool", in: []string{"n:=3", "strict:=true"}, want: map[string]any{"n": float64(3), "strict": true}},
+		{name: "json object", in: []string{`opts:={"k":"v"}`}, want: map[string]any{"opts": map[string]any{"k": "v"}}},
+		{name: "json from file", in: []string{"files:=@" + jsonFile}, want: map[string]any{"files": []any{"a.go", "b.go"}}},
+		{name: "lines from file", in: []string{"files[]=@" + listFile}, want: map[string]any{"files": []string{"a.go", "b.go"}}},
+		{name: "lines from stdin", in: []string{"files[]=-"}, stdin: "a.go\nb.go\n", want: map[string]any{"files": []string{"a.go", "b.go"}}},
+		{name: "nested keys merge", in: []string{"user[name]=ann", "user[role]=dev"}, want: map[string]any{"user": map[string]any{"name": "ann", "role": "dev"}}},
+		{name: "invalid json", in: []string{"n:=nope"}, wantErr: true},
+		{name: "lines from empty stdin", in: []string{"files[]=-"}, wantErr: true},
+		{name: "missing equals", in: []string{"oops"}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := parseVars(tc.in, "")
+			got, _, err := parseVars(tc.in, tc.stdin)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("parseVars(%v) = nil error, want error", tc.in)
@@ -262,7 +282,7 @@ func TestResolveCLI_FrontmatterOverridesSaved(t *testing.T) {
 	}
 }
 
-func TestResolveCLI_BuiltinMaxTokens(t *testing.T) {
+func TestResolveCLI_OmittedMaxTokensUsesRuntimeDefault(t *testing.T) {
 	isolateSavedAI(t)
 	base := baseFileReq()
 	base.Budget.MaxTokens = 0 // frontmatter omitted it
@@ -270,8 +290,8 @@ func TestResolveCLI_BuiltinMaxTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Budget.MaxTokens != 4096 {
-		t.Errorf("MaxTokens = %d, want built-in 4096", req.Budget.MaxTokens)
+	if req.Budget.MaxTokens != 0 {
+		t.Errorf("MaxTokens = %d, want 0 so the runtime applies its own default", req.Budget.MaxTokens)
 	}
 }
 

@@ -4,6 +4,252 @@ package adapters
 
 import "encoding/json"
 
+// Definition for a custom subagent that can be invoked via the Agent tool.
+type AnthropicAgentAgentDefinition struct {
+	// Run this agent as a background task (non-blocking, fire-and-forget) when
+	// invoked
+	Background *bool `json:"background,omitempty,omitzero"`
+
+	// Experimental: Critical reminder added to system prompt
+	CriticalSystemReminderEXPERIMENTAL *string `json:"criticalSystemReminder_EXPERIMENTAL,omitempty,omitzero"`
+
+	// Natural language description of when to use this agent
+	Description string `json:"description"`
+
+	// Array of tool names to explicitly disallow for this agent. MCP server-level
+	// specs (mcp__server, mcp__server__*, mcp__*) remove every tool from the named
+	// server (or all MCP tools).
+	DisallowedTools []string `json:"disallowedTools,omitempty,omitzero"`
+
+	// Reasoning effort level for this agent. Either a named level or an integer
+	Effort *json.RawMessage `json:"effort,omitempty,omitzero"`
+
+	// Auto-submitted as the first user turn when this agent is the main thread agent.
+	// Slash commands are processed. Prepended to any user-provided prompt.
+	InitialPrompt *string `json:"initialPrompt,omitempty,omitzero"`
+
+	// Maximum number of agentic turns (API round-trips) before stopping
+	MaxTurns *float64 `json:"maxTurns,omitempty,omitzero"`
+
+	// MCP Servers configuration. See the linked native reference for semantics and
+	// availability.
+	McpServers []AnthropicAgentAgentMcpServerSpec `json:"mcpServers,omitempty,omitzero"`
+
+	// Scope for auto-loading agent memory files. 'user' -
+	// ~/.claude/agent-memory/<agentType>/, 'project' -
+	// .claude/agent-memory/<agentType>/, 'local' -
+	// .claude/agent-memory-local/<agentType>/
+	Memory *AnthropicAgentAgentDefinitionMemory `json:"memory,omitempty,omitzero"`
+
+	// Model alias (e.g. 'fable', 'opus', 'sonnet', 'haiku') or full model ID (e.g.
+	// 'claude-fable-5'). 'inherit' uses the main model; if omitted, uses the default
+	// subagent model when one is configured, else the main model
+	Model *string `json:"model,omitempty,omitzero"`
+
+	// Agent type auto-spawned as a background observer whenever this agent runs. The
+	// observer receives read-only activity digests and reports via the ObserverReport
+	// tool; it never participates in the task.
+	Observer *string `json:"observer,omitempty,omitzero"`
+
+	// Supplemental postamble appended (after the harness-owned default) to each
+	// activity digest sent to the observer. Blank values are ignored.
+	ObserverMessage *string `json:"observerMessage,omitempty,omitzero"`
+
+	// Run this agent without the user, project and local CLAUDE.md instruction files
+	// when it runs as a subagent; managed policy files are kept. For agents that take
+	// everything they need from the delegation prompt. No effect on the main session
+	// agent.
+	OmitClaudeMd *bool `json:"omitClaudeMd,omitempty,omitzero"`
+
+	// Permission mode controlling how tool executions are handled
+	PermissionMode *AnthropicAgentPermissionMode `json:"permissionMode,omitempty,omitzero"`
+
+	// The agent's system prompt
+	Prompt string `json:"prompt"`
+
+	// Array of skill names to preload into the agent context
+	Skills []string `json:"skills,omitempty,omitzero"`
+
+	// Array of allowed tool names. If omitted, inherits all tools from parent. Note:
+	// passing 'Skill' here is deprecated — use the `skills` field instead.
+	Tools []string `json:"tools,omitempty,omitzero"`
+}
+
+type AnthropicAgentAgentDefinitionMemory string
+
+const AnthropicAgentAgentDefinitionMemoryLocal AnthropicAgentAgentDefinitionMemory = "local"
+const AnthropicAgentAgentDefinitionMemoryProject AnthropicAgentAgentDefinitionMemory = "project"
+const AnthropicAgentAgentDefinitionMemoryUser AnthropicAgentAgentDefinitionMemory = "user"
+
+// Agent MCP Server Spec configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentAgentMcpServerSpec = json.RawMessage
+
+// MCP HTTP Server Config configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentMcpHttpServerConfig struct {
+	// When true, all tools from this server are always included in the prompt and
+	// never deferred behind tool search. Equivalent to setting defer_loading: false
+	// on the API. Default: tools are deferred when tool search is enabled. As a side
+	// effect this also blocks startup until the server is connected (capped at the
+	// standard 5s connect timeout) even though MCP startup is otherwise non-blocking
+	// by default, since the tools must be present when the turn-1 prompt is built.
+	AlwaysLoad *bool `json:"alwaysLoad,omitempty,omitzero"`
+
+	// Headers configuration. See the linked native reference for semantics and
+	// availability.
+	Headers AnthropicAgentMcpHttpServerConfigHeaders `json:"headers,omitempty,omitzero"`
+
+	// Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT
+	// environment variable for this server. Hard wall-clock limit per call; progress
+	// notifications do not extend it. Values below 1000ms are ignored (falls through
+	// to MCP_TOOL_TIMEOUT or the default).
+	Timeout *float64 `json:"timeout,omitempty,omitzero"`
+
+	// Tools configuration. See the linked native reference for semantics and
+	// availability.
+	Tools []AnthropicAgentMcpServerToolPolicy `json:"tools,omitempty,omitzero"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type string `json:"type"`
+
+	// Url configuration. See the linked native reference for semantics and
+	// availability.
+	Url string `json:"url"`
+}
+
+// Headers configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentMcpHttpServerConfigHeaders map[string]string
+
+// MCP SSEServer Config configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentMcpSSEServerConfig struct {
+	// When true, all tools from this server are always included in the prompt and
+	// never deferred behind tool search. Equivalent to setting defer_loading: false
+	// on the API. Default: tools are deferred when tool search is enabled. As a side
+	// effect this also blocks startup until the server is connected (capped at the
+	// standard 5s connect timeout) even though MCP startup is otherwise non-blocking
+	// by default, since the tools must be present when the turn-1 prompt is built.
+	AlwaysLoad *bool `json:"alwaysLoad,omitempty,omitzero"`
+
+	// Headers configuration. See the linked native reference for semantics and
+	// availability.
+	Headers AnthropicAgentMcpSSEServerConfigHeaders `json:"headers,omitempty,omitzero"`
+
+	// Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT
+	// environment variable for this server. Hard wall-clock limit per call; progress
+	// notifications do not extend it. Values below 1000ms are ignored (falls through
+	// to MCP_TOOL_TIMEOUT or the default).
+	Timeout *float64 `json:"timeout,omitempty,omitzero"`
+
+	// Tools configuration. See the linked native reference for semantics and
+	// availability.
+	Tools []AnthropicAgentMcpServerToolPolicy `json:"tools,omitempty,omitzero"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type string `json:"type"`
+
+	// Url configuration. See the linked native reference for semantics and
+	// availability.
+	Url string `json:"url"`
+}
+
+// Headers configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentMcpSSEServerConfigHeaders map[string]string
+
+// MCP SDK Server Config configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentMcpSdkServerConfig struct {
+	// Name configuration. See the linked native reference for semantics and
+	// availability.
+	Name string `json:"name"`
+
+	// Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT
+	// environment variable for this server. Hard wall-clock limit per call; progress
+	// notifications do not extend it. Values below 1000ms are ignored (falls through
+	// to MCP_TOOL_TIMEOUT or the default). Applies when the server is first
+	// registered; changing it for an already-registered server has no effect until it
+	// is removed and re-added.
+	Timeout *float64 `json:"timeout,omitempty,omitzero"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type string `json:"type"`
+}
+
+// MCP Server Config For Process Transport configuration. See the linked native
+// reference for semantics and availability.
+type AnthropicAgentMcpServerConfigForProcessTransport = json.RawMessage
+
+// Per-tool permission policy carried on mcp_set_servers for remote servers.
+type AnthropicAgentMcpServerToolPolicy struct {
+	// Name configuration. See the linked native reference for semantics and
+	// availability.
+	Name string `json:"name"`
+
+	// Org admin's per-tool ceiling. Drives the auto-mode isOrgAskCeiling gate so an
+	// admin 'ask' cap forces a user prompt even in auto mode.
+	OrgMaxPermission *AnthropicAgentMcpServerToolPolicyOrgMaxPermission `json:"org_max_permission,omitempty,omitzero"`
+
+	// Permission policy configuration. See the linked native reference for semantics
+	// and availability.
+	PermissionPolicy *AnthropicAgentMcpServerToolPolicyPermissionPolicy `json:"permission_policy,omitempty,omitzero"`
+}
+
+type AnthropicAgentMcpServerToolPolicyOrgMaxPermission string
+
+const AnthropicAgentMcpServerToolPolicyOrgMaxPermissionAllow AnthropicAgentMcpServerToolPolicyOrgMaxPermission = "allow"
+const AnthropicAgentMcpServerToolPolicyOrgMaxPermissionAsk AnthropicAgentMcpServerToolPolicyOrgMaxPermission = "ask"
+const AnthropicAgentMcpServerToolPolicyOrgMaxPermissionBlocked AnthropicAgentMcpServerToolPolicyOrgMaxPermission = "blocked"
+
+type AnthropicAgentMcpServerToolPolicyPermissionPolicy string
+
+const AnthropicAgentMcpServerToolPolicyPermissionPolicyAlwaysAllow AnthropicAgentMcpServerToolPolicyPermissionPolicy = "always_allow"
+const AnthropicAgentMcpServerToolPolicyPermissionPolicyAlwaysAsk AnthropicAgentMcpServerToolPolicyPermissionPolicy = "always_ask"
+const AnthropicAgentMcpServerToolPolicyPermissionPolicyAlwaysDeny AnthropicAgentMcpServerToolPolicyPermissionPolicy = "always_deny"
+
+// MCP Stdio Server Config configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentMcpStdioServerConfig struct {
+	// When true, all tools from this server are always included in the prompt and
+	// never deferred behind tool search. Equivalent to setting defer_loading: false
+	// on the API. Default: tools are deferred when tool search is enabled. As a side
+	// effect this also blocks startup until the server is connected (capped at the
+	// standard 5s connect timeout) even though MCP startup is otherwise non-blocking
+	// by default, since the tools must be present when the turn-1 prompt is built.
+	AlwaysLoad *bool `json:"alwaysLoad,omitempty,omitzero"`
+
+	// Args configuration. See the linked native reference for semantics and
+	// availability.
+	Args []string `json:"args,omitempty,omitzero"`
+
+	// Command configuration. See the linked native reference for semantics and
+	// availability.
+	Command string `json:"command"`
+
+	// Env configuration. See the linked native reference for semantics and
+	// availability.
+	Env AnthropicAgentMcpStdioServerConfigEnv `json:"env,omitempty,omitzero"`
+
+	// Per-server tool-call timeout in milliseconds. Overrides the MCP_TOOL_TIMEOUT
+	// environment variable for this server. Hard wall-clock limit per call; progress
+	// notifications do not extend it. Values below 1000ms are ignored (falls through
+	// to MCP_TOOL_TIMEOUT or the default).
+	Timeout *float64 `json:"timeout,omitempty,omitzero"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type *string `json:"type,omitempty,omitzero"`
+}
+
+// Env configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentMcpStdioServerConfigEnv map[string]string
+
 // Native Claude Agent SDK options and Captain bridge arguments used by the
 // Anthropic agent runtime.
 type AnthropicAgentOptions struct {
@@ -65,7 +311,7 @@ type AnthropicAgentOptions struct {
 	EnableFileCheckpointing *bool `json:"enableFileCheckpointing,omitempty,omitzero"`
 
 	// Environment variables supplied to the Claude Code child process.
-	Env Environment `json:"env,omitempty,omitzero"`
+	Env AnthropicAgentOptionsEnv `json:"env,omitempty,omitzero"`
 
 	// JavaScript runtime used to launch the Agent SDK child process.
 	Executable *string `json:"executable,omitempty,omitzero"`
@@ -100,7 +346,7 @@ type AnthropicAgentOptions struct {
 	LoadTimeoutMs *int `json:"loadTimeoutMs,omitempty,omitzero"`
 
 	// Enterprise-managed Claude Code settings applied to the query.
-	ManagedSettings *json.RawMessage `json:"managedSettings,omitempty,omitzero"`
+	ManagedSettings *AnthropicAgentOptionsManagedSettings `json:"managedSettings,omitempty,omitzero"`
 
 	// Maximum spend in US dollars before the SDK stops.
 	MaxBudgetUsd *float64 `json:"maxBudgetUsd,omitempty,omitzero"`
@@ -185,7 +431,8 @@ type AnthropicAgentOptions struct {
 	// Message identifier at which an existing session is resumed.
 	ResumeSessionAt *string `json:"resumeSessionAt,omitempty,omitzero"`
 
-	// Claude Agent SDK filesystem and command sandbox configuration.
+	// Sandbox configuration. See the linked native reference for semantics and
+	// availability.
 	Sandbox *json.RawMessage `json:"sandbox,omitempty,omitzero"`
 
 	// Explicit UUID assigned when starting a new Agent SDK session.
@@ -201,7 +448,7 @@ type AnthropicAgentOptions struct {
 	SettingSources []AnthropicAgentOptionsSettingSourcesElem `json:"settingSources,omitempty,omitzero"`
 
 	// In-memory Claude Code settings applied to the query.
-	Settings *json.RawMessage `json:"settings,omitempty,omitzero"`
+	Settings *AnthropicAgentOptionsSettings `json:"settings,omitempty,omitzero"`
 
 	// Skill configuration made available to the Agent SDK query.
 	Skills *json.RawMessage `json:"skills,omitempty,omitzero"`
@@ -258,6 +505,12 @@ const AnthropicAgentOptionsEffortMax AnthropicAgentOptionsEffort = "max"
 const AnthropicAgentOptionsEffortMedium AnthropicAgentOptionsEffort = "medium"
 const AnthropicAgentOptionsEffortXhigh AnthropicAgentOptionsEffort = "xhigh"
 
+// Environment variables supplied to the Claude Code child process.
+type AnthropicAgentOptionsEnv map[string]string
+
+// Enterprise-managed Claude Code settings applied to the query.
+type AnthropicAgentOptionsManagedSettings = json.RawMessage
+
 type AnthropicAgentOptionsPermissionMode string
 
 const AnthropicAgentOptionsPermissionModeAcceptEdits AnthropicAgentOptionsPermissionMode = "acceptEdits"
@@ -282,5 +535,2081 @@ const AnthropicAgentOptionsSettingSourcesElemLocal AnthropicAgentOptionsSettingS
 const AnthropicAgentOptionsSettingSourcesElemProject AnthropicAgentOptionsSettingSourcesElem = "project"
 const AnthropicAgentOptionsSettingSourcesElemUser AnthropicAgentOptionsSettingSourcesElem = "user"
 
-// Environment variables supplied to the Claude Code child process.
-type Environment map[string]string
+// In-memory Claude Code settings applied to the query.
+type AnthropicAgentOptionsSettings = json.RawMessage
+
+type AnthropicAgentPermissionMode string
+
+const AnthropicAgentPermissionModeAcceptEdits AnthropicAgentPermissionMode = "acceptEdits"
+const AnthropicAgentPermissionModeAuto AnthropicAgentPermissionMode = "auto"
+const AnthropicAgentPermissionModeBypassPermissions AnthropicAgentPermissionMode = "bypassPermissions"
+const AnthropicAgentPermissionModeDefault AnthropicAgentPermissionMode = "default"
+const AnthropicAgentPermissionModeDontAsk AnthropicAgentPermissionMode = "dontAsk"
+const AnthropicAgentPermissionModePlan AnthropicAgentPermissionMode = "plan"
+
+// Configuration for loading a plugin.
+type AnthropicAgentSdkPluginConfig struct {
+	// Absolute or relative path to the plugin directory
+	Path string `json:"path"`
+
+	// When true, the engine loads skills/hooks/agents/commands from this plugin but
+	// does NOT read its .mcp.json or manifest mcpServers. Use when the SDK host owns
+	// this plugin's MCP connections.
+	SkipMcpDiscovery *bool `json:"skipMcpDiscovery,omitempty,omitzero"`
+
+	// Plugin type. Currently only 'local' is supported
+	Type string `json:"type"`
+}
+
+// AUTO-GENERATED - DO NOT EDIT
+//
+// This file is auto-generated from the settings JSON schema. To modify these
+// types, edit SettingsSchema in src/utils/settings/types.ts and run:
+//
+//	bun scripts/generate-sdk-types.ts
+type AnthropicAgentSettings struct {
+	// JSON Schema reference for Claude Code settings
+	Schema *string `json:"$schema,omitempty,omitzero"`
+
+	// Alias for extraKnownMarketplaces: this key is read exactly as if it were
+	// spelled extraKnownMarketplaces. Do not set both in one file — if both appear,
+	// this key is ignored with a warning. Claude Code may rewrite this key as
+	// extraKnownMarketplaces when it updates the file. Clients older than this alias
+	// ignore it, so prefer extraKnownMarketplaces while older Claude Code versions
+	// still share the same settings.
+	AdditionalMarketplaces AnthropicAgentSettingsAdditionalMarketplaces `json:"additionalMarketplaces,omitempty,omitzero"`
+
+	// Advisor model for the server-side advisor tool.
+	AdvisorModel *string `json:"advisorModel,omitempty,omitzero"`
+
+	// Name of an agent (built-in or custom) to use for the main thread. Applies the
+	// agent's system prompt, tool restrictions, and model.
+	Agent *string `json:"agent,omitempty,omitzero"`
+
+	// Allow Claude to push proactive mobile notifications
+	AgentPushNotifEnabled *bool `json:"agentPushNotifEnabled,omitempty,omitzero"`
+
+	// When true (and set in managed settings), claude.ai cloud MCP connectors load
+	// alongside managed-mcp.json instead of being suppressed by its exclusive-control
+	// lockdown. Default off preserves the lockdown. Read from managed settings only.
+	AllowAllClaudeAiMcps *bool `json:"allowAllClaudeAiMcps,omitempty,omitzero"`
+
+	// When true (and set in managed settings), only hooks from managed settings and
+	// from plugins that managed settings enable run. User, project, and local hooks
+	// and the hooks of plugins the user installed are ignored. Features built into
+	// Claude Code are not hooks in this sense and keep working.
+	AllowManagedHooksOnly *bool `json:"allowManagedHooksOnly,omitempty,omitzero"`
+
+	// When true (and set in managed settings), allowedMcpServers is only read from
+	// managed settings. deniedMcpServers still merges from all sources, so users can
+	// deny servers for themselves. Users can still add their own MCP servers, but
+	// only the admin-defined allowlist applies.
+	AllowManagedMcpServersOnly *bool `json:"allowManagedMcpServersOnly,omitempty,omitzero"`
+
+	// When true (and set in managed settings), permission rules from user, project,
+	// local, and --settings files and allow rules from --allowedTools are ignored;
+	// only managed settings can add allow rules through settings. --disallowedTools
+	// and other deny and ask rules from the command line or the current session still
+	// apply.
+	AllowManagedPermissionRulesOnly *bool `json:"allowManagedPermissionRulesOnly,omitempty,omitzero"`
+
+	// Managed-org allowlist of channel plugins. When set, replaces the default
+	// Anthropic allowlist — admins decide which plugins may push inbound messages.
+	// Undefined falls back to the default. Requires channelsEnabled: true.
+	AllowedChannelPlugins []AnthropicAgentSettingsAllowedChannelPluginsElem `json:"allowedChannelPlugins,omitempty,omitzero"`
+
+	// Allowlist of URL patterns that HTTP hooks may target. Supports * as a wildcard
+	// (e.g. "https://hooks.example.com/*"). When set, HTTP hooks with non-matching
+	// URLs are blocked. If undefined, all URLs are allowed. If empty array, no HTTP
+	// hooks are allowed. Arrays merge across settings sources (same semantics as
+	// allowedMcpServers).
+	AllowedHttpHookUrls []string `json:"allowedHttpHookUrls,omitempty,omitzero"`
+
+	// Alias for strictKnownMarketplaces (managed settings only): this key is read
+	// exactly as if it were spelled strictKnownMarketplaces. Do not set both in one
+	// file — if both appear, this key is ignored with a warning. Clients older than
+	// this alias ignore it, so keep using strictKnownMarketplaces when the allowlist
+	// must also bind older Claude Code versions.
+	AllowedMarketplaces []json.RawMessage `json:"allowedMarketplaces,omitempty,omitzero"`
+
+	// Enterprise allowlist of the MCP servers users may use. Governs servers users
+	// add (user, project and local config, --mcp-config, agent frontmatter, plugins,
+	// claude.ai connectors); servers the organization itself delivers
+	// (managedMcpServers, and managed-mcp.json entries that use no ${VAR} expansion)
+	// are allowed without being listed; a managed-mcp.json entry that uses ${VAR}
+	// expansion is still checked against this list. If undefined, all servers are
+	// allowed. If empty array, users can use no servers of their own. Denylist takes
+	// precedence - if a server is on both lists, it is denied.
+	AllowedMcpServers []AnthropicAgentSettingsAllowedMcpServersElem `json:"allowedMcpServers,omitempty,omitzero"`
+
+	// When false, thinking is disabled. When absent or true, thinking is enabled
+	// automatically for supported models.
+	AlwaysThinkingEnabled *bool `json:"alwaysThinkingEnabled,omitempty,omitzero"`
+
+	// Path to a script that outputs authentication values
+	ApiKeyHelper *string `json:"apiKeyHelper,omitempty,omitzero"`
+
+	// Managed plugins (plugin\@marketplace ids that managed enabledPlugins sets true)
+	// whose hooks run last among plugins, innermost, in the listed order: the last id
+	// listed sits just above the built-in plugins and sees each event as every other
+	// plugin left it. Only honored from managed settings (or, on a machine with none,
+	// from user settings for your own plugins); ignored in project, local and
+	// --settings sources.
+	AppendPlugins []string `json:"appendPlugins,omitempty,omitzero"`
+
+	// Idle time before Claude's questions auto-continue with any answers selected so
+	// far. Defaults to never — auto-continue only runs when explicitly set to
+	// 60s/5m/10m.
+	AskUserQuestionTimeout *AnthropicAgentSettingsAskUserQuestionTimeout `json:"askUserQuestionTimeout,omitempty,omitzero"`
+
+	// Customize attribution text for commits and PRs. Each field defaults to the
+	// standard Claude Code attribution if not set.
+	Attribution *AnthropicAgentSettingsAttribution `json:"attribution,omitempty,omitzero"`
+
+	// Automatically compact conversation when context fills
+	AutoCompactEnabled *bool `json:"autoCompactEnabled,omitempty,omitzero"`
+
+	// Auto-compact window size
+	AutoCompactWindow *float64 `json:"autoCompactWindow,omitempty,omitzero"`
+
+	// When a claude.ai usage limit stops your session, wait for the limit to reset
+	// and continue the task automatically. When off, the limit dialog offers the wait
+	// as a choice instead.
+	AutoContinueAtUsageLimit *bool `json:"autoContinueAtUsageLimit,omitempty,omitzero"`
+
+	// Enable background memory consolidation (auto-dream). When set, overrides the
+	// server-side default.
+	AutoDreamEnabled *bool `json:"autoDreamEnabled,omitempty,omitzero"`
+
+	// Custom directory path for auto-memory storage. Supports ~/ prefix for home
+	// directory expansion. Ignored if set in projectSettings (checked-in
+	// .claude/settings.json) for security. When unset, defaults to
+	// ~/.claude/projects/<sanitized-cwd>/memory/.
+	AutoMemoryDirectory *string `json:"autoMemoryDirectory,omitempty,omitzero"`
+
+	// Enable auto-memory for this project. When false, Claude will not read from or
+	// write to the auto-memory directory.
+	AutoMemoryEnabled *bool `json:"autoMemoryEnabled,omitempty,omitzero"`
+
+	// Auto-scroll the conversation view to bottom (fullscreen mode only)
+	AutoScrollEnabled *bool `json:"autoScrollEnabled,omitempty,omitzero"`
+
+	// Release channel for auto-updates (latest or stable)
+	AutoUpdatesChannel *AnthropicAgentSettingsAutoUpdatesChannel `json:"autoUpdatesChannel,omitempty,omitzero"`
+
+	// Mirror local sessions to claude.ai as view-only (no remote control)
+	AutoUploadSessions *bool `json:"autoUploadSessions,omitempty,omitzero"`
+
+	// Allowlist of models that users can select. Accepts family aliases ("opus"
+	// allows any opus version), version prefixes ("opus-4-5" allows only that
+	// version), and full model IDs. If undefined, all models are available. If empty
+	// array, only the default model is available. Typically set in managed settings
+	// by enterprise administrators.
+	AvailableModels []string `json:"availableModels,omitempty,omitzero"`
+
+	// Path to a script that refreshes AWS authentication
+	AwsAuthRefresh *string `json:"awsAuthRefresh,omitempty,omitzero"`
+
+	// Path to a script that exports AWS credentials
+	AwsCredentialExport *string `json:"awsCredentialExport,omitempty,omitzero"`
+
+	// Whether the Bash tool shows a diff of the files a Bash command changed
+	// (PostToolUse Bash hooks get the changed-file list in tool_response). Set to
+	// false to turn that off. Default: on when the Bash tool handles file edits. Only
+	// user, flag or policy settings can turn it on outside auto and bypassPermissions
+	// modes.
+	BashEditDiffEnabled *bool `json:"bashEditDiffEnabled,omitempty,omitzero"`
+
+	// How many characters of a successful Bash or PowerShell command's output Claude
+	// receives inline (default 30000; values clamp to 4000-128000). Output past this
+	// is saved to a file and Claude receives a short preview plus the path. When set,
+	// this also replaces BASH_MAX_OUTPUT_LENGTH, which on its own only sizes the
+	// read-back window.
+	BashOutputMaxChars *float64 `json:"bashOutputMaxChars,omitempty,omitzero"`
+
+	// Enterprise blocklist of marketplace sources. When set in managed settings,
+	// these sources are blocked from being added as marketplaces. Entries match
+	// exactly, except that a github entry may use the owner-wildcard form
+	// {"source":"github","repo":"owner/*"} to block every repository under that
+	// owner. The check happens BEFORE downloading, so blocked sources never touch the
+	// filesystem.
+	BlockedMarketplaces []json.RawMessage `json:"blockedMarketplaces,omitempty,omitzero"`
+
+	// Managed-org opt-in for channel notifications (MCP servers with the
+	// claude/channel capability pushing inbound messages). claude.ai
+	// Teams/Enterprise: default off. Console: default on unless managed settings
+	// exist. Set true to allow; users then select servers via --channels.
+	ChannelsEnabled *bool `json:"channelsEnabled,omitempty,omitzero"`
+
+	// CLAUDE.md-style instructions injected as organization-managed memory. Only
+	// honored from managed/policy settings.
+	ClaudeMd *string `json:"claudeMd,omitempty,omitzero"`
+
+	// Glob patterns or absolute paths of CLAUDE.md files to exclude from loading.
+	// Patterns are matched against absolute file paths using picomatch. Only applies
+	// to User, Project, and Local memory types (Managed/policy files cannot be
+	// excluded). Examples: "/home/user/monorepo/CLAUDE.md", "** /code/CLAUDE.md", "**
+	// /some-dir/.claude/rules/**"
+	ClaudeMdExcludes []string `json:"claudeMdExcludes,omitempty,omitzero"`
+
+	// Number of days to retain chat transcripts before automatic cleanup (default:
+	// 30). Minimum 1. Use a large value for long retention; use
+	// --no-session-persistence to disable transcript writes entirely.
+	CleanupPeriodDays *float64 `json:"cleanupPeriodDays,omitempty,omitzero"`
+
+	// Company announcements to display at startup (one will be randomly selected if
+	// multiple are provided)
+	CompanyAnnouncements []string `json:"companyAnnouncements,omitempty,omitzero"`
+
+	// Inbound cross-session peer messages (SendMessage from your other sessions):
+	// 'accept' delivers them, 'hold' parks them for your review without letting
+	// Claude act, 'refuse' opts this session out. An explicit value always wins.
+	// Unset (mode parity): a message auto-delivers only when the sending session's
+	// permission-mode class matches yours (bypass↔bypass or prompting↔prompting); a
+	// mismatched sender's message is held for your approval; a sender that asserts no
+	// class is held only while this session bypasses permission prompts.
+	CrossSessionInbound *AnthropicAgentSettingsCrossSessionInbound `json:"crossSessionInbound,omitempty,omitzero"`
+
+	// When no background service is running: 'transient' spawns one for this login
+	// session; 'ask' offers to install it persistently
+	DaemonColdStart *AnthropicAgentSettingsDaemonColdStart `json:"daemonColdStart,omitempty,omitzero"`
+
+	// Default shell for input-box ! commands. Defaults to 'bash' on all platforms (no
+	// Windows auto-flip).
+	DefaultShell *AnthropicAgentSettingsDefaultShell `json:"defaultShell,omitempty,omitzero"`
+
+	// Default transcript view: chat (SendUserMessage checkpoints only) or transcript
+	// (full)
+	DefaultView *AnthropicAgentSettingsDefaultView `json:"defaultView,omitempty,omitzero"`
+
+	// Enterprise denylist of MCP servers that are explicitly blocked. If a server is
+	// on the denylist, it will be blocked across all scopes including enterprise.
+	// Denylist takes precedence over allowlist - if a server is on both lists, it is
+	// denied.
+	DeniedMcpServers []AnthropicAgentSettingsDeniedMcpServersElem `json:"deniedMcpServers,omitempty,omitzero"`
+
+	// Retention ceiling in days for session transcripts created or last written by a
+	// desktop-host surface (Claude Desktop, Cowork), which are otherwise exempt from
+	// the cleanupPeriodDays sweep. 0 (the default) means no ceiling: such transcripts
+	// are kept until deleted another way. Unlike cleanupPeriodDays, 0 is allowed
+	// because this setting never disables writes — it only bounds an exemption from
+	// deletion. The ceiling is a hard cap: it also bounds an active archive grace, so
+	// the grace window of a release marker never keeps files past the ceiling.
+	// Ignored when cleanupPeriodDays is managed by org policy. A ceiling at or below
+	// cleanupPeriodDays effectively disables the exemption: those transcripts age out
+	// on the regular cleanupPeriodDays schedule, so the effective retention is
+	// whichever of the two periods is longer.
+	DesktopSessionCleanupPeriodDays *float64 `json:"desktopSessionCleanupPeriodDays,omitempty,omitzero"`
+
+	// Max time a permission/user dialog forwarded to a remote client stays parked
+	// awaiting an answer, and how long a HELD cross-session message awaits approval,
+	// before either resolves to its safe no-action default (cancelled /
+	// dropped-with-denial). Defaults to 5m to match the long-standing remote-dialog
+	// deadline; "never" disables the deadline. Local-only permission prompts (no
+	// remote client) are unaffected. The CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS env var,
+	// when set, overrides this. Read from trusted sources only (never a checked-in
+	// repo settings file).
+	DialogExpiry *AnthropicAgentSettingsDialogExpiry `json:"dialogExpiry,omitempty,omitzero"`
+
+	// Disable agent view (`claude agents`, `--bg`, /background, the on-demand
+	// daemon). Typically set in managed settings. Equivalent to
+	// CLAUDE_CODE_DISABLE_AGENT_VIEW=1.
+	DisableAgentView *bool `json:"disableAgentView,omitempty,omitzero"`
+
+	// Disable all hooks and statusLine execution: the hooks defined in settings files
+	// and by installed plugins. Features built into Claude Code are not hooks in this
+	// sense and keep working; each has its own switch.
+	DisableAllHooks *bool `json:"disableAllHooks,omitempty,omitzero"`
+
+	// Deprecated: use enableArtifact: false. Still honored — true disables the
+	// Artifact tool; false is ignored.
+	DisableArtifact *bool `json:"disableArtifact,omitempty,omitzero"`
+
+	// Disable auto mode
+	DisableAutoMode *string `json:"disableAutoMode,omitempty,omitzero"`
+
+	// Disable the skills and workflows that ship with Claude Code: bundled skills and
+	// workflows are removed entirely; built-in slash commands stay typable but are
+	// hidden from the model. Plugins, .claude/skills/, and .claude/commands/ are
+	// unaffected. Equivalent to CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1.
+	DisableBundledSkills *bool `json:"disableBundledSkills,omitempty,omitzero"`
+
+	// When true in any settings source, claude.ai MCP cloud connectors are not
+	// auto-fetched or connected. Only gates auto-fetched connectors — a
+	// claudeai-proxy server passed explicitly (e.g. via --mcp-config or the SDK
+	// mcpServers option) still follows the normal MCP config trust flow.
+	// Any-source-true wins: a project can opt out, but a project-level false cannot
+	// override a user-level true.
+	DisableClaudeAiConnectors *bool `json:"disableClaudeAiConnectors,omitempty,omitzero"`
+
+	// Controls the `command` plugin source, whose plugin directory is produced by
+	// running a marketplace-declared command on this machine. true: command-sourced
+	// plugins are never installed, updated, or re-resolved (the command never runs).
+	// false: explicitly allowed. Unset: follows allowManagedHooksOnly — an org that
+	// restricts hook execution to managed settings gets command sources disabled too.
+	// Only honored from managed settings.
+	DisableCommandPluginSources *bool `json:"disableCommandPluginSources,omitempty,omitzero"`
+
+	// Prevent claude-cli:// protocol handler registration with the OS
+	DisableDeepLinkRegistration *string `json:"disableDeepLinkRegistration,omitempty,omitzero"`
+
+	// Disable Remote Control (claude.ai/code, `claude remote-control`,
+	// `--remote-control`/`--rc`, auto-start, and the in-session toggle). Typically
+	// set in managed settings.
+	DisableRemoteControl *bool `json:"disableRemoteControl,omitempty,omitzero"`
+
+	// When true (and set in managed settings), rejects the --plugin-dir,
+	// --plugin-url, --agents, and non-sdk --mcp-config CLI flags at startup. Closes
+	// the CLI-flag bypass of strictKnownMarketplaces. Pair with allowedMcpServers for
+	// per-server MCP control; this setting does not gate other MCP entry points (SDK
+	// setMcpServers, claude mcp add, .mcp.json). Also blocks surfaces that spawn the
+	// CLI with these flags internally (see settings documentation). Only honored from
+	// managed settings; ignored in user/project/local settings.
+	DisableSideloadFlags *bool `json:"disableSideloadFlags,omitempty,omitzero"`
+
+	// Disable inline shell execution in skills and custom slash commands from user,
+	// project, or plugin sources. Commands are replaced with a placeholder instead of
+	// being run.
+	DisableSkillShellExecution *bool `json:"disableSkillShellExecution,omitempty,omitzero"`
+
+	// Disable the Workflows feature (also via CLAUDE_CODE_DISABLE_WORKFLOWS).
+	DisableWorkflows *bool `json:"disableWorkflows,omitempty,omitzero"`
+
+	// List of rejected MCP servers from .mcp.json
+	DisabledMcpjsonServers []string `json:"disabledMcpjsonServers,omitempty,omitzero"`
+
+	// Key binding mode for the prompt input
+	EditorMode *AnthropicAgentSettingsEditorMode `json:"editorMode,omitempty,omitzero"`
+
+	// Persisted effort level for supported models.
+	EffortLevel *AnthropicAgentSettingsEffortLevel `json:"effortLevel,omitempty,omitzero"`
+
+	// When false, the :emoji: shortcode typeahead (the suggestion popup and the
+	// :name: inline replacement) is disabled. When absent or true, it is enabled.
+	EmojiCompletionEnabled *bool `json:"emojiCompletionEnabled,omitempty,omitzero"`
+
+	// Whether to automatically approve all MCP servers in the project
+	EnableAllProjectMcpServers *bool `json:"enableAllProjectMcpServers,omitempty,omitzero"`
+
+	// Turn the Artifact tool on or off. Off in any of managed, --settings, or user
+	// settings wins; project and local settings can only turn it off. Unset defaults
+	// to on once the feature is available.
+	EnableArtifact *bool `json:"enableArtifact,omitempty,omitzero"`
+
+	// Enable or disable the Workflows feature for this user. Unset = default by plan
+	// once the feature is available.
+	EnableWorkflows *bool `json:"enableWorkflows,omitempty,omitzero"`
+
+	// List of approved MCP servers from .mcp.json
+	EnabledMcpjsonServers []string `json:"enabledMcpjsonServers,omitempty,omitzero"`
+
+	// Enabled plugins using plugin-id\@marketplace-id format. Example: {
+	// "formatter\@anthropic-tools": true }. Also supports extended format with
+	// version constraints. Settings precedence is user < project < local < flag <
+	// policy, so to disable a plugin that project settings enable, set it to false in
+	// .claude/settings.local.json — setting false in ~/.claude/settings.json is
+	// overridden by the project.
+	EnabledPlugins AnthropicAgentSettingsEnabledPlugins `json:"enabledPlugins,omitempty,omitzero"`
+
+	// When true and availableModels is a non-empty array, the Default model selection
+	// is also constrained: if the default model for the user tier is not in
+	// availableModels, Default resolves to the first allowed availableModels entry
+	// instead. Has no effect when availableModels is unset or an empty array.
+	// Typically set in managed settings by enterprise administrators.
+	EnforceAvailableModels *bool `json:"enforceAvailableModels,omitempty,omitzero"`
+
+	// Environment variables to set for Claude Code sessions
+	Env AnthropicAgentSettingsEnv `json:"env,omitempty,omitzero"`
+
+	// Additional marketplaces to make available for this repository. Typically used
+	// in repository .claude/settings.json to ensure team members have required plugin
+	// sources.
+	ExtraKnownMarketplaces AnthropicAgentSettingsExtraKnownMarketplaces `json:"extraKnownMarketplaces,omitempty,omitzero"`
+
+	// Fallback model(s) tried in order when the primary model is overloaded or
+	// unavailable. Each element accepts a model name or alias; "default" expands to
+	// the default model. CLI --fallback-model takes precedence.
+	FallbackModel []string `json:"fallbackModel,omitempty,omitzero"`
+
+	// When true, fast mode is enabled. When absent or false, fast mode is off.
+	FastMode *bool `json:"fastMode,omitempty,omitzero"`
+
+	// When true, fast mode does not persist across sessions. Each session starts with
+	// fast mode off.
+	FastModePerSessionOptIn *bool `json:"fastModePerSessionOptIn,omitempty,omitzero"`
+
+	// Model-drafted feedback (the SendFeedback tool). "notify" (default) shows a
+	// one-line notice when a draft is queued; "quiet" shows only the footer counter;
+	// "off" disables the tool entirely so drafts are never queued.
+	FeedbackDrafts *AnthropicAgentSettingsFeedbackDrafts `json:"feedbackDrafts,omitempty,omitzero"`
+
+	// Probability (0–1) that the session quality survey appears when eligible. 0.05
+	// is a reasonable starting point.
+	FeedbackSurveyRate *float64 `json:"feedbackSurveyRate,omitempty,omitzero"`
+
+	// Snapshot files before edits so /rewind can restore them
+	FileCheckpointingEnabled *bool `json:"fileCheckpointingEnabled,omitempty,omitzero"`
+
+	// Custom file suggestion configuration for \@ mentions
+	FileSuggestion *AnthropicAgentSettingsFileSuggestion `json:"fileSuggestion,omitempty,omitzero"`
+
+	// Extra clickable footer badges that appear when a regex matches turn output
+	// (tool results and assistant responses). Read from user, flag, and managed
+	// settings only; ignored in project .claude/settings.json and local
+	// .claude/settings.local.json. At most 5 badges render; the oldest is displaced
+	// by newer matches and /clear removes them. Use to surface IDs printed by project
+	// CLIs as session links.
+	FooterLinksRegexes []json.RawMessage `json:"footerLinksRegexes,omitempty,omitzero"`
+
+	// Cloud gateway URL to pre-fill and auto-connect to during login, alongside
+	// forceLoginMethod: "gateway". Honored only from admin-controlled managed
+	// settings (MDM / managed-settings.json / policy helper); ignored in user,
+	// project, and remote-delivered settings.
+	ForceLoginGatewayUrl *string `json:"forceLoginGatewayUrl,omitempty,omitzero"`
+
+	// Force a specific login method: "claudeai" for Claude Pro/Max, "console" for
+	// Console billing, "gateway" for the Cloud gateway OIDC device flow
+	ForceLoginMethod *AnthropicAgentSettingsForceLoginMethod `json:"forceLoginMethod,omitempty,omitzero"`
+
+	// Organization UUID to require for OAuth login. Accepts a single UUID string or
+	// an array of UUIDs (any one is permitted). When set in managed settings, login
+	// fails if the authenticated account does not belong to a listed organization.
+	ForceLoginOrgUUID *json.RawMessage `json:"forceLoginOrgUUID,omitempty,omitzero"`
+
+	// When set in managed settings, the CLI blocks startup until remote managed
+	// settings are freshly fetched, and exits if the fetch fails
+	ForceRemoteSettingsRefresh *bool `json:"forceRemoteSettingsRefresh,omitempty,omitzero"`
+
+	// IPv4 CIDR blocks (at most 4, each /8 to /32, not overlapping) your Cloud
+	// gateway sits in: the public block your organization numbers its internal
+	// network from, which lets /login reach a gateway there. A block must lie
+	// entirely outside private space, where /login accepts a gateway without this
+	// key. /login accepts a gateway inside a listed block over a direct connection
+	// only, and only when this machine's own address on that connection is inside the
+	// same block, so /login must happen from a machine whose own address is inside
+	// the block (not through a proxy, VPN pool, container or NAT segment outside it).
+	// A bar against copied settings files, not proof of location. Honored only from
+	// admin-controlled managed settings (MDM / managed-settings.json / policy
+	// helper); ignored in user, project, and remote-delivered settings.
+	GatewayInternalNetworks []string `json:"gatewayInternalNetworks,omitempty,omitzero"`
+
+	// Command to refresh GCP authentication (e.g., gcloud auth application-default
+	// login)
+	GcpAuthRefresh *string `json:"gcpAuthRefresh,omitempty,omitzero"`
+
+	// Custom commands to run before/after tool executions
+	Hooks AnthropicAgentSettingsHooks `json:"hooks,omitempty,omitzero"`
+
+	// Allowlist of environment variable names HTTP hooks may interpolate into
+	// headers. When set, each hook's effective allowedEnvVars is the intersection
+	// with this list. If undefined, no restriction is applied. Arrays merge across
+	// settings sources (same semantics as allowedMcpServers).
+	HttpHookAllowedEnvVars []string `json:"httpHookAllowedEnvVars,omitempty,omitzero"`
+
+	// Deprecated: Use attribution instead. Whether to include Claude's co-authored by
+	// attribution in commits and PRs (defaults to true)
+	IncludeCoAuthoredBy *bool `json:"includeCoAuthoredBy,omitempty,omitzero"`
+
+	// Include built-in commit and PR workflow instructions in Claude's system prompt
+	// (default: true)
+	IncludeGitInstructions *bool `json:"includeGitInstructions,omitempty,omitzero"`
+
+	// Push to mobile when a permission prompt or question is waiting
+	InputNeededNotifEnabled *bool `json:"inputNeededNotifEnabled,omitempty,omitzero"`
+
+	// Require explicit approval before SendMessage can reach a peer session on
+	// another machine via Remote Control
+	IsolatePeerMachines *bool `json:"isolatePeerMachines,omitempty,omitzero"`
+
+	// Deprecated: no longer has any effect. The prompt's word-editing keys always
+	// follow Bash (readline) conventions.
+	KeybindingFlavor *AnthropicAgentSettingsKeybindingFlavor `json:"keybindingFlavor,omitempty,omitzero"`
+
+	// Preferred language for Claude responses and voice dictation (e.g., "japanese",
+	// "spanish")
+	Language *string `json:"language,omitempty,omitzero"`
+
+	// MCP servers the organization provides to every user, keyed by server name, each
+	// with the .mcp.json entry shape; only "http" and "sse" servers are accepted
+	// (nothing that names a program to run, no ${VAR} references). Honored from
+	// managed settings only; users cannot remove them, deniedMcpServers still
+	// applies, and they need no allowedMcpServers entry. Not read in Claude Desktop's
+	// Code tab on a third-party deployment or in Cowork sessions, where Claude
+	// Desktop supplies and locks the session's MCP servers itself.
+	ManagedMcpServers AnthropicAgentSettingsManagedMcpServers `json:"managedMcpServers,omitempty,omitzero"`
+
+	// Controls how the managed settings sources compose. "first-wins" (default): the
+	// highest-priority source present (server-managed > MDM (managed plist / HKLM) >
+	// managed-settings.json) is the managed tier alone. "merge": every present source
+	// deep-merges with fixed precedence server-managed > MDM > managed-settings.json
+	// — scalars take the highest source's value (a restrictive boolean or enum — the
+	// allowManaged*Only locks, the disable* switches, the sandbox lock family — takes
+	// the strictest value any source sets) and arrays union, except fallbackModel,
+	// the restriction allowlists allowedMcpServers, availableModels,
+	// strictKnownMarketplaces and allowedChannelPlugins, and
+	// sandbox.credentials.awsPairs and sandbox.ripgrep (the highest source that sets
+	// one owns it whole), modelOverrides (the whole map of the highest source that
+	// sets it, dropped when that source sits below the one that sets
+	// availableModels), managedMcpServers (server names union; a name set by two
+	// sources takes the higher source's whole entry), and the keys taken from the
+	// highest source only: the auth pins forceLoginOrgUUID, forceLoginMethod,
+	// forceLoginGatewayUrl and gatewayInternalNetworks, the credential helpers
+	// apiKeyHelper, awsAuthRefresh, awsCredentialExport, gcpAuthRefresh,
+	// otelHeadersHelper and proxyAuthHelper, modelPicker, permissions.defaultMode,
+	// parentSettingsBehavior and the policyHelper configuration (env keeps its own
+	// per-key union). Honored only from the highest-priority source present; enable
+	// it only when every lower source is admin-controlled, since lower sources then
+	// contribute entries such as permissions.allow. HKCU and --managed-settings never
+	// take part in the merge.
+	ManagedSourcesBehavior *AnthropicAgentSettingsManagedSourcesBehavior `json:"managedSourcesBehavior,omitempty,omitzero"`
+
+	// Maximum effort level. Anything above it (an /effort or /model pick, --effort,
+	// CLAUDE_CODE_EFFORT_LEVEL, a model default) is clamped to it, on every provider
+	// including Bedrock, Vertex and Foundry. Combines with an organization's
+	// per-model effort cap by taking the lower of the two; across settings files the
+	// lowest value wins, and modelSettings.<model>.maxEffortLevel replaces it per
+	// model. Enforced client-side: an effort supplied through CLAUDE_CODE_EXTRA_BODY
+	// is not clamped.
+	MaxEffortLevel *AnthropicAgentSettingsMaxEffortLevel `json:"maxEffortLevel,omitempty,omitzero"`
+
+	// Minimum version to stay on - prevents downgrades when switching to stable
+	// channel
+	MinimumVersion *string `json:"minimumVersion,omitempty,omitzero"`
+
+	// Override the default model used by Claude Code
+	Model *string `json:"model,omitempty,omitzero"`
+
+	// Override mapping from Anthropic model ID (e.g. "claude-opus-4-6") to
+	// provider-specific model ID (e.g. a Bedrock inference profile ARN). Typically
+	// set in managed settings by enterprise administrators.
+	ModelOverrides AnthropicAgentSettingsModelOverrides `json:"modelOverrides,omitempty,omitzero"`
+
+	// Curate the /model picker: an ordered list of models with your own labels,
+	// independent of the built-in lineup and of Claude Code releases. availableModels
+	// still applies to these rows. Honored from managed, --settings/SDK, and user
+	// settings only (not from a project checkout); the highest-precedence of those
+	// that defines modelPicker wins outright (no merging across sources). Typically
+	// set in managed settings by enterprise administrators.
+	ModelPicker *AnthropicAgentSettingsModelPicker `json:"modelPicker,omitempty,omitzero"`
+
+	// Price usage at your organization's contracted rates instead of list price.
+	// Affects every spend figure Claude Code reports — /cost, the status line, the
+	// SDK total_cost_usd, --max-budget-usd, and the OpenTelemetry cost metric and
+	// events — which remain USD estimates, not an invoice (the per-Mtok price labels
+	// in /model stay at list). "overrides" maps a model ID to its
+	// USD-per-million-token rates (input, output, cacheRead, cacheWrite — all four
+	// required, each 0 to 10000; cacheWrite prices both 5-minute and 1-hour cache
+	// writes). A matching row is charged exactly as written; fast-mode and
+	// US-data-residency surcharges are not added on top. A key Claude Code itself
+	// uses for a built-in model — its ID such as "claude-sonnet-4-6", or its
+	// first-party, Bedrock (any or no region prefix), Vertex or Foundry ID — covers
+	// every dated and provider form of that model; any other key — a gateway model
+	// alias, or a spelling Claude Code does not itself use — matches that model ID
+	// only (case-insensitive), and such an exact match wins over a built-in row. On
+	// Bedrock an application inference profile is matched by its backing model. An
+	// invalid row or multiplier is reported and skipped; the rest still apply.
+	// "multiplier" in (0, 10] scales every computed cost, overridden or not (0.85 =
+	// 85% of the price, 1.2 = 120%). Only honored from managed settings
+	// (server-managed, MDM / OS policy, or managed-settings.json), or — when none of
+	// those sets it — when supplied by a host application that manages the model
+	// provider; ignored in user, project, local and --settings sources.
+	ModelPricing *AnthropicAgentSettingsModelPricing `json:"modelPricing,omitempty,omitzero"`
+
+	// Per-model settings keyed by canonical model name.
+	ModelSettings AnthropicAgentSettingsModelSettings `json:"modelSettings,omitempty,omitzero"`
+
+	// Path to a script that outputs OpenTelemetry headers
+	OtelHeadersHelper *string `json:"otelHeadersHelper,omitempty,omitzero"`
+
+	// Controls the output style for assistant responses
+	OutputStyle *string `json:"outputStyle,omitempty,omitzero"`
+
+	// Controls whether the SDK parent tier (Options.managedSettings /
+	// --managed-settings) layers under this admin tier. "first-wins" (default):
+	// parent is dropped — admin tiers are the only policy source. "merge": parent's
+	// restrictive-only-filtered settings union under the admin winner. Has no effect
+	// when no admin tier exists (parent applies as the sole policy tier, still
+	// filtered restrictive-only).
+	ParentSettingsBehavior *AnthropicAgentSettingsParentSettingsBehavior `json:"parentSettingsBehavior,omitempty,omitzero"`
+
+	// Tool usage permissions configuration
+	Permissions *AnthropicAgentSettingsPermissions `json:"permissions,omitempty,omitzero"`
+
+	// Custom directory for plan files, relative to project root. If not set, defaults
+	// to ~/.claude/plans/
+	PlansDirectory *string `json:"plansDirectory,omitempty,omitzero"`
+
+	// Per-plugin configuration including MCP server user configs, keyed by plugin ID
+	// (plugin\@marketplace format)
+	PluginConfigs AnthropicAgentSettingsPluginConfigs `json:"pluginConfigs,omitempty,omitzero"`
+
+	// Marketplace names whose plugins may surface as contextual install suggestions
+	// (relevance-based tips). No marketplace-declared suggestions surface without
+	// this allowlist; the built-in first-party frontend-design tip is unaffected.
+	// Only honored when set in managed settings (policy scope); the key is ignored in
+	// user, project, and local settings. A name only takes effect when the
+	// marketplace is registered on the machine AND its registered source is also
+	// declared in managed settings, either as the extraKnownMarketplaces entry for
+	// that name or as an entry of strictKnownMarketplaces. A marketplace registered
+	// from a different source under an allowlisted name is ignored. The official
+	// marketplace is exempt from the source requirement: allowlisting its name alone
+	// suffices, since that name can only register from the official Anthropic source.
+	PluginSuggestionMarketplaces []string `json:"pluginSuggestionMarketplaces,omitempty,omitzero"`
+
+	// Custom message to append to the plugin trust warning shown before installation.
+	// Only read from policy settings (managed-settings.json / MDM). Useful for
+	// enterprise administrators to add organization-specific context (e.g., "All
+	// plugins from our internal marketplace are vetted and approved.").
+	PluginTrustMessage *string `json:"pluginTrustMessage,omitempty,omitzero"`
+
+	// Executable that computes managed settings at startup. Honored only from
+	// admin-controlled policy sources.
+	PolicyHelper *AnthropicAgentSettingsPolicyHelper `json:"policyHelper,omitempty,omitzero"`
+
+	// URL template for PR links in the footer link badges and inline messages. The
+	// detected git PR is rendered as the first footer-link badge. Placeholders:
+	// {host} {owner} {repo} {number} {url}. Example:
+	// "https://reviews.example.com/{owner}/{repo}/pull/{number}"
+	PrUrlTemplate *string `json:"prUrlTemplate,omitempty,omitzero"`
+
+	// Precompute the compaction summary in the background before it is needed. Only
+	// applies when auto-compact is on.
+	PrecomputeCompactionEnabled *bool `json:"precomputeCompactionEnabled,omitempty,omitzero"`
+
+	// Preferred OS notification channel
+	PreferredNotifChannel *AnthropicAgentSettingsPreferredNotifChannel `json:"preferredNotifChannel,omitempty,omitzero"`
+
+	// Reduce or disable animations for accessibility (spinner shimmer, flash effects,
+	// etc.)
+	PrefersReducedMotion *bool `json:"prefersReducedMotion,omitempty,omitzero"`
+
+	// Managed plugins (plugin\@marketplace ids that managed enabledPlugins sets true)
+	// whose hooks run first, outermost, in the listed order: the first id listed sees
+	// every event before any other plugin and every result after it. Managed plugins
+	// not listed here or in appendPlugins follow the listed ones; user, project and
+	// marketplace plugins come after those; then appendPlugins; then the built-in
+	// plugins. The bundled sec-default\@builtin seats itself outermost (on a machine
+	// with managed settings and for Team and Enterprise organizations) unless this
+	// list is set, in which case list sec-default\@builtin where it should sit or
+	// leave it out. Any other id that is not an enabled managed plugin is skipped; an
+	// id listed in both keys is prepended. Only honored from managed settings (or, on
+	// a machine with none, from user settings for your own plugins); ignored in
+	// project, local and --settings sources.
+	PrependPlugins []string `json:"prependPlugins,omitempty,omitzero"`
+
+	// Corporate launcher argv prefix for the background-agent supervisor, the
+	// sessions and workers it hosts, and the other covered background processes
+	// listed in the Claude Code corporate-launcher documentation. Equivalent to the
+	// CLAUDE_CODE_PROCESS_WRAPPER environment variable, which takes precedence when
+	// set. Honored from managed settings, a --settings/SDK-supplied settings file,
+	// and user settings, in that precedence order; project and local settings are
+	// ignored.
+	ProcessWrapper *string `json:"processWrapper,omitempty,omitzero"`
+
+	// Prompt cache TTL for the main conversation (interactive, -p and SDK turns, plus
+	// the helpers that run inline with it): "5m" or "1h". Unset = automatic: 1 hour
+	// on a Claude subscription within its usage limits, 5 minutes on an API key,
+	// Bedrock, Vertex or Foundry. 1-hour cache writes are billed at a higher rate;
+	// the cache stays warm across longer breaks. The CLAUDE_CODE_PROMPT_CACHE_TTL
+	// environment variable takes precedence.
+	PromptCacheTtl *AnthropicAgentSettingsPromptCacheTtl `json:"promptCacheTtl,omitempty,omitzero"`
+
+	// When false, prompt suggestions are disabled. When absent or true, prompt
+	// suggestions are enabled.
+	PromptSuggestionEnabled *bool `json:"promptSuggestionEnabled,omitempty,omitzero"`
+
+	// Shell command that outputs a Proxy-Authorization header value (EAP)
+	ProxyAuthHelper *string `json:"proxyAuthHelper,omitempty,omitzero"`
+
+	// Cloud session configuration
+	Remote *AnthropicAgentSettingsRemote `json:"remote,omitempty,omitzero"`
+
+	// Start Remote Control bridge automatically each session
+	RemoteControlAtStartup *bool `json:"remoteControlAtStartup,omitempty,omitzero"`
+
+	// Maximum Claude Code version allowed to start. If the running version is newer,
+	// Claude Code exits at startup with instructions to install an approved version.
+	// Only enforced from managed (policy) settings.
+	RequiredMaximumVersion *string `json:"requiredMaximumVersion,omitempty,omitzero"`
+
+	// Minimum Claude Code version required to start. If the running version is older,
+	// Claude Code exits at startup with instructions to update. Only enforced from
+	// managed (policy) settings.
+	RequiredMinimumVersion *string `json:"requiredMinimumVersion,omitempty,omitzero"`
+
+	// Whether file picker should respect .gitignore files (default: true). Note:
+	// .ignore files are always respected.
+	RespectGitignore *bool `json:"respectGitignore,omitempty,omitzero"`
+
+	// Whether Claude responds after an input-box ! bash command runs. Set to false to
+	// add the command output to context without a response. Default: true.
+	RespondToBashCommands *bool `json:"respondToBashCommands,omitempty,omitzero"`
+
+	// Sandbox configuration. See the linked native reference for semantics and
+	// availability.
+	Sandbox *AnthropicAgentSettingsSandbox `json:"sandbox,omitempty,omitzero"`
+
+	// When true, the plan-approval dialog offers a "clear context" option. Defaults
+	// to false.
+	ShowClearContextOnPlanAccept *bool `json:"showClearContextOnPlanAccept,omitempty,omitzero"`
+
+	// Stamp each message with its arrival time
+	ShowMessageTimestamps *bool `json:"showMessageTimestamps,omitempty,omitzero"`
+
+	// Request API-side thinking summaries and show them in the conversation and in
+	// the transcript view (ctrl+o). Set explicitly to override the default for your
+	// install.
+	ShowThinkingSummaries *bool `json:"showThinkingSummaries,omitempty,omitzero"`
+
+	// Show "Cooked for Nm Ns" after each assistant turn
+	ShowTurnDuration *bool `json:"showTurnDuration,omitempty,omitzero"`
+
+	// Fraction of the context window (in characters) reserved for the skill listing
+	// sent to Claude (default: 0.01 = 1%). When the listing exceeds this,
+	// descriptions are shortened to fit. Raise to opt in to higher per-turn context
+	// cost.
+	SkillListingBudgetFraction *float64 `json:"skillListingBudgetFraction,omitempty,omitzero"`
+
+	// Per-skill description character cap in the skill listing sent to Claude
+	// (default: 1536). Descriptions longer than this are truncated. Raise to opt in
+	// to higher per-turn context cost.
+	SkillListingMaxDescChars *float64 `json:"skillListingMaxDescChars,omitempty,omitzero"`
+
+	// Per-skill listing overrides keyed by skill name. "name-only" lists the skill
+	// without its description; "user-invocable-only" hides it from the model but
+	// keeps /name; "off" hides it from both. Absent = on.
+	SkillOverrides AnthropicAgentSettingsSkillOverrides `json:"skillOverrides,omitempty,omitzero"`
+
+	// Whether the user has accepted the bypass permissions mode dialog
+	SkipDangerousModePermissionPrompt *bool `json:"skipDangerousModePermissionPrompt,omitempty,omitzero"`
+
+	// Skip the WebFetch blocklist check for enterprise environments with restrictive
+	// security policies
+	SkipWebFetchPreflight *bool `json:"skipWebFetchPreflight,omitempty,omitzero"`
+
+	// Underline misspelled words in the prompt input as you type, using an installed
+	// aspell, hunspell or ispell (off unless "enabled" is true; does nothing if none
+	// is installed). Read from user, flag and managed settings only (the whole block
+	// from the highest-precedence of those applies); ignored in project
+	// .claude/settings.json and .claude/settings.local.json.
+	Spellcheck *AnthropicAgentSettingsSpellcheck `json:"spellcheck,omitempty,omitzero"`
+
+	// Whether to show tips in the spinner
+	SpinnerTipsEnabled *bool `json:"spinnerTipsEnabled,omitempty,omitzero"`
+
+	// Add your organization's own tips to the spinner tip rotation. tips: strings or
+	// {id, text, cooldownSessions?, priority?} objects; tipsFile: a JSON file of the
+	// same; label: prefix shown before your tips; excludeDefault: if true, only show
+	// your tips (default: false).
+	SpinnerTipsOverride *AnthropicAgentSettingsSpinnerTipsOverride `json:"spinnerTipsOverride,omitempty,omitzero"`
+
+	// Customize spinner verbs. mode: "append" adds verbs to defaults, "replace" uses
+	// only your verbs.
+	SpinnerVerbs *AnthropicAgentSettingsSpinnerVerbs `json:"spinnerVerbs,omitempty,omitzero"`
+
+	// SSH connection configurations for remote environments. Typically set in managed
+	// settings by enterprise administrators to pre-configure SSH connections for team
+	// members.
+	SshConfigs []AnthropicAgentSettingsSshConfigsElem `json:"sshConfigs,omitempty,omitzero"`
+
+	// Custom status line display configuration
+	StatusLine *AnthropicAgentSettingsStatusLine `json:"statusLine,omitempty,omitzero"`
+
+	// Enterprise strict list of allowed marketplace sources. When set in managed
+	// settings, ONLY these sources can be added as marketplaces. Entries match
+	// exactly, except that a github entry may use the owner-wildcard form
+	// {"source":"github","repo":"owner/*"} to allow every repository under that
+	// owner. The check happens BEFORE downloading, so blocked sources never touch the
+	// filesystem. Note: this is a policy gate only — it does NOT register
+	// marketplaces. To pre-register allowed marketplaces for users, also set
+	// extraKnownMarketplaces.
+	StrictKnownMarketplaces []json.RawMessage `json:"strictKnownMarketplaces,omitempty,omitzero"`
+
+	// When set in managed settings, blocks non-plugin customization sources for the
+	// listed surfaces. Array form locks specific surfaces (e.g. ["skills", "hooks"]);
+	// `true` locks all four; `false` is an explicit no-op. Blocked:
+	// ~/.claude/{surface}/, .claude/{surface}/ (project), settings.json hooks,
+	// .mcp.json. NOT blocked: managed (policySettings) sources, plugin-provided
+	// customizations. Composes with strictKnownMarketplaces for end-to-end admin
+	// control — plugins gated by marketplace allowlist, everything else blocked here.
+	StrictPluginOnlyCustomization *json.RawMessage `json:"strictPluginOnlyCustomization,omitempty,omitzero"`
+
+	// Prompt cache TTL for everything outside the main conversation — subagents,
+	// workflows, background and helper requests: "5m" or "1h". Unset = automatic (5
+	// minutes unless ENABLE_PROMPT_CACHING_1H=1). The
+	// CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL environment variable takes precedence.
+	SubagentPromptCacheTtl *AnthropicAgentSettingsSubagentPromptCacheTtl `json:"subagentPromptCacheTtl,omitempty,omitzero"`
+
+	// Custom per-subagent status line shown in the agent panel; receives row context
+	// as JSON on stdin
+	SubagentStatusLine *AnthropicAgentSettingsSubagentStatusLine `json:"subagentStatusLine,omitempty,omitzero"`
+
+	// When safeguards flag a message, automatically switch to a different model to
+	// keep chatting. When off, your session will pause instead.
+	SwitchModelsOnFlag *bool `json:"switchModelsOnFlag,omitempty,omitzero"`
+
+	// Set to false to turn off syncing of the plugins you have enabled on claude.ai.
+	// In your user settings (or managed settings): nothing more is downloaded,
+	// previously synced plugins (~/.claude/plugins/synced) are hidden from every
+	// session started afterwards and moved to ~/.claude/plugins/.trash at the next
+	// launch (deleted after cleanupPeriodDays; re-downloaded, not restored, if you
+	// re-enable). In .claude/settings.local.json or --settings: downloads stop and
+	// synced plugins are hidden for sessions in that workspace or invocation only
+	// (nothing is moved). Not read from project settings (.claude/settings.json).
+	// Only false is honored — the feature is enabled server-side for your account, so
+	// setting true does not turn it on early. While it is on, synced plugins load in
+	// every session like plugins you installed yourself (a plugin you installed with
+	// the same name takes precedence), are re-synced at each launch, and are removed
+	// when you disable them on claude.ai. Only applies when signed in with your
+	// Claude account.
+	SyncClaudeAiPlugins *bool `json:"syncClaudeAiPlugins,omitempty,omitzero"`
+
+	// Set to false to turn off syncing of the skills you have enabled on claude.ai.
+	// In your user settings (or managed settings): nothing more is downloaded,
+	// previously synced skills (~/.claude/skills/synced) can no longer be run, are
+	// hidden from every session started afterwards, and are moved to
+	// ~/.claude/skills/.trash at the next launch (deleted after cleanupPeriodDays;
+	// re-downloaded, not restored, if you re-enable). In .claude/settings.local.json
+	// or --settings: downloads stop and synced skills are blocked and hidden for
+	// sessions in that workspace or invocation only (nothing is moved). Not read from
+	// project settings (.claude/settings.json). Only false is honored — the feature
+	// is enabled server-side for your account, so setting true does not turn it on
+	// early. While it is on, synced skills are available in every session, re-synced
+	// every 10 minutes, and removed when you disable them on claude.ai. Only applies
+	// when signed in with your Claude account.
+	SyncClaudeAiSkills *bool `json:"syncClaudeAiSkills,omitempty,omitzero"`
+
+	// Whether to disable syntax highlighting in diffs
+	SyntaxHighlightingDisabled *bool `json:"syntaxHighlightingDisabled,omitempty,omitzero"`
+
+	// Deprecated: no longer has any effect (the TaskOutput tool was removed). Read a
+	// background task's output file with the Read tool instead.
+	TaskOutputMaxChars *float64 `json:"taskOutputMaxChars,omitempty,omitzero"`
+
+	// How spawned teammates execute (tmux, iterm2, in-process, auto)
+	TeammateMode *AnthropicAgentSettingsTeammateMode `json:"teammateMode,omitempty,omitzero"`
+
+	// Emit OSC 9;4 progress sequences during long operations
+	TerminalProgressBarEnabled *bool `json:"terminalProgressBarEnabled,omitempty,omitzero"`
+
+	// Whether /rename updates the terminal tab title (defaults to true). Set to false
+	// to keep auto-generated topic titles.
+	TerminalTitleFromRename *bool `json:"terminalTitleFromRename,omitempty,omitzero"`
+
+	// Color theme for the UI
+	Theme *string `json:"theme,omitempty,omitzero"`
+
+	// Clock format for times shown in the UI: "auto" (default, follows the locale),
+	// "12-hour", "24-hour", "24-hour-utc" ("18:05Z"), or a strftime pattern such as
+	// "%H:%M" (any value containing "%"; other values read as "auto"). A pattern
+	// replaces the time everywhere; message timestamps show only the pattern, so
+	// include %Y-%m-%d for the date. /config offers the presets; a pattern is set
+	// here.
+	TimeFormat *string `json:"timeFormat,omitempty,omitzero"`
+
+	// IANA time zone for times shown in the UI, e.g. "UTC" or "Europe/Dublin".
+	// Default: the system time zone. An unknown name falls back to the system time
+	// zone.
+	TimeZone *string `json:"timeZone,omitempty,omitzero"`
+
+	// Enable the todo / task tracking panel
+	TodoFeatureEnabled *bool `json:"todoFeatureEnabled,omitempty,omitzero"`
+
+	// Terminal UI renderer. "fullscreen" uses the flicker-free alt-screen renderer
+	// with virtualized scrollback (equivalent to CLAUDE_CODE_NO_FLICKER=1). "default"
+	// uses the classic main-screen renderer.
+	Tui *AnthropicAgentSettingsTui `json:"tui,omitempty,omitzero"`
+
+	// Enable ultracode for the session: xhigh effort plus standing dynamic-workflow
+	// orchestration. Session-scoped — typically provided via --settings or the
+	// apply_flag_settings control request; interactive toggles never persist it.
+	// Requires workflows to be enabled and an xhigh-capable model.
+	Ultracode *bool `json:"ultracode,omitempty,omitzero"`
+
+	// Show full tool output instead of truncated summaries
+	Verbose *bool `json:"verbose,omitempty,omitzero"`
+
+	// Default transcript view mode on startup
+	ViewMode *AnthropicAgentSettingsViewMode `json:"viewMode,omitempty,omitzero"`
+
+	// Vim INSERT-mode key-sequence remaps, e.g. {"jj": "<Esc>"}. Each key is exactly
+	// two printable characters typed in sequence; "<Esc>" (return to NORMAL mode) is
+	// the only supported target. Applies when editorMode is "vim".
+	VimInsertModeRemaps AnthropicAgentSettingsVimInsertModeRemaps `json:"vimInsertModeRemaps,omitempty,omitzero"`
+
+	// Voice mode settings (hold-to-talk / tap-to-toggle dictation)
+	Voice *AnthropicAgentSettingsVoice `json:"voice,omitempty,omitzero"`
+
+	// Enable voice mode (hold-to-talk dictation)
+	VoiceEnabled *bool `json:"voiceEnabled,omitempty,omitzero"`
+
+	// Ramp mouse-wheel scroll speed during fast scrolls (fullscreen mode only)
+	WheelScrollAccelerationEnabled *bool `json:"wheelScrollAccelerationEnabled,omitempty,omitzero"`
+
+	// Enable the "ultracode" keyword trigger: including the keyword in a prompt opts
+	// that turn into the Workflow tool. Set to false to disable the trigger. Default:
+	// true.
+	WorkflowKeywordTriggerEnabled *bool `json:"workflowKeywordTriggerEnabled,omitempty,omitzero"`
+
+	// Advisory size guideline for the dynamic workflows Claude writes: "small" aims
+	// for fewer than 5 agents, "medium" fewer than 10, "large" fewer than 50, and
+	// "unrestricted" sends no guideline. Unset defaults to "medium", or "small" on
+	// Pro plans. A value here — including from managed settings — takes precedence
+	// over the "Dynamic workflow size" choice in /config, and that /config row is
+	// hidden while a settings file provides the key. This is a guideline, not an
+	// enforced limit.
+	WorkflowSizeGuideline *AnthropicAgentSettingsWorkflowSizeGuideline `json:"workflowSizeGuideline,omitempty,omitzero"`
+
+	// Git worktree configuration: the CLI --worktree flag, EnterWorktree and agent
+	// isolation, plus the location Claude Code Desktop uses for SSH-session worktrees
+	// on this machine.
+	Worktree *AnthropicAgentSettingsWorktree `json:"worktree,omitempty,omitzero"`
+
+	// When set to true in either admin-only Windows source — the HKLM
+	// SOFTWARE/Policies/ClaudeCode registry key or C:/Program
+	// Files/ClaudeCode/managed-settings.json — WSL reads managed settings from the
+	// full Windows policy chain (HKLM, C:/Program Files/ClaudeCode via DrvFs, HKCU)
+	// in addition to /etc/claude-code. Windows sources take priority. The flag is
+	// also required in HKCU itself for HKCU policy to apply on WSL (double opt-in:
+	// admin enables the chain, user confirms HKCU). On native Windows the flag has no
+	// effect.
+	WslInheritsWindowsSettings *bool `json:"wslInheritsWindowsSettings,omitempty,omitzero"`
+
+	AdditionalProperties interface{} `mapstructure:",remain"`
+}
+
+// Alias for extraKnownMarketplaces: this key is read exactly as if it were spelled
+// extraKnownMarketplaces. Do not set both in one file — if both appear, this key
+// is ignored with a warning. Claude Code may rewrite this key as
+// extraKnownMarketplaces when it updates the file. Clients older than this alias
+// ignore it, so prefer extraKnownMarketplaces while older Claude Code versions
+// still share the same settings.
+type AnthropicAgentSettingsAdditionalMarketplaces map[string]struct {
+	// Whether to automatically update this marketplace and its installed plugins on
+	// startup
+	AutoUpdate *bool `json:"autoUpdate,omitempty,omitzero"`
+
+	// Local cache path where marketplace manifest is stored (auto-generated if not
+	// provided)
+	InstallLocation *string `json:"installLocation,omitempty,omitzero"`
+
+	// Where to fetch the marketplace from
+	Source json.RawMessage `json:"source"`
+}
+
+// Allowed Channel Plugins value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentSettingsAllowedChannelPluginsElem struct {
+	// Marketplace configuration. See the linked native reference for semantics and
+	// availability.
+	Marketplace string `json:"marketplace"`
+
+	// Plugin configuration. See the linked native reference for semantics and
+	// availability.
+	Plugin string `json:"plugin"`
+}
+
+// Allowed MCP Servers value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentSettingsAllowedMcpServersElem struct {
+	// Command array [command, ...args] to match exactly for allowed stdio servers
+	//
+	// \@minItems 1
+	ServerCommand []string `json:"serverCommand,omitempty,omitzero"`
+
+	// Name of the MCP server that users are allowed to configure
+	ServerName *string `json:"serverName,omitempty,omitzero"`
+
+	// URL pattern with wildcard support (e.g., "https://*.example.com/*") for allowed
+	// remote MCP servers
+	ServerUrl *string `json:"serverUrl,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsAskUserQuestionTimeout string
+
+const AnthropicAgentSettingsAskUserQuestionTimeoutA10M AnthropicAgentSettingsAskUserQuestionTimeout = "10m"
+const AnthropicAgentSettingsAskUserQuestionTimeoutA5M AnthropicAgentSettingsAskUserQuestionTimeout = "5m"
+const AnthropicAgentSettingsAskUserQuestionTimeoutA60S AnthropicAgentSettingsAskUserQuestionTimeout = "60s"
+const AnthropicAgentSettingsAskUserQuestionTimeoutNever AnthropicAgentSettingsAskUserQuestionTimeout = "never"
+
+// Customize attribution text for commits and PRs. Each field defaults to the
+// standard Claude Code attribution if not set.
+type AnthropicAgentSettingsAttribution struct {
+	// Attribution text for git commits, including any trailers. Empty string hides
+	// attribution.
+	Commit *string `json:"commit,omitempty,omitzero"`
+
+	// Attribution text for pull request descriptions. Empty string hides attribution.
+	Pr *string `json:"pr,omitempty,omitzero"`
+
+	// Whether to append the claude.ai session link to commits and PRs created from
+	// web or Remote Control sessions (default: true). Set to false to omit the
+	// Claude-Session trailer and PR-body link.
+	SessionUrl *bool `json:"sessionUrl,omitempty,omitzero"`
+
+	AdditionalProperties interface{} `mapstructure:",remain"`
+}
+
+type AnthropicAgentSettingsAutoUpdatesChannel string
+
+const AnthropicAgentSettingsAutoUpdatesChannelLatest AnthropicAgentSettingsAutoUpdatesChannel = "latest"
+const AnthropicAgentSettingsAutoUpdatesChannelRc AnthropicAgentSettingsAutoUpdatesChannel = "rc"
+const AnthropicAgentSettingsAutoUpdatesChannelStable AnthropicAgentSettingsAutoUpdatesChannel = "stable"
+
+type AnthropicAgentSettingsCrossSessionInbound string
+
+const AnthropicAgentSettingsCrossSessionInboundAccept AnthropicAgentSettingsCrossSessionInbound = "accept"
+const AnthropicAgentSettingsCrossSessionInboundHold AnthropicAgentSettingsCrossSessionInbound = "hold"
+const AnthropicAgentSettingsCrossSessionInboundRefuse AnthropicAgentSettingsCrossSessionInbound = "refuse"
+
+type AnthropicAgentSettingsDaemonColdStart string
+
+const AnthropicAgentSettingsDaemonColdStartAsk AnthropicAgentSettingsDaemonColdStart = "ask"
+const AnthropicAgentSettingsDaemonColdStartTransient AnthropicAgentSettingsDaemonColdStart = "transient"
+
+type AnthropicAgentSettingsDefaultShell string
+
+const AnthropicAgentSettingsDefaultShellBash AnthropicAgentSettingsDefaultShell = "bash"
+const AnthropicAgentSettingsDefaultShellPowershell AnthropicAgentSettingsDefaultShell = "powershell"
+
+type AnthropicAgentSettingsDefaultView string
+
+const AnthropicAgentSettingsDefaultViewChat AnthropicAgentSettingsDefaultView = "chat"
+const AnthropicAgentSettingsDefaultViewTranscript AnthropicAgentSettingsDefaultView = "transcript"
+
+// Denied MCP Servers value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAgentSettingsDeniedMcpServersElem struct {
+	// Command array [command, ...args] to match exactly for blocked stdio servers
+	//
+	// \@minItems 1
+	ServerCommand []string `json:"serverCommand,omitempty,omitzero"`
+
+	// Name of the MCP server that is explicitly blocked
+	ServerName *string `json:"serverName,omitempty,omitzero"`
+
+	// URL pattern with wildcard support (e.g., "https://*.example.com/*") for blocked
+	// remote MCP servers
+	ServerUrl *string `json:"serverUrl,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsDialogExpiry string
+
+const AnthropicAgentSettingsDialogExpiryA10M AnthropicAgentSettingsDialogExpiry = "10m"
+const AnthropicAgentSettingsDialogExpiryA5M AnthropicAgentSettingsDialogExpiry = "5m"
+const AnthropicAgentSettingsDialogExpiryA60S AnthropicAgentSettingsDialogExpiry = "60s"
+const AnthropicAgentSettingsDialogExpiryNever AnthropicAgentSettingsDialogExpiry = "never"
+
+type AnthropicAgentSettingsEditorMode string
+
+const AnthropicAgentSettingsEditorModeNormal AnthropicAgentSettingsEditorMode = "normal"
+const AnthropicAgentSettingsEditorModeVim AnthropicAgentSettingsEditorMode = "vim"
+
+type AnthropicAgentSettingsEffortLevel string
+
+const AnthropicAgentSettingsEffortLevelHigh AnthropicAgentSettingsEffortLevel = "high"
+const AnthropicAgentSettingsEffortLevelLow AnthropicAgentSettingsEffortLevel = "low"
+const AnthropicAgentSettingsEffortLevelMedium AnthropicAgentSettingsEffortLevel = "medium"
+const AnthropicAgentSettingsEffortLevelXhigh AnthropicAgentSettingsEffortLevel = "xhigh"
+
+// Enabled plugins using plugin-id\@marketplace-id format. Example: {
+// "formatter\@anthropic-tools": true }. Also supports extended format with version
+// constraints. Settings precedence is user < project < local < flag < policy, so
+// to disable a plugin that project settings enable, set it to false in
+// .claude/settings.local.json — setting false in ~/.claude/settings.json is
+// overridden by the project.
+type AnthropicAgentSettingsEnabledPlugins map[string]json.RawMessage
+
+// Environment variables to set for Claude Code sessions
+type AnthropicAgentSettingsEnv map[string]string
+
+// Additional marketplaces to make available for this repository. Typically used in
+// repository .claude/settings.json to ensure team members have required plugin
+// sources.
+type AnthropicAgentSettingsExtraKnownMarketplaces map[string]struct {
+	// Whether to automatically update this marketplace and its installed plugins on
+	// startup
+	AutoUpdate *bool `json:"autoUpdate,omitempty,omitzero"`
+
+	// Local cache path where marketplace manifest is stored (auto-generated if not
+	// provided)
+	InstallLocation *string `json:"installLocation,omitempty,omitzero"`
+
+	// Where to fetch the marketplace from
+	Source json.RawMessage `json:"source"`
+}
+
+type AnthropicAgentSettingsFeedbackDrafts string
+
+const AnthropicAgentSettingsFeedbackDraftsNotify AnthropicAgentSettingsFeedbackDrafts = "notify"
+const AnthropicAgentSettingsFeedbackDraftsOff AnthropicAgentSettingsFeedbackDrafts = "off"
+const AnthropicAgentSettingsFeedbackDraftsQuiet AnthropicAgentSettingsFeedbackDrafts = "quiet"
+
+// Custom file suggestion configuration for \@ mentions
+type AnthropicAgentSettingsFileSuggestion struct {
+	// Command configuration. See the linked native reference for semantics and
+	// availability.
+	Command string `json:"command"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type string `json:"type"`
+}
+
+type AnthropicAgentSettingsForceLoginMethod string
+
+const AnthropicAgentSettingsForceLoginMethodClaudeai AnthropicAgentSettingsForceLoginMethod = "claudeai"
+const AnthropicAgentSettingsForceLoginMethodConsole AnthropicAgentSettingsForceLoginMethod = "console"
+const AnthropicAgentSettingsForceLoginMethodGateway AnthropicAgentSettingsForceLoginMethod = "gateway"
+
+// Custom commands to run before/after tool executions
+type AnthropicAgentSettingsHooks map[string][]struct {
+	// List of hooks to execute when the matcher matches
+	Hooks []json.RawMessage `json:"hooks"`
+
+	// String pattern to match (e.g. tool names like "Write")
+	Matcher *string `json:"matcher,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsKeybindingFlavor string
+
+const AnthropicAgentSettingsKeybindingFlavorClassic AnthropicAgentSettingsKeybindingFlavor = "classic"
+const AnthropicAgentSettingsKeybindingFlavorReadline AnthropicAgentSettingsKeybindingFlavor = "readline"
+
+// MCP servers the organization provides to every user, keyed by server name, each
+// with the .mcp.json entry shape; only "http" and "sse" servers are accepted
+// (nothing that names a program to run, no ${VAR} references). Honored from
+// managed settings only; users cannot remove them, deniedMcpServers still applies,
+// and they need no allowedMcpServers entry. Not read in Claude Desktop's Code tab
+// on a third-party deployment or in Cowork sessions, where Claude Desktop supplies
+// and locks the session's MCP servers itself.
+type AnthropicAgentSettingsManagedMcpServers map[string]map[string]interface{}
+
+type AnthropicAgentSettingsManagedSourcesBehavior string
+
+const AnthropicAgentSettingsManagedSourcesBehaviorFirstWins AnthropicAgentSettingsManagedSourcesBehavior = "first-wins"
+const AnthropicAgentSettingsManagedSourcesBehaviorMerge AnthropicAgentSettingsManagedSourcesBehavior = "merge"
+
+type AnthropicAgentSettingsMaxEffortLevel string
+
+const AnthropicAgentSettingsMaxEffortLevelHigh AnthropicAgentSettingsMaxEffortLevel = "high"
+const AnthropicAgentSettingsMaxEffortLevelLow AnthropicAgentSettingsMaxEffortLevel = "low"
+const AnthropicAgentSettingsMaxEffortLevelMax AnthropicAgentSettingsMaxEffortLevel = "max"
+const AnthropicAgentSettingsMaxEffortLevelMedium AnthropicAgentSettingsMaxEffortLevel = "medium"
+const AnthropicAgentSettingsMaxEffortLevelXhigh AnthropicAgentSettingsMaxEffortLevel = "xhigh"
+
+// Override mapping from Anthropic model ID (e.g. "claude-opus-4-6") to
+// provider-specific model ID (e.g. a Bedrock inference profile ARN). Typically set
+// in managed settings by enterprise administrators.
+type AnthropicAgentSettingsModelOverrides map[string]string
+
+// Curate the /model picker: an ordered list of models with your own labels,
+// independent of the built-in lineup and of Claude Code releases. availableModels
+// still applies to these rows. Honored from managed, --settings/SDK, and user
+// settings only (not from a project checkout); the highest-precedence of those
+// that defines modelPicker wins outright (no merging across sources). Typically
+// set in managed settings by enterprise administrators.
+type AnthropicAgentSettingsModelPicker struct {
+	// Rows to show in the /model picker, in order.
+	Options []AnthropicAgentSettingsModelPickerOptionsElem `json:"options"`
+
+	// When true, the picker shows only the Default row and these options — the
+	// built-in lineup, gateway-discovered models and ANTHROPIC_CUSTOM_MODEL_OPTION
+	// are hidden. When false or unset, these options are added after the built-in
+	// lineup.
+	ReplaceBuiltInOptions *bool `json:"replaceBuiltInOptions,omitempty,omitzero"`
+}
+
+// Options value configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsModelPickerOptionsElem struct {
+	// For a model this version of Claude Code does not know: the ID of a model it
+	// does know (e.g. "claude-opus-4-8") whose client-side handling — prompt profile,
+	// capability and effort defaults — applies to it. Changes neither the row's label
+	// nor the model ID sent. Without it, a model-catalog row for a model this version
+	// does not know is not offered until Claude Code is updated.
+	BehavesAs *string `json:"behavesAs,omitempty,omitzero"`
+
+	// Row subtitle. Defaults to a generic description.
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// Row title. Defaults to the model name.
+	Label *string `json:"label,omitempty,omitzero"`
+
+	// Model to select, taken verbatim: an alias ("opus"), an Anthropic model ID, or a
+	// provider-format ID (Vertex, Bedrock, gateway). Same values --model accepts.
+	Model string `json:"model"`
+}
+
+// Price usage at your organization's contracted rates instead of list price.
+// Affects every spend figure Claude Code reports — /cost, the status line, the SDK
+// total_cost_usd, --max-budget-usd, and the OpenTelemetry cost metric and events —
+// which remain USD estimates, not an invoice (the per-Mtok price labels in /model
+// stay at list). "overrides" maps a model ID to its USD-per-million-token rates
+// (input, output, cacheRead, cacheWrite — all four required, each 0 to 10000;
+// cacheWrite prices both 5-minute and 1-hour cache writes). A matching row is
+// charged exactly as written; fast-mode and US-data-residency surcharges are not
+// added on top. A key Claude Code itself uses for a built-in model — its ID such
+// as "claude-sonnet-4-6", or its first-party, Bedrock (any or no region prefix),
+// Vertex or Foundry ID — covers every dated and provider form of that model; any
+// other key — a gateway model alias, or a spelling Claude Code does not itself use
+// — matches that model ID only (case-insensitive), and such an exact match wins
+// over a built-in row. On Bedrock an application inference profile is matched by
+// its backing model. An invalid row or multiplier is reported and skipped; the
+// rest still apply. "multiplier" in (0, 10] scales every computed cost, overridden
+// or not (0.85 = 85% of the price, 1.2 = 120%). Only honored from managed settings
+// (server-managed, MDM / OS policy, or managed-settings.json), or — when none of
+// those sets it — when supplied by a host application that manages the model
+// provider; ignored in user, project, local and --settings sources.
+type AnthropicAgentSettingsModelPricing struct {
+	// Multiplier configuration. See the linked native reference for semantics and
+	// availability.
+	Multiplier *float64 `json:"multiplier,omitempty,omitzero"`
+
+	// Overrides configuration. See the linked native reference for semantics and
+	// availability.
+	Overrides AnthropicAgentSettingsModelPricingOverrides `json:"overrides,omitempty,omitzero"`
+}
+
+// Overrides configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsModelPricingOverrides map[string]struct {
+	// Cache Read configuration. See the linked native reference for semantics and
+	// availability.
+	CacheRead float64 `json:"cacheRead"`
+
+	// Cache Write configuration. See the linked native reference for semantics and
+	// availability.
+	CacheWrite float64 `json:"cacheWrite"`
+
+	// Input configuration. See the linked native reference for semantics and
+	// availability.
+	Input float64 `json:"input"`
+
+	// Output configuration. See the linked native reference for semantics and
+	// availability.
+	Output float64 `json:"output"`
+}
+
+// Per-model settings keyed by canonical model name.
+type AnthropicAgentSettingsModelSettings map[string]struct {
+	// Persisted effort level for this model.
+	EffortLevel *AnthropicAgentSettingsModelSettingsValueEffortLevel `json:"effortLevel,omitempty,omitzero"`
+
+	// Maximum effort level for this model. Within one settings file it replaces the
+	// top-level maxEffortLevel for the model ("max" exempts it); across settings
+	// files the lowest applicable value wins. Keyed like effortLevel: the canonical
+	// model name also matches its dated, [1m], Bedrock and Vertex spellings.
+	MaxEffortLevel *AnthropicAgentSettingsModelSettingsValueMaxEffortLevel `json:"maxEffortLevel,omitempty,omitzero"`
+
+	AdditionalProperties interface{} `mapstructure:",remain"`
+}
+
+type AnthropicAgentSettingsModelSettingsValueEffortLevel string
+
+const AnthropicAgentSettingsModelSettingsValueEffortLevelHigh AnthropicAgentSettingsModelSettingsValueEffortLevel = "high"
+const AnthropicAgentSettingsModelSettingsValueEffortLevelLow AnthropicAgentSettingsModelSettingsValueEffortLevel = "low"
+const AnthropicAgentSettingsModelSettingsValueEffortLevelMedium AnthropicAgentSettingsModelSettingsValueEffortLevel = "medium"
+const AnthropicAgentSettingsModelSettingsValueEffortLevelXhigh AnthropicAgentSettingsModelSettingsValueEffortLevel = "xhigh"
+
+type AnthropicAgentSettingsModelSettingsValueMaxEffortLevel string
+
+const AnthropicAgentSettingsModelSettingsValueMaxEffortLevelHigh AnthropicAgentSettingsModelSettingsValueMaxEffortLevel = "high"
+const AnthropicAgentSettingsModelSettingsValueMaxEffortLevelLow AnthropicAgentSettingsModelSettingsValueMaxEffortLevel = "low"
+const AnthropicAgentSettingsModelSettingsValueMaxEffortLevelMax AnthropicAgentSettingsModelSettingsValueMaxEffortLevel = "max"
+const AnthropicAgentSettingsModelSettingsValueMaxEffortLevelMedium AnthropicAgentSettingsModelSettingsValueMaxEffortLevel = "medium"
+const AnthropicAgentSettingsModelSettingsValueMaxEffortLevelXhigh AnthropicAgentSettingsModelSettingsValueMaxEffortLevel = "xhigh"
+
+type AnthropicAgentSettingsParentSettingsBehavior string
+
+const AnthropicAgentSettingsParentSettingsBehaviorFirstWins AnthropicAgentSettingsParentSettingsBehavior = "first-wins"
+const AnthropicAgentSettingsParentSettingsBehaviorMerge AnthropicAgentSettingsParentSettingsBehavior = "merge"
+
+// Tool usage permissions configuration
+type AnthropicAgentSettingsPermissions struct {
+	// Additional directories to include in the permission scope
+	AdditionalDirectories []string `json:"additionalDirectories,omitempty,omitzero"`
+
+	// List of permission rules for allowed operations
+	Allow []string `json:"allow,omitempty,omitzero"`
+
+	// List of permission rules that should always prompt for confirmation
+	Ask []string `json:"ask,omitempty,omitzero"`
+
+	// Refuse file-tool reads (Read, Grep, Glob, LSP) outside the working directories
+	// in every permission mode; true in any settings source wins. Also set when the
+	// user picks "block" on the one-time auto-mode prompt for a read outside the
+	// working directories.
+	BlockReadsOutsideWorkingDirectories *bool `json:"blockReadsOutsideWorkingDirectories,omitempty,omitzero"`
+
+	// Default permission mode when Claude Code needs access ('manual' is accepted as
+	// an alias for 'default')
+	DefaultMode *AnthropicAgentSettingsPermissionsDefaultMode `json:"defaultMode,omitempty,omitzero"`
+
+	// List of permission rules for denied operations
+	Deny []string `json:"deny,omitempty,omitzero"`
+
+	// Disable the ability to bypass permission prompts
+	DisableBypassPermissionsMode *string `json:"disableBypassPermissionsMode,omitempty,omitzero"`
+
+	AdditionalProperties interface{} `mapstructure:",remain"`
+}
+
+type AnthropicAgentSettingsPermissionsDefaultMode string
+
+const AnthropicAgentSettingsPermissionsDefaultModeAcceptEdits AnthropicAgentSettingsPermissionsDefaultMode = "acceptEdits"
+const AnthropicAgentSettingsPermissionsDefaultModeAuto AnthropicAgentSettingsPermissionsDefaultMode = "auto"
+const AnthropicAgentSettingsPermissionsDefaultModeBypassPermissions AnthropicAgentSettingsPermissionsDefaultMode = "bypassPermissions"
+const AnthropicAgentSettingsPermissionsDefaultModeDefault AnthropicAgentSettingsPermissionsDefaultMode = "default"
+const AnthropicAgentSettingsPermissionsDefaultModeDontAsk AnthropicAgentSettingsPermissionsDefaultMode = "dontAsk"
+const AnthropicAgentSettingsPermissionsDefaultModePlan AnthropicAgentSettingsPermissionsDefaultMode = "plan"
+
+// Per-plugin configuration including MCP server user configs, keyed by plugin ID
+// (plugin\@marketplace format)
+type AnthropicAgentSettingsPluginConfigs map[string]json.RawMessage
+
+// Executable that computes managed settings at startup. Honored only from
+// admin-controlled policy sources.
+type AnthropicAgentSettingsPolicyHelper struct {
+	// Absolute path to the helper executable
+	Path string `json:"path"`
+
+	// Refresh Interval Ms configuration. See the linked native reference for
+	// semantics and availability.
+	RefreshIntervalMs *json.RawMessage `json:"refreshIntervalMs,omitempty,omitzero"`
+
+	// Timeout Ms configuration. See the linked native reference for semantics and
+	// availability.
+	TimeoutMs *float64 `json:"timeoutMs,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsPreferredNotifChannel string
+
+const AnthropicAgentSettingsPreferredNotifChannelAuto AnthropicAgentSettingsPreferredNotifChannel = "auto"
+const AnthropicAgentSettingsPreferredNotifChannelGhostty AnthropicAgentSettingsPreferredNotifChannel = "ghostty"
+const AnthropicAgentSettingsPreferredNotifChannelIterm2 AnthropicAgentSettingsPreferredNotifChannel = "iterm2"
+const AnthropicAgentSettingsPreferredNotifChannelIterm2WithBell AnthropicAgentSettingsPreferredNotifChannel = "iterm2_with_bell"
+const AnthropicAgentSettingsPreferredNotifChannelKitty AnthropicAgentSettingsPreferredNotifChannel = "kitty"
+const AnthropicAgentSettingsPreferredNotifChannelNotificationsDisabled AnthropicAgentSettingsPreferredNotifChannel = "notifications_disabled"
+const AnthropicAgentSettingsPreferredNotifChannelTerminalBell AnthropicAgentSettingsPreferredNotifChannel = "terminal_bell"
+
+type AnthropicAgentSettingsPromptCacheTtl string
+
+const AnthropicAgentSettingsPromptCacheTtlA1H AnthropicAgentSettingsPromptCacheTtl = "1h"
+const AnthropicAgentSettingsPromptCacheTtlA5M AnthropicAgentSettingsPromptCacheTtl = "5m"
+
+// Cloud session configuration
+type AnthropicAgentSettingsRemote struct {
+	// Default environment ID to use for cloud sessions
+	DefaultEnvironmentId *string `json:"defaultEnvironmentId,omitempty,omitzero"`
+}
+
+// Sandbox configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsSandbox struct {
+	// macOS only: Allow sandboxed commands to send Apple Events (and look up the
+	// appleeventsd Mach service). Needed for `open`, `osascript`, and browser-based
+	// auth flows that open URLs. **Removes code-execution isolation** — sandboxed
+	// commands can launch other applications unsandboxed with no user prompt, and can
+	// script running apps (e.g. Terminal) subject to the user's per-app TCC
+	// automation consent. Only honored from user, managed/policy, or CLI (--settings)
+	// settings — project settings (.claude/settings.json and
+	// .claude/settings.local.json) are ignored. Default: false
+	AllowAppleEvents *bool `json:"allowAppleEvents,omitempty,omitzero"`
+
+	// Allow commands to run outside the sandbox via the dangerouslyDisableSandbox
+	// parameter. When false, the dangerouslyDisableSandbox parameter is completely
+	// ignored and all commands must run sandboxed. Default: true.
+	AllowUnsandboxedCommands *bool `json:"allowUnsandboxedCommands,omitempty,omitzero"`
+
+	// Auto Allow Bash If Sandboxed configuration. See the linked native reference for
+	// semantics and availability.
+	AutoAllowBashIfSandboxed *bool `json:"autoAllowBashIfSandboxed,omitempty,omitzero"`
+
+	// Linux/WSL only: Absolute path to the bwrap (bubblewrap) binary. Overrides
+	// auto-detection via PATH. Only honored from admin-controlled managed settings.
+	BwrapPath *string `json:"bwrapPath,omitempty,omitzero"`
+
+	// Credentials configuration. See the linked native reference for semantics and
+	// availability.
+	Credentials *AnthropicAgentSettingsSandboxCredentials `json:"credentials,omitempty,omitzero"`
+
+	// Enable Weaker Nested Sandbox configuration. See the linked native reference for
+	// semantics and availability.
+	EnableWeakerNestedSandbox *bool `json:"enableWeakerNestedSandbox,omitempty,omitzero"`
+
+	// macOS only: Allow access to com.apple.trustd.agent in the sandbox. Needed for
+	// Go-based CLI tools (gh, gcloud, terraform, etc.) to verify TLS certificates
+	// when using httpProxyPort with a MITM proxy and custom CA. **Reduces security**
+	// — opens a potential data exfiltration vector through the trustd service.
+	// Default: false
+	EnableWeakerNetworkIsolation *bool `json:"enableWeakerNetworkIsolation,omitempty,omitzero"`
+
+	// Enabled configuration. See the linked native reference for semantics and
+	// availability.
+	Enabled *bool `json:"enabled,omitempty,omitzero"`
+
+	// Excluded Commands configuration. See the linked native reference for semantics
+	// and availability.
+	ExcludedCommands []string `json:"excludedCommands,omitempty,omitzero"`
+
+	// Exit with an error at startup if sandbox.enabled is true but the sandbox cannot
+	// start (missing dependencies or unsupported platform). When false (default), a
+	// warning is shown and commands run unsandboxed. Intended for managed-settings
+	// deployments that require sandboxing as a hard gate.
+	FailIfUnavailable *bool `json:"failIfUnavailable,omitempty,omitzero"`
+
+	// Filesystem configuration. See the linked native reference for semantics and
+	// availability.
+	Filesystem *AnthropicAgentSettingsSandboxFilesystem `json:"filesystem,omitempty,omitzero"`
+
+	// Ignore Violations configuration. See the linked native reference for semantics
+	// and availability.
+	IgnoreViolations AnthropicAgentSettingsSandboxIgnoreViolations `json:"ignoreViolations,omitempty,omitzero"`
+
+	// Network configuration. See the linked native reference for semantics and
+	// availability.
+	Network *AnthropicAgentSettingsSandboxNetwork `json:"network,omitempty,omitzero"`
+
+	// Custom ripgrep configuration for bundled ripgrep support. Only honored from
+	// user, managed/policy, or CLI (--settings) settings — project settings
+	// (.claude/settings.json and .claude/settings.local.json) are ignored.
+	Ripgrep *AnthropicAgentSettingsSandboxRipgrep `json:"ripgrep,omitempty,omitzero"`
+
+	// Linux/WSL only: Absolute path to the socat binary used for the sandbox network
+	// proxy. Overrides auto-detection via PATH. Only honored from admin-controlled
+	// managed settings.
+	SocatPath *string `json:"socatPath,omitempty,omitzero"`
+
+	AdditionalProperties interface{} `mapstructure:",remain"`
+}
+
+// Credentials configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsSandboxCredentials struct {
+	// Allow sentinel→real substitution on the plain-HTTP proxy path. Defaults to
+	// false: without TLS termination the upstream identity is unverified and the
+	// credential travels in cleartext. Set only for trusted-network test fixtures.
+	// Only honored from user, managed/policy, or CLI (`--settings`) settings —
+	// project settings (.claude/settings.json and .claude/settings.local.json) are
+	// ignored.
+	AllowPlaintextInject *bool `json:"allowPlaintextInject,omitempty,omitzero"`
+
+	// Explicit groupings of masked env vars into AWS credential pairs for SigV4
+	// re-signing, for non-standard variable names. The conventional AWS_ACCESS_KEY_ID
+	// / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN trio is paired automatically when
+	// masked. Only honored from user, managed/policy, or CLI (`--settings`) settings
+	// — project settings (.claude/settings.json and .claude/settings.local.json) are
+	// ignored. A member is only usable when its env var is forwarded as a whole-value
+	// `mask` entry (an entry carrying `extract` or `decode` does not qualify —
+	// re-signing needs the whole real value). A pair whose key id or secret member is
+	// unusable never re-signs: it is dropped, unless it names a conventional AWS
+	// variable, in which case it is forwarded as an inert suppressor so implicit
+	// auto-pairing stays overridden. A pair whose ONLY unusable member is the session
+	// token still re-signs, without an x-amz-security-token (temporary-credential
+	// requests fail upstream until the entry is fixed).
+	AwsPairs []AnthropicAgentSettingsSandboxCredentialsAwsPairsElem `json:"awsPairs,omitempty,omitzero"`
+
+	// Environment variables to protect. `deny` unsets the variable for sandboxed
+	// commands; `mask` substitutes a sentinel inside the sandbox and injects the real
+	// value at the proxy.
+	EnvVars []AnthropicAgentSettingsSandboxCredentialsEnvVarsElem `json:"envVars,omitempty,omitzero"`
+
+	// Credential files or directories to protect. `deny` blocks reads inside the
+	// sandbox; `mask` substitutes a sentinel inside the sandbox (whole-file, or
+	// per-`extract` capture) and injects the real value at the proxy. On macOS and
+	// Windows `mask` degrades to `deny`.
+	Files []AnthropicAgentSettingsSandboxCredentialsFilesElem `json:"files,omitempty,omitzero"`
+
+	// Policies for AWS SigV4 request shapes the proxy cannot re-sign (streaming,
+	// presigned, sigv4a) when they reference a masked credential pair: `deny`
+	// (default) or `passthrough`. Only honored from user, managed/policy, or CLI
+	// (`--settings`) settings — project settings (.claude/settings.json and
+	// .claude/settings.local.json) are ignored.
+	Sigv4 *AnthropicAgentSettingsSandboxCredentialsSigv4 `json:"sigv4,omitempty,omitzero"`
+}
+
+// Aws Pairs value configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsSandboxCredentialsAwsPairsElem struct {
+	// Name of the masked env var holding the AWS access key id.
+	AccessKeyIdVar string `json:"accessKeyIdVar"`
+
+	// Name of the masked env var holding the AWS secret access key.
+	SecretAccessKeyVar string `json:"secretAccessKeyVar"`
+
+	// Optional name of the masked env var holding the AWS session token (temporary
+	// credentials). When set, the proxy sends the real token as x-amz-security-token
+	// on re-signed requests and adds it to the signed header set if the client did
+	// not.
+	SessionTokenVar *string `json:"sessionTokenVar,omitempty,omitzero"`
+}
+
+// Env Vars value configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsSandboxCredentialsEnvVarsElem struct {
+	// Optional encoded-credential format for `mask` mode. `jwt`: the variable's whole
+	// value is verified to actually be a JWT and replaced with a structurally valid
+	// fake JWT so client-side token parsing inside the sandbox keeps working; the
+	// proxy swaps the whole fake token on egress. If the value does not verify, the
+	// variable is left unmasked with a stderr warning (fail-open). Cannot be combined
+	// with `extract` — the decode path never consults it. Accepted but ignored for
+	// `deny`.
+	Decode *string `json:"decode,omitempty,omitzero"`
+
+	// Optional regex for structured masking when mode is `mask`. Applied globally to
+	// the value; capture group 1 of each match is a credential value, and only those
+	// captured spans are replaced with sentinels — the rest of the value is preserved
+	// so a tool that parses it (a `DATABASE_URL` connection string, a composite
+	// `KEY:SECRET` pair) still succeeds inside the sandbox. Without `extract`, the
+	// entire value is replaced with one sentinel (whole-value masking, suited to bare
+	// tokens). If the regex matches nothing, behavior is governed by
+	// `onExtractNoMatch` (default `warn`). Cannot be combined with `decode` (the
+	// decode path never consults it). Accepted but ignored for `deny`.
+	Extract *string `json:"extract,omitempty,omitzero"`
+
+	// Optional narrowing of where the proxy substitutes this credential. Only
+	// meaningful when mode is `mask`; accepted but ignored for `deny`. If unset,
+	// defaults to `network.allowedDomains` — the credential is injected at every
+	// reachable host. Each entry must be reachable via `network.allowedDomains`
+	// (sandbox-runtime validates this).
+	InjectHosts []string `json:"injectHosts,omitempty,omitzero"`
+
+	// Names of top-level payload claims to mask inside the decoded value, instead of
+	// replacing the whole token. Each named claim present with a string value gets
+	// its own sentinel and the token is rebuilt around the modified payload; all
+	// other claims are preserved so claim-reading clients keep working. Requires
+	// `decode`. If no named claim matches, the variable is left unmasked with a
+	// stderr warning (fail-open). Only meaningful when mode is `mask`; accepted but
+	// ignored for `deny`.
+	MaskClaims []string `json:"maskClaims,omitempty,omitzero"`
+
+	// Access mode for this environment variable. `deny` unsets the variable for
+	// sandboxed commands; `mask` shows sandboxed commands a sentinel value and the
+	// host proxy swaps sentinel→real on egress to `injectHosts`.
+	Mode AnthropicAgentSettingsSandboxCredentialsEnvVarsElemMode `json:"mode"`
+
+	// Environment variable name.
+	Name string `json:"name"`
+
+	// What to do when `extract` matches nothing in the value. `warn` (default) emits
+	// a stderr warning and lets the variable pass through unmasked (fail-open, for
+	// credentials that may be legitimately absent); `deny` unsets the variable inside
+	// the sandbox (fail-closed); `error` aborts at sandbox setup so nothing runs
+	// until the config is fixed. Only meaningful when mode is `mask` and `extract` is
+	// set without `decode`. On a mask entry with `decode`, the runtime takes the
+	// decode path and never consults this field, so a fail-closed setting cannot be
+	// honored — `deny` and `error` are rejected there; only `warn` is accepted. In
+	// all other shapes the field is accepted but ignored.
+	OnExtractNoMatch *AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatch `json:"onExtractNoMatch,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsSandboxCredentialsEnvVarsElemMode string
+
+const AnthropicAgentSettingsSandboxCredentialsEnvVarsElemModeDeny AnthropicAgentSettingsSandboxCredentialsEnvVarsElemMode = "deny"
+const AnthropicAgentSettingsSandboxCredentialsEnvVarsElemModeMask AnthropicAgentSettingsSandboxCredentialsEnvVarsElemMode = "mask"
+
+type AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatch string
+
+const AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatchDeny AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatch = "deny"
+const AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatchError AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatch = "error"
+const AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatchWarn AnthropicAgentSettingsSandboxCredentialsEnvVarsElemOnExtractNoMatch = "warn"
+
+// Files value configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsSandboxCredentialsFilesElem struct {
+	// Optional encoded-credential format for `mask` mode. `jwt`: candidates are
+	// located with a built-in JWT regex (or the explicit `extract` pattern, if set),
+	// verified to actually be JWTs before masking, and replaced with a structurally
+	// valid fake JWT so client-side token parsing inside the sandbox keeps working.
+	// If no candidate verifies, behavior is governed by `onExtractNoMatch` (default
+	// `warn`). Accepted but ignored for `deny`.
+	Decode *string `json:"decode,omitempty,omitzero"`
+
+	// Optional regex for structured masking when mode is `mask`. Applied globally to
+	// the file; capture group 1 of each match is a credential value, and only those
+	// captured spans are replaced with sentinels — the rest of the file is preserved
+	// so a tool that parses it (.netrc, JSON, YAML) still succeeds. Without
+	// `extract`, the entire file content is replaced with one sentinel (whole-file
+	// masking, suited to single-secret files). If the regex matches nothing, behavior
+	// is governed by `onExtractNoMatch` (default `warn`). Accepted but ignored for
+	// `deny`.
+	Extract *string `json:"extract,omitempty,omitzero"`
+
+	// Optional narrowing of where the proxy substitutes this credential. Only
+	// meaningful when mode is `mask`; accepted but ignored for `deny`. If unset,
+	// defaults to `network.allowedDomains` — the credential is injected at every
+	// reachable host. Each entry must be reachable via `network.allowedDomains`
+	// (sandbox-runtime validates this).
+	InjectHosts []string `json:"injectHosts,omitempty,omitzero"`
+
+	// Names of top-level payload claims to mask inside each decoded value, instead of
+	// replacing the whole token. Each named claim present with a string value gets
+	// its own sentinel and the token is rebuilt around the modified payload; all
+	// other claims are preserved so a tool that decodes the token and reads a
+	// non-secret claim keeps working. Requires `decode`. If no named claim matches in
+	// any verified token, behavior is governed by `onExtractNoMatch` (default
+	// `warn`). Only meaningful when mode is `mask`; accepted but ignored for `deny`.
+	MaskClaims []string `json:"maskClaims,omitempty,omitzero"`
+
+	// If true, verbatim occurrences of each captured credential value outside the
+	// regex-matched spans are also replaced with the corresponding sentinel — for a
+	// secret repeated where the regex does not reach (e.g. pasted into a comment).
+	// Matches raw substrings, so short or common values may corrupt unrelated
+	// content; intended for long, high-entropy secrets. Defaults to false. Only
+	// meaningful when mode is `mask` and `extract` or `decode` is set; accepted but
+	// ignored otherwise.
+	MaskDuplicates *bool `json:"maskDuplicates,omitempty,omitzero"`
+
+	// Access mode for this path. `deny` blocks reads inside the sandbox; `mask` shows
+	// sandboxed commands a sentinel-substituted copy (whole-file, or only the spans
+	// captured by `extract`) and the host proxy swaps sentinel→real on egress to
+	// `injectHosts`. On macOS and Windows `mask` currently degrades to `deny`.
+	Mode AnthropicAgentSettingsSandboxCredentialsFilesElemMode `json:"mode"`
+
+	// What to do when `extract` matches nothing in the file — or, with `decode`, when
+	// no candidate survives verification. `warn` (default) emits a stderr warning and
+	// leaves the file readable as-is inside the sandbox (fail-open, for credentials
+	// that may be legitimately absent); `deny` degrades the entry to mode `deny` so
+	// the file is unreadable (fail-closed) — under `sandbox.filesystem.disabled` it
+	// is treated as `error`, since read-denies are dropped in that mode; `error`
+	// aborts at sandbox setup so nothing runs until the config is fixed. Only
+	// meaningful when mode is `mask` and `extract` or `decode` is set; accepted but
+	// ignored otherwise.
+	OnExtractNoMatch *AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatch `json:"onExtractNoMatch,omitempty,omitzero"`
+
+	// Path to a credential file or directory. Same resolution as sandbox.filesystem.*
+	// paths: absolute, ~ expanded, or relative to the settings file root (project
+	// root for project settings, ~/.claude for user settings).
+	Path string `json:"path"`
+}
+
+type AnthropicAgentSettingsSandboxCredentialsFilesElemMode string
+
+const AnthropicAgentSettingsSandboxCredentialsFilesElemModeDeny AnthropicAgentSettingsSandboxCredentialsFilesElemMode = "deny"
+const AnthropicAgentSettingsSandboxCredentialsFilesElemModeMask AnthropicAgentSettingsSandboxCredentialsFilesElemMode = "mask"
+
+type AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatch string
+
+const AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatchDeny AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatch = "deny"
+const AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatchError AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatch = "error"
+const AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatchWarn AnthropicAgentSettingsSandboxCredentialsFilesElemOnExtractNoMatch = "warn"
+
+// Policies for AWS SigV4 request shapes the proxy cannot re-sign (streaming,
+// presigned, sigv4a) when they reference a masked credential pair: `deny`
+// (default) or `passthrough`. Only honored from user, managed/policy, or CLI
+// (`--settings`) settings — project settings (.claude/settings.json and
+// .claude/settings.local.json) are ignored.
+type AnthropicAgentSettingsSandboxCredentialsSigv4 struct {
+	// Policy for presigned URLs (X-Amz-Algorithm/X-Amz-Signature in the query, no
+	// Authorization header): the signature lives in the URL itself. `deny` (default)
+	// or `passthrough`.
+	Presigned *AnthropicAgentSettingsSandboxCredentialsSigv4Presigned `json:"presigned,omitempty,omitzero"`
+
+	// Policy for SigV4A (AWS4-ECDSA-P256-SHA256) asymmetric signatures: there is no
+	// shared-key HMAC to recompute. `deny` (default) or `passthrough`.
+	Sigv4A *AnthropicAgentSettingsSandboxCredentialsSigv4Sigv4A `json:"sigv4a,omitempty,omitzero"`
+
+	// Policy for aws-chunked streaming uploads (x-amz-content-sha256: STREAMING-*):
+	// per-chunk signatures chain off the seed signature, so re-signing would require
+	// rewriting the body. `deny` (default) fails closed with a 403; `passthrough`
+	// forwards the request unre-signed (the upstream will reject its signature).
+	Streaming *AnthropicAgentSettingsSandboxCredentialsSigv4Streaming `json:"streaming,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsSandboxCredentialsSigv4Presigned string
+
+const AnthropicAgentSettingsSandboxCredentialsSigv4PresignedDeny AnthropicAgentSettingsSandboxCredentialsSigv4Presigned = "deny"
+const AnthropicAgentSettingsSandboxCredentialsSigv4PresignedPassthrough AnthropicAgentSettingsSandboxCredentialsSigv4Presigned = "passthrough"
+
+type AnthropicAgentSettingsSandboxCredentialsSigv4Sigv4A string
+
+const AnthropicAgentSettingsSandboxCredentialsSigv4Sigv4ADeny AnthropicAgentSettingsSandboxCredentialsSigv4Sigv4A = "deny"
+const AnthropicAgentSettingsSandboxCredentialsSigv4Sigv4APassthrough AnthropicAgentSettingsSandboxCredentialsSigv4Sigv4A = "passthrough"
+
+type AnthropicAgentSettingsSandboxCredentialsSigv4Streaming string
+
+const AnthropicAgentSettingsSandboxCredentialsSigv4StreamingDeny AnthropicAgentSettingsSandboxCredentialsSigv4Streaming = "deny"
+const AnthropicAgentSettingsSandboxCredentialsSigv4StreamingPassthrough AnthropicAgentSettingsSandboxCredentialsSigv4Streaming = "passthrough"
+
+// Filesystem configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsSandboxFilesystem struct {
+	// When true (set in managed settings), only allowRead paths from policySettings
+	// are used.
+	AllowManagedReadPathsOnly *bool `json:"allowManagedReadPathsOnly,omitempty,omitzero"`
+
+	// Paths to re-allow reading within denyRead regions. Takes precedence over
+	// denyRead for matching paths.
+	AllowRead []string `json:"allowRead,omitempty,omitzero"`
+
+	// Additional paths to allow writing within the sandbox. Merged with paths from
+	// Edit(...) allow permission rules.
+	AllowWrite []string `json:"allowWrite,omitempty,omitzero"`
+
+	// Additional paths to deny reading within the sandbox. Merged with paths from
+	// Read(...) deny permission rules.
+	DenyRead []string `json:"denyRead,omitempty,omitzero"`
+
+	// Additional paths to deny writing within the sandbox. Merged with paths from
+	// Edit(...) deny permission rules.
+	DenyWrite []string `json:"denyWrite,omitempty,omitzero"`
+
+	// macOS and Linux/WSL only: skip filesystem isolation entirely while keeping
+	// network and seccomp isolation. Ignored on native Windows, where the sandboxed
+	// process runs as a separate user with no inherent rights, so skipping the
+	// filesystem rules would withhold every access grant rather than loosen them —
+	// filesystem isolation stays on there. Sandboxed commands get unrestricted
+	// read/write access to the host filesystem; network egress is still confined to
+	// network.allowedDomains. Intended for deployments whose goal is egress control
+	// rather than filesystem containment. Does not change Bash prompting:
+	// sandbox.autoAllowBashIfSandboxed is independent and still defaults to true, so
+	// set it to false to keep prompting for sandboxed commands. Drops the read
+	// protection from filesystem.denyRead and credentials.files deny entries for
+	// sandboxed commands, since both are enforced by the filesystem layer this turns
+	// off; credentials.files mask entries (sentinel binds) and credentials.envVars
+	// deny/mask are unaffected. Only honored from user, managed/policy, or CLI
+	// (`--settings`) settings — project settings (.claude/settings.json and
+	// .claude/settings.local.json) are ignored. If managed settings configure
+	// sandbox.filesystem at all, or list any sandbox.credentials.files deny entry,
+	// only managed settings can set this: an admin who deployed filesystem
+	// restrictions must not have them switched off by a user-writable file.
+	// (sandbox.credentials.envVars and credentials.files mask entries do not pin it —
+	// env scrubbing and sentinel binds are independent of the filesystem layer and
+	// survive this setting.) When unset, filesystem isolation stays on.
+	Disabled *bool `json:"disabled,omitempty,omitzero"`
+}
+
+// Ignore Violations configuration. See the linked native reference for semantics
+// and availability.
+type AnthropicAgentSettingsSandboxIgnoreViolations map[string][]string
+
+// Network configuration. See the linked native reference for semantics and
+// availability.
+type AnthropicAgentSettingsSandboxNetwork struct {
+	// If true, allow all Unix sockets (disables blocking on both platforms).
+	AllowAllUnixSockets *bool `json:"allowAllUnixSockets,omitempty,omitzero"`
+
+	// Allow Local Binding configuration. See the linked native reference for
+	// semantics and availability.
+	AllowLocalBinding *bool `json:"allowLocalBinding,omitempty,omitzero"`
+
+	// macOS only: Additional XPC/Mach service names to allow looking up. Supports
+	// trailing-wildcard prefix matching (e.g., "com.apple.coresimulator.*"). Needed
+	// for tools that communicate via XPC such as the iOS Simulator or Playwright.
+	AllowMachLookup []string `json:"allowMachLookup,omitempty,omitzero"`
+
+	// When true (and set in managed settings), only allowedDomains and
+	// WebFetch(domain:...) allow rules from managed settings are respected. User,
+	// project, local, and flag settings domains are ignored. Denied domains are still
+	// respected from all sources.
+	AllowManagedDomainsOnly *bool `json:"allowManagedDomainsOnly,omitempty,omitzero"`
+
+	// macOS only: Unix socket paths to allow. Ignored on Linux (seccomp cannot filter
+	// by path).
+	AllowUnixSockets []string `json:"allowUnixSockets,omitempty,omitzero"`
+
+	// Allowed Domains configuration. See the linked native reference for semantics
+	// and availability.
+	AllowedDomains []string `json:"allowedDomains,omitempty,omitzero"`
+
+	// Domains that are always blocked, even if matched by allowedDomains. Supports
+	// the same wildcard syntax as allowedDomains. Merged from all settings sources
+	// regardless of allowManagedDomainsOnly.
+	DeniedDomains []string `json:"deniedDomains,omitempty,omitzero"`
+
+	// HTTP Proxy Port configuration. See the linked native reference for semantics
+	// and availability.
+	HttpProxyPort *float64 `json:"httpProxyPort,omitempty,omitzero"`
+
+	// Socks Proxy Port configuration. See the linked native reference for semantics
+	// and availability.
+	SocksProxyPort *float64 `json:"socksProxyPort,omitempty,omitzero"`
+
+	// When true, the sandbox runtime deterministically denies hosts not in
+	// allowedDomains instead of prompting. Enforced for sandboxed commands only —
+	// in-process tools such as WebFetch are not gated by this setting. Only honored
+	// from user, managed/policy, or CLI (--settings) settings — project settings
+	// (.claude/settings.json and .claude/settings.local.json) are ignored.
+	StrictAllowlist *bool `json:"strictAllowlist,omitempty,omitzero"`
+
+	// [EXPERIMENTAL] Enable in-process TLS termination so the per-request filter can
+	// see HTTPS request bodies. Provide a CA cert+key, or omit both to have
+	// sandbox-runtime generate an ephemeral one for the session. On native Windows an
+	// ephemeral CA cannot pass the sandbox trust check, so omitting the paths uses a
+	// persistent CA managed by the sandbox runtime (set up and trusted via /sandbox
+	// install); configured paths are passed to the sandbox runtime verbatim, which
+	// rejects a bad or incomplete pair at sandbox initialization. Only honored from
+	// user, managed/policy, or CLI (`--settings`) settings — project settings
+	// (.claude/settings.json and .claude/settings.local.json) are ignored.
+	TlsTerminate *AnthropicAgentSettingsSandboxNetworkTlsTerminate `json:"tlsTerminate,omitempty,omitzero"`
+}
+
+// [EXPERIMENTAL] Enable in-process TLS termination so the per-request filter can
+// see HTTPS request bodies. Provide a CA cert+key, or omit both to have
+// sandbox-runtime generate an ephemeral one for the session. On native Windows an
+// ephemeral CA cannot pass the sandbox trust check, so omitting the paths uses a
+// persistent CA managed by the sandbox runtime (set up and trusted via /sandbox
+// install); configured paths are passed to the sandbox runtime verbatim, which
+// rejects a bad or incomplete pair at sandbox initialization. Only honored from
+// user, managed/policy, or CLI (`--settings`) settings — project settings
+// (.claude/settings.json and .claude/settings.local.json) are ignored.
+type AnthropicAgentSettingsSandboxNetworkTlsTerminate struct {
+	// Ca Cert Path configuration. See the linked native reference for semantics and
+	// availability.
+	CaCertPath *string `json:"caCertPath,omitempty,omitzero"`
+
+	// Ca Key Path configuration. See the linked native reference for semantics and
+	// availability.
+	CaKeyPath *string `json:"caKeyPath,omitempty,omitzero"`
+}
+
+// Custom ripgrep configuration for bundled ripgrep support. Only honored from
+// user, managed/policy, or CLI (--settings) settings — project settings
+// (.claude/settings.json and .claude/settings.local.json) are ignored.
+type AnthropicAgentSettingsSandboxRipgrep struct {
+	// Args configuration. See the linked native reference for semantics and
+	// availability.
+	Args []string `json:"args,omitempty,omitzero"`
+
+	// Command configuration. See the linked native reference for semantics and
+	// availability.
+	Command string `json:"command"`
+}
+
+// Per-skill listing overrides keyed by skill name. "name-only" lists the skill
+// without its description; "user-invocable-only" hides it from the model but keeps
+// /name; "off" hides it from both. Absent = on.
+type AnthropicAgentSettingsSkillOverrides map[string]AnthropicAgentSettingsSkillOverridesValue
+
+type AnthropicAgentSettingsSkillOverridesValue string
+
+const AnthropicAgentSettingsSkillOverridesValueNameOnly AnthropicAgentSettingsSkillOverridesValue = "name-only"
+const AnthropicAgentSettingsSkillOverridesValueOff AnthropicAgentSettingsSkillOverridesValue = "off"
+const AnthropicAgentSettingsSkillOverridesValueOn AnthropicAgentSettingsSkillOverridesValue = "on"
+const AnthropicAgentSettingsSkillOverridesValueUserInvocableOnly AnthropicAgentSettingsSkillOverridesValue = "user-invocable-only"
+
+// Underline misspelled words in the prompt input as you type, using an installed
+// aspell, hunspell or ispell (off unless "enabled" is true; does nothing if none
+// is installed). Read from user, flag and managed settings only (the whole block
+// from the highest-precedence of those applies); ignored in project
+// .claude/settings.json and .claude/settings.local.json.
+type AnthropicAgentSettingsSpellcheck struct {
+	// Which spell checker to run: "aspell", "hunspell", "ispell", or "auto" (default)
+	// for the first of those found on PATH
+	Checker *string `json:"checker,omitempty,omitzero"`
+
+	// Color of misspelled words (they are also underlined): a terminal color name
+	// such as "red" or "magenta", "#rrggbb", "rgb(r,g,b)", "ansi256(n)" or
+	// "ansi:<name>". Default: the theme's error color
+	Color *string `json:"color,omitempty,omitzero"`
+
+	// Turn on spell checking of the prompt input (default: false)
+	Enabled *bool `json:"enabled,omitempty,omitzero"`
+
+	// Dictionary to use, passed to the checker as-is (aspell --lang, hunspell -d,
+	// ispell -d), e.g. "en_GB"; names are checker-specific (letters, digits and _ - .
+	// , only). Default: the checker's own default
+	Language *string `json:"language,omitempty,omitzero"`
+
+	AdditionalProperties interface{} `mapstructure:",remain"`
+}
+
+// Add your organization's own tips to the spinner tip rotation. tips: strings or
+// {id, text, cooldownSessions?, priority?} objects; tipsFile: a JSON file of the
+// same; label: prefix shown before your tips; excludeDefault: if true, only show
+// your tips (default: false).
+type AnthropicAgentSettingsSpinnerTipsOverride struct {
+	// Exclude Default configuration. See the linked native reference for semantics
+	// and availability.
+	ExcludeDefault *bool `json:"excludeDefault,omitempty,omitzero"`
+
+	// Prefix shown before your tips in the spinner (default "Tip")
+	Label *string `json:"label,omitempty,omitzero"`
+
+	// Tips configuration. See the linked native reference for semantics and
+	// availability.
+	Tips []json.RawMessage `json:"tips,omitempty,omitzero"`
+
+	// Absolute or ~/ local path to a JSON file holding an array of tips (same shapes
+	// as `tips`); honored from user, --settings and on-disk managed settings only.
+	// Read once per CLI process (restart to pick up edits).
+	TipsFile *string `json:"tipsFile,omitempty,omitzero"`
+
+	AdditionalProperties interface{} `mapstructure:",remain"`
+}
+
+// Customize spinner verbs. mode: "append" adds verbs to defaults, "replace" uses
+// only your verbs.
+type AnthropicAgentSettingsSpinnerVerbs struct {
+	// Mode configuration. See the linked native reference for semantics and
+	// availability.
+	Mode AnthropicAgentSettingsSpinnerVerbsMode `json:"mode"`
+
+	// Verbs configuration. See the linked native reference for semantics and
+	// availability.
+	Verbs []string `json:"verbs"`
+}
+
+type AnthropicAgentSettingsSpinnerVerbsMode string
+
+const AnthropicAgentSettingsSpinnerVerbsModeAppend AnthropicAgentSettingsSpinnerVerbsMode = "append"
+const AnthropicAgentSettingsSpinnerVerbsModeReplace AnthropicAgentSettingsSpinnerVerbsMode = "replace"
+
+// Ssh Configs value configuration. See the linked native reference for semantics
+// and availability.
+type AnthropicAgentSettingsSshConfigsElem struct {
+	// Unique identifier for this SSH config. Used to match configs across settings
+	// sources.
+	Id string `json:"id"`
+
+	// Display name for the SSH connection
+	Name string `json:"name"`
+
+	// SSH host in format "user\@hostname" or "hostname", or a host alias from
+	// ~/.ssh/config
+	SshHost string `json:"sshHost"`
+
+	// Path to SSH identity file (private key)
+	SshIdentityFile *string `json:"sshIdentityFile,omitempty,omitzero"`
+
+	// SSH port (default: 22)
+	SshPort *float64 `json:"sshPort,omitempty,omitzero"`
+
+	// Default working directory on the remote host. Supports tilde expansion (e.g.
+	// ~/projects). If not specified, defaults to the remote user home directory. Can
+	// be overridden by the [dir] positional argument in `claude ssh <config> [dir]`.
+	StartDirectory *string `json:"startDirectory,omitempty,omitzero"`
+}
+
+// Custom status line display configuration
+type AnthropicAgentSettingsStatusLine struct {
+	// Command configuration. See the linked native reference for semantics and
+	// availability.
+	Command string `json:"command"`
+
+	// Hide the built-in `-- INSERT --` / `-- VISUAL --` indicator below the prompt.
+	// Use this when your status line script renders `vim.mode` itself.
+	HideVimModeIndicator *bool `json:"hideVimModeIndicator,omitempty,omitzero"`
+
+	// Padding configuration. See the linked native reference for semantics and
+	// availability.
+	Padding *float64 `json:"padding,omitempty,omitzero"`
+
+	// Re-run the status line command every N seconds in addition to event-driven
+	// updates
+	RefreshInterval *float64 `json:"refreshInterval,omitempty,omitzero"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type string `json:"type"`
+}
+
+type AnthropicAgentSettingsSubagentPromptCacheTtl string
+
+const AnthropicAgentSettingsSubagentPromptCacheTtlA1H AnthropicAgentSettingsSubagentPromptCacheTtl = "1h"
+const AnthropicAgentSettingsSubagentPromptCacheTtlA5M AnthropicAgentSettingsSubagentPromptCacheTtl = "5m"
+
+// Custom per-subagent status line shown in the agent panel; receives row context
+// as JSON on stdin
+type AnthropicAgentSettingsSubagentStatusLine struct {
+	// Command configuration. See the linked native reference for semantics and
+	// availability.
+	Command string `json:"command"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type string `json:"type"`
+}
+
+type AnthropicAgentSettingsTeammateMode string
+
+const AnthropicAgentSettingsTeammateModeAuto AnthropicAgentSettingsTeammateMode = "auto"
+const AnthropicAgentSettingsTeammateModeInProcess AnthropicAgentSettingsTeammateMode = "in-process"
+const AnthropicAgentSettingsTeammateModeIterm2 AnthropicAgentSettingsTeammateMode = "iterm2"
+const AnthropicAgentSettingsTeammateModeTmux AnthropicAgentSettingsTeammateMode = "tmux"
+
+type AnthropicAgentSettingsTui string
+
+const AnthropicAgentSettingsTuiDefault AnthropicAgentSettingsTui = "default"
+const AnthropicAgentSettingsTuiFullscreen AnthropicAgentSettingsTui = "fullscreen"
+
+type AnthropicAgentSettingsViewMode string
+
+const AnthropicAgentSettingsViewModeDefault AnthropicAgentSettingsViewMode = "default"
+const AnthropicAgentSettingsViewModeFocus AnthropicAgentSettingsViewMode = "focus"
+const AnthropicAgentSettingsViewModeVerbose AnthropicAgentSettingsViewMode = "verbose"
+
+// Vim INSERT-mode key-sequence remaps, e.g. {"jj": "<Esc>"}. Each key is exactly
+// two printable characters typed in sequence; "<Esc>" (return to NORMAL mode) is
+// the only supported target. Applies when editorMode is "vim".
+type AnthropicAgentSettingsVimInsertModeRemaps map[string]interface{}
+
+// Voice mode settings (hold-to-talk / tap-to-toggle dictation)
+type AnthropicAgentSettingsVoice struct {
+	// Submit the prompt when hold-to-talk is released (hold mode only)
+	AutoSubmit *bool `json:"autoSubmit,omitempty,omitzero"`
+
+	// Enabled configuration. See the linked native reference for semantics and
+	// availability.
+	Enabled *bool `json:"enabled,omitempty,omitzero"`
+
+	// 'hold' (default): hold to talk. 'tap': tap to start, tap to stop+submit.
+	Mode *AnthropicAgentSettingsVoiceMode `json:"mode,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsVoiceMode string
+
+const AnthropicAgentSettingsVoiceModeHold AnthropicAgentSettingsVoiceMode = "hold"
+const AnthropicAgentSettingsVoiceModeTap AnthropicAgentSettingsVoiceMode = "tap"
+
+type AnthropicAgentSettingsWorkflowSizeGuideline string
+
+const AnthropicAgentSettingsWorkflowSizeGuidelineLarge AnthropicAgentSettingsWorkflowSizeGuideline = "large"
+const AnthropicAgentSettingsWorkflowSizeGuidelineMedium AnthropicAgentSettingsWorkflowSizeGuideline = "medium"
+const AnthropicAgentSettingsWorkflowSizeGuidelineSmall AnthropicAgentSettingsWorkflowSizeGuideline = "small"
+const AnthropicAgentSettingsWorkflowSizeGuidelineUnrestricted AnthropicAgentSettingsWorkflowSizeGuideline = "unrestricted"
+
+// Git worktree configuration: the CLI --worktree flag, EnterWorktree and agent
+// isolation, plus the location Claude Code Desktop uses for SSH-session worktrees
+// on this machine.
+type AnthropicAgentSettingsWorktree struct {
+	// Which ref new worktrees branch from. 'fresh' (default) branches from
+	// origin/<default-branch> for a clean tree. 'head' branches from your current
+	// local HEAD so unpushed commits and feature-branch state are present. Applies to
+	// --worktree, EnterWorktree, and agent isolation.
+	BaseRef *AnthropicAgentSettingsWorktreeBaseRef `json:"baseRef,omitempty,omitzero"`
+
+	// Isolation mode for background sessions in this repo. 'worktree' (default)
+	// blocks Edit/Write in the main checkout until EnterWorktree is called. 'none'
+	// lets background jobs edit the working copy directly.
+	BgIsolation *AnthropicAgentSettingsWorktreeBgIsolation `json:"bgIsolation,omitempty,omitzero"`
+
+	// Directory under which Claude Code Desktop creates the worktrees of SSH sessions
+	// that run on this machine (an absolute path or one starting with ~/), instead of
+	// <project>/.claude/worktrees. Read by the desktop app from the SSH host user
+	// settings; a location chosen in the desktop app's SSH connection settings takes
+	// precedence. The CLI (--worktree, EnterWorktree, agent isolation) does not read
+	// it yet.
+	Location *string `json:"location,omitempty,omitzero"`
+
+	// Directories to include when creating worktrees, via git sparse-checkout (cone
+	// mode). Dramatically faster in large monorepos — only the listed paths are
+	// written to disk.
+	SparsePaths []string `json:"sparsePaths,omitempty,omitzero"`
+
+	// Directories to symlink from main repository to worktrees to avoid disk bloat.
+	// Must be explicitly configured - no directories are symlinked by default. Common
+	// examples: "node_modules", ".cache", ".bin"
+	SymlinkDirectories []string `json:"symlinkDirectories,omitempty,omitzero"`
+}
+
+type AnthropicAgentSettingsWorktreeBaseRef string
+
+const AnthropicAgentSettingsWorktreeBaseRefFresh AnthropicAgentSettingsWorktreeBaseRef = "fresh"
+const AnthropicAgentSettingsWorktreeBaseRefHead AnthropicAgentSettingsWorktreeBaseRef = "head"
+
+type AnthropicAgentSettingsWorktreeBgIsolation string
+
+const AnthropicAgentSettingsWorktreeBgIsolationNone AnthropicAgentSettingsWorktreeBgIsolation = "none"
+const AnthropicAgentSettingsWorktreeBgIsolationWorktree AnthropicAgentSettingsWorktreeBgIsolation = "worktree"

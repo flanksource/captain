@@ -25,13 +25,6 @@ func (s Spec) MarshalYAML() (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	for path := range s.Fields() {
-		tokens := strings.Split(strings.TrimPrefix(path, "/"), "/")
-		value := serializedField(reflect.ValueOf(s), tokens)
-		if value.IsValid() && value.Type() == reflect.TypeOf(json.RawMessage(nil)) {
-			putWireField(fields, tokens, []byte(value.Interface().(json.RawMessage)))
-		}
-	}
 	return yamlNumbers(fields)
 }
 
@@ -138,8 +131,8 @@ func (s *Spec) UnmarshalYAML(node *yaml.Node) error {
 
 func (wire specMarshal) toSpec() Spec {
 	s := Spec{Model: Model(wire.ModelFields), Messages: wire.Messages,
-		ToolPolicy: wire.ToolPolicy, ToolApproval: wire.Approval, Setup: wire.Setup,
-		Sandbox: wire.Sandbox, Workflow: wire.Workflow, SessionID: wire.SessionID, CLIArgs: wire.CLIArgs,
+		ToolPolicy: wire.ToolPolicy, ToolApproval: wire.Approval, Tools: wire.Tools, Setup: wire.Setup,
+		Sandbox: wire.Sandbox, Workflow: wire.Workflow, Batch: wire.Batch, SessionID: wire.SessionID, CLIArgs: wire.CLIArgs,
 		Labels: wire.Labels}
 	if wire.Prompt != nil {
 		s.Prompt = *wire.Prompt

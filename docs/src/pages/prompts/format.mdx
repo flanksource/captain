@@ -48,14 +48,19 @@ A `.prompt` file has YAML frontmatter followed by a Handlebars body. dotprompt o
       <td>Decoded into `api.Spec` with strict field validation.</td>
     </tr>
     <tr>
+      <td><code>tools</code></td>
+      <td>Captain spec</td>
+      <td>A mapping of inline tools, each backed by a script. Replaces dotprompt's list of registered tool names, which Captain rejects. See <a href="#inline-tools">Inline tools</a>.</td>
+    </tr>
+    <tr>
       <td><code>runtimes</code></td>
       <td>Captain execution metadata</td>
       <td>Declares the default parallel runtime matrix without becoming part of the request sent to each model.</td>
     </tr>
     <tr>
-      <td><code>runtimeProfile</code></td>
+      <td><code>presets</code></td>
       <td>Captain runtime catalog</td>
-      <td>Pins the runtime profile (id or name) whose presets and spec are layered beneath this frontmatter. A request <code>runtimeProfile</code> or <code>--runtime-profile</code> overrides the pin.</td>
+      <td>Selects reusable runtime presets by id or name. Request <code>presets</code> or repeated <code>--preset</code> flags replace the selection; <code>--no-presets</code> clears it.</td>
     </tr>
   </tbody>
 </table>
@@ -93,9 +98,8 @@ permissions:
   presets:
     - edit
   tools:
-    allow:
-      - Read
-      - Edit
+    Read: allow
+    Edit: allow
   mcp:
     disabled: true
 memory:
@@ -111,14 +115,232 @@ Refactor:
 {{target}}
 `} />
 
-## Runtime profile pin
+### Batches
 
-`runtimeProfile` names a saved runtime profile by id or name. Rendering resolves the profile's presets (ordered by scope), then its spec, then this frontmatter, then the caller's request or CLI flags, so the file can defer model, budget, and permission defaults to a shared profile while still overriding any of them inline. A caller that passes `runtimeProfile` on the render request or `--runtime-profile` on the command line replaces the pin; a pin that names no profile in the catalog fails the render rather than silently running without it. The render result's `resolution.trace` lists every layer that contributed. Captain binaries older than this key reject a file that uses it.
+`batch` splits the input files of `captain prompt run <prompt> [files...]` into runs of `size` files each, `concurrency` of them at a time (default 1). `batch: 1` is shorthand for `batch: {size: 1}`. Without it every input file goes to one run. `--batch` and `--batch-concurrency` override it; see [Input files and batches](/prompts/cli/#input-files-and-batches).
 
-<CodeExample client:load language="yaml" title="Pinned runtime profile" source={`
+```yaml
+---
+model: jev-latest
+batch: {size: 1, concurrency: 4}
+---
+Classify {{file}}.
+```
+
+## Inline tools
+
+`tools` declares tools the model can call, keyed by tool name. Each tool runs its `exec` script and returns the result to the model. Inline tools are caller tools: API runtimes call them in-process and agent runtimes reach them through Captain's caller-tool MCP endpoint. A runtime that cannot expose caller tools (for example `google cli`) refuses the run before the first model call. Jev is the exception: it ignores tools and leaves them to hooks (see [Jev typed decisions](#jev-typed-decisions)).
+
+<CodeExample client:load language="yaml" title="A prompt that ships its own tool" source={`
+---
+model: agent:sonnet
+tools:
+  lookup_ticket:
+    description: Fetch a ticket by id
+    input: {id: string}
+    output: {title: string, status: string}
+    exec: |
+      #!/usr/bin/env python3
+      import json, sys
+      ticket = json.load(sys.stdin)
+      print(json.dumps({"title": "Ticket " + ticket["id"], "status": "open"}))
+    readonly: true
+    timeout: 30s
+    retry: {attempts: 3, delay: 1s, exitCodes: [75]}
+---
+Summarise ticket {{ticket}}.
+`} />
+
+<table className="docs-table">
+  <thead>
+    <tr>
+      <th>Field</th>
+      <th>Behavior</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>exec</code></td>
+      <td>Required. The script to run. A shebang line picks the interpreter; otherwise it runs with <code>bash -c</code>, or <code>sh -c</code> when bash is missing. The tool input arrives on stdin as a JSON object.</td>
+    </tr>
+    <tr>
+      <td><code>description</code></td>
+      <td>Shown to the model.</td>
+    </tr>
+    <tr>
+      <td><code>input</code></td>
+      <td>Picoschema or JSON Schema for the arguments. Omit it to take an empty object.</td>
+    </tr>
+    <tr>
+      <td><code>output</code></td>
+      <td>Picoschema or JSON Schema. When set, stdout must be JSON that matches it, and the model gets the parsed document. Without it, the model gets stdout as text.</td>
+    </tr>
+    <tr>
+      <td><code>readonly</code>, <code>destructive</code></td>
+      <td>Safety hints. A <code>readonly</code> tool runs without approval. A <code>destructive</code> tool asks first. Declaring neither makes the tool ask, unless a policy rule allows it. The two are mutually exclusive.</td>
+    </tr>
+    <tr>
+      <td><code>permission</code></td>
+      <td><code>auto</code>, <code>ask</code>, <code>allow</code> or <code>deny</code>. Overrides the default derived from the hints. <code>toolPolicy</code> and <code>toolPreferences</code> rules still apply by tool name, as for any caller tool; <code>permissions.tools</code> does not govern caller tools.</td>
+    </tr>
+    <tr>
+      <td><code>timeout</code></td>
+      <td>Bounds each attempt. The default is <code>10m</code>. On timeout the script's whole process group is killed.</td>
+    </tr>
+    <tr>
+      <td><code>retry</code></td>
+      <td><code>attempts</code> counts every run, the first included. <code>delay</code> (default <code>1s</code>) grows by <code>backoff</code> (default <code>2</code>) up to <code>maxDelay</code> (default <code>30s</code>). A timed-out attempt is always retried. A non-zero exit is retried unless <code>exitCodes</code> is set, in which case only the listed codes are retried. Output that fails the <code>output</code> schema is never retried.</td>
+    </tr>
+    <tr>
+      <td><code>cwd</code>, <code>dotenv</code>, <code>envVars</code>, <code>connections</code></td>
+      <td>The same fields as <code>setup</code>, applied to this tool. A tool inherits the run's <code>setup</code> dotenv files and static env vars. It inherits the run's connections and secret env vars only as <code>credentials</code> allows. Its own dotenv files and env vars are added on top and win on conflict, and its own <code>connections</code> replace the run's. <code>cwd</code> defaults to the run's working directory, after any setup checkout or worktree. <code>checkout</code> is not allowed on a tool.</td>
+    </tr>
+    <tr>
+      <td><code>placement</code></td>
+      <td>Where the script runs. <code>host</code> or <code>sandbox</code> on a local run; <code>supervisor</code> or <code>sidecar</code> on a <code>git-agent</code> run. When unset, it is the sandbox's first placement: <code>host</code> locally, <code>supervisor</code> on git-agent. See <a href="#tool-environment">Tool environment</a>.</td>
+    </tr>
+    <tr>
+      <td><code>credentials</code></td>
+      <td><code>none</code>, <code>direct</code>, <code>proxied</code>, <code>sidecar</code> or <code>sidecar-proxied</code>: how connections and secret env vars reach the script. When unset, it is derived: <code>proxied</code> when the tool declares <code>grants</code>; otherwise <code>none</code> when there is nothing secret to hand over; otherwise <code>direct</code> on the host or supervisor. A tool placed in the sandbox or on the sidecar with secrets must choose a mode explicitly.</td>
+    </tr>
+    <tr>
+      <td><code>grants</code></td>
+      <td>HTTP(S) destinations a <code>proxied</code> or <code>sidecar-proxied</code> tool may call, each with a <code>name</code>, <code>url</code>, <code>methods</code>, path prefixes in <code>paths</code>, and the <code>headers</code> that carry a credential (<code>{name, valueFrom}</code>).</td>
+    </tr>
+  </tbody>
+</table>
+
+The script runs through the commons-db shell runner. Its environment contains only the allowlisted host variables, plus the dotenv files, env vars and credentials its mode allows. The runner redacts `envVars` values (static ones included), dotenv values and connection-produced values from the output and errors the model sees, so print a derived value rather than one of those verbatim. A non-zero exit returns the exit code and the tail of stderr to the model as a tool error.
+
+### Tool environment
+
+Each tool's environment is prepared once per run, after setup, and torn down when the run ends. Connection credential files are written to a private temporary directory, never into the workspace.
+
+<table className="docs-table">
+  <thead>
+    <tr>
+      <th><code>credentials</code></th>
+      <th>What the script gets</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>none</code></td>
+      <td>No connections and no secret env vars, its own or the run's. Declaring either on the tool is an error.</td>
+    </tr>
+    <tr>
+      <td><code>direct</code></td>
+      <td>The real credentials: its own and the run's connections and secret env vars. On the host, this makes the tool the proxy: it performs the credentialed operation itself, and the agent only ever sees its result.</td>
+    </tr>
+    <tr>
+      <td><code>proxied</code></td>
+      <td>Configuration that names a proxy on the host, which holds the real credentials and injects them on the way out. <code>kubernetes</code> connections (the tool's own or the run's) are served through a <code>KUBECONFIG</code> whose only content is the proxy's address; it contains no credentials. <code>grants</code> are served by an egress proxy: the script sees <code>HTTP_PROXY</code>/<code>HTTPS_PROXY</code> and one placeholder per granted header, <code>&lt;GRANT&gt;_&lt;HEADER&gt;</code>. Run connections that no proxy can serve (<code>aws</code>, <code>gcp</code>, <code>azure</code>) and secret env vars are not inherited, and declaring them on the tool is an error. On the sidecar, the proxies stay on the supervisor and the tool reaches them through the task's tunnel; it inherits nothing from the run.</td>
+    </tr>
+    <tr>
+      <td><code>sidecar</code></td>
+      <td>Sidecar only. The tool's own <code>envVars</code>, <code>dotenv</code> and <code>connections</code>, resolved on the sidecar from its own environment, files and cloud identity. Nothing is inherited from the run, whose setup is the supervisor's. <code>grants</code> are refused.</td>
+    </tr>
+    <tr>
+      <td><code>sidecar-proxied</code></td>
+      <td>Sidecar only. The supervisor resolves the tool's <code>grants</code> and releases their values once, to an egress proxy inside the sidecar's runner, which holds them in memory. The script sees placeholders, as under <code>proxied</code>. <code>grants</code> are required; <code>connections</code> and secret env vars are refused.</td>
+    </tr>
+  </tbody>
+</table>
+
+The egress proxy enforces grants. Destinations are denied by default, each grant is scoped by method and path, and a placeholder outside its granted header is rejected, never stripped. HTTPS works through `CONNECT`: the proxy terminates the tunnel with a certificate from a per-run CA, so the requests inside stay inspectable. The script trusts that CA through `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS` and `GIT_SSL_CAINFO`. The CA's private key never leaves Captain's process, and a `CONNECT` to an ungranted destination is refused. Rejections are logged as warnings.
+
+<CodeExample client:load language="yaml" title="A proxied tool" source={`
+---
+model: agent:sonnet
+tools:
+  open_issues:
+    description: List open issues in acme/captain
+    credentials: proxied
+    readonly: true
+    grants:
+      - name: gh
+        url: https://api.github.com
+        methods: [GET]
+        paths: [/repos/acme/captain/issues]
+        headers:
+          - name: Authorization
+            valueFrom: {secretKeyRef: {name: github, key: token}}
+    exec: |
+      curl -fsS -H "Authorization: $GH_AUTHORIZATION" \\
+        "https://api.github.com/repos/acme/captain/issues?state=open"
+---
+Summarise the open issues.
+`} />
+
+`placement` is checked against the run's sandbox before the model is called:
+
+<table className="docs-table">
+  <thead>
+    <tr>
+      <th>Run sandbox</th>
+      <th><code>host</code></th>
+      <th><code>sandbox</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>off</code>, <code>native</code></td><td>Supported: the tool runs next to Captain, outside the provider's sandbox</td><td>Refused: there is no wrapper to run the tool inside</td></tr>
+    <tr><td><code>docker</code></td><td colSpan="2">Refused: the container cannot yet reach Captain's tool endpoint</td></tr>
+    <tr><td><code>git-agent</code></td><td colSpan="2">Refused: use <code>supervisor</code> or <code>sidecar</code>, below</td></tr>
+  </tbody>
+</table>
+
+### Tools on git-agent runs
+
+A `git-agent` run executes on the sidecar, so its tools are placed relative to the two hosts. The agent sees every tool, wherever it runs, as one MCP server. The sidecar's runner serves sidecar tools itself and forwards supervisor tools over the task's tunnel. The tunnel uses the transport the sidecar already relays results over, SSH or HTTPS, and opens only services the supervisor registered for that task and that agent.
+
+<table className="docs-table">
+  <thead>
+    <tr>
+      <th><code>placement</code></th>
+      <th><code>none</code></th>
+      <th><code>direct</code></th>
+      <th><code>proxied</code></th>
+      <th><code>sidecar</code></th>
+      <th><code>sidecar-proxied</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><code>supervisor</code></td><td>Supported</td><td>Supported</td><td>Supported</td><td>Refused</td><td>Refused</td></tr>
+    <tr><td><code>sidecar</code></td><td>Supported</td><td>Refused: the supervisor's secrets would cross to the sidecar</td><td>Supported: no secret reaches the sidecar</td><td>Supported</td><td>Supported</td></tr>
+  </tbody>
+</table>
+
+A supervisor tool is approved by the supervisor's run, exactly like a local tool. A sidecar tool runs where nobody can approve a call, so one that resolves to `ask` is refused before dispatch. Mark it `readonly`, set `permission: allow`, or place it on the supervisor.
+
+What each mode protects against:
+
+- **The agent and the sidecar's runner run as the same OS user.** When any sidecar tool holds credentials, the runner removes everything but system, provider and `CAPTAIN_*` variables from the agent's environment. Under the native Claude sandbox, the agent is also denied reads of the task file, the tools' private directories, and the sidecar's keys, token and captain config. This keeps secrets out of the agent's environment and context. It does not protect them from a same-user process that escapes its confinement. Codex runtimes refuse denied-read paths, so a task with credentialed sidecar tools fails when it launches a Codex agent.
+- **`sidecar` shares the sidecar's ambient identity.** An instance role, IRSA or a service account is available to every process on the sidecar, the agent included.
+- **A grant is the real capability boundary.** The agent could call a proxy directly instead of through the tool's script, so scope each grant's `methods` and `paths` to what the tool needs. Every proxy requires a per-tool secret, so another local process that finds its port cannot use it.
+- **Static values in a prompt inside the repository travel with the work.** The dispatch ships the repository's uncommitted state to the sidecar. Keep secret values in a secret store (`valueFrom`), or keep such a prompt outside the repository.
+
+Supervisors and sidecars must run the same captain release. A task names the payload features it needs, and a sidecar that does not know one refuses the task instead of running it without its tools.
+
+A chat binds its inline tools once, when it starts. Every turn shares one tool environment, prepared where setup left the chat and torn down when the chat ends. A chat attaches no approval broker, so a tool that would ask is refused when the chat starts; mark it `readonly` or set `permission: allow`. `captain prompt observe` refuses prompts with inline tools, because it does not run through the tool runner.
+
+The frontmatter is rendered as Handlebars before it is decoded, so `exec` can use run variables, for example `--project {{shq project}}`. A literal `{{` in a script must be written as `\{{`. Tool arguments never pass through the template: they only arrive on stdin.
+
+A tool declared in a preset or request layer with the same name replaces the prompt's tool whole. Fields from the two layers are never mixed. `captain lint promptfile` compiles each tool's schemas. It warns in three cases:
+
+- A `destructive` tool retries, because a failed attempt may already have taken effect.
+- A `sandbox` tool uses `direct` credentials, which puts real secrets in the sandbox.
+- A `none` or `proxied` tool sits beside `setup.connections`, which still hand the agent those secrets.
+
+## Runtime preset selection
+
+`presets` selects reusable runtime spec layers. Captain combines the selected presets, rendered frontmatter, and caller request, sorting by explicit `order`, then scope, then selection order. Ordinary presets supply defaults beneath the prompt; a higher `order` can enforce fields afterward. Saved configuration fills remaining gaps. Missing or ambiguous references fail rendering. The render result's `resolution.trace` and `resolution.provenance` explain the effective fields. See [Runtime overlay](/prompts/runtime/#precedence).
+
+`runtimeProfile` and `--runtime-profile` are deprecated and ignored with a warning. Replace them with `presets` and `--preset`.
+
+<CodeExample client:load language="yaml" title="Reusable runtime presets" source={`
 ---
 model: claude-sonnet-4-6
-runtimeProfile: review
+presets: [Plan]
 budget:
   maxTurns: 7
 ---
@@ -134,7 +356,9 @@ When no Go output target is passed to `Render`, Captain marshals a dotprompt `ou
 
 Set `model: jev-latest`, `mode: api`, and `TYPESAFE_API_KEY` to use TypeSafe's Jev API. Declare `output.schemaType: typesafe-schema` and put named Noul, Choice, or Score questions in `output.schema`. The rendered prompt body becomes the TypeSafe `state`; the frontmatter model becomes the native request model. Captain sends and logs the native request and response through the usual provider middleware, then returns `{"value": {...}, "typesafe": {...}}`. `value` contains the selected choice or numeric Noul and Score values; `typesafe` preserves all native answer details, including confidence and probability distributions.
 
-`input.schemaType` accepts `json-schema`. `output.schemaType` accepts `json-schema` or `typesafe-schema`; an omitted type keeps the existing JSON Schema behavior. With JSON Schema output, Jev converts required string enums to Choice, numbers bounded from 0 to 1 to Noul, and bounded numbers with an ordered `x-typesafe-criteria` rubric to Score. The rubric must contain 2 to 10 levels and `maximum` must be its last index. Unsupported schema keywords and shapes fail before the API call. Jev does not accept attachments, tools, or session history.
+`input.schemaType` accepts `json-schema`. `output.schemaType` accepts `json-schema` or `typesafe-schema`; an omitted type keeps the existing JSON Schema behavior. With JSON Schema output, Jev converts required string enums to Choice, numbers bounded from 0 to 1 to Noul, and bounded numbers with an ordered `x-typesafe-criteria` rubric to Score. The rubric must contain 2 to 10 levels and `maximum` must be its last index. Unsupported schema keywords and shapes fail before the API call.
+
+Jev ignores tools: inline `tools`, caller tools, `toolPolicy`, `toolPreferences` and `permissions.tools` are never sent to the model. Inline tools stay bound, so schema and lifecycle hooks can still call them. Each ignored field is recorded in the run's `specProvenance` with `ignored: {by: {kind: catalog, name: jev}, reason: ...}`, and `captain prompt render --json` shows the same marker under `resolution.provenance`. Jev still refuses attachments and session history.
 
 <CodeExample client:load language="yaml" title="Jev commit classifier" source={`
 ---
@@ -195,4 +419,69 @@ Commit message:
 
 Patch:
 {{patch}}
+`} />
+
+## Lint promptfiles
+
+Run `captain lint promptfile [paths...]` before executing a prompt. It checks frontmatter delimiters, YAML, Handlebars syntax, Captain declarations, structural options, hooks, and Picoschema, JSON Schema, or native TypeSafe output declarations. Validation does not execute the body, contact a model, resolve presets, or open a database. Body-only prompts and declarations that inherit their model remain valid.
+
+<CodeExample client:load language="bash" title="Validate promptfiles" source={`
+# Discover .prompt files recursively beneath the current directory.
+captain lint promptfile
+
+# Check a specific reusable prompt and return Gavel linter results as JSON.
+captain lint promptfile pkg/ai/prompt/testdata/commit.prompt --format json
+
+# Supply a frontmatter variable for the bundled review example.
+captain lint promptfile examples/lint-review.prompt --var limit=1024
+
+# Use JSON for typed inputs; individual --var values override matching JSON keys.
+captain lint promptfile examples/lint-review.prompt --vars '{"limit":512}' --var limit=1024 --format json
+`} />
+
+File arguments are checked directly, including explicitly named ignored files. Directory discovery respects Git ignore rules and skips nested projects. Overlapping paths are checked once. A missing path, unreadable ordinary file, or selection containing no `.prompt` files fails with an actionable error. A broken, cyclic, or unreadable symbolic link produces a `promptfile/symlink` warning attached to its logical path, allowing the remaining prompts to be validated.
+
+Missing body variables are allowed because lint does not render the body. Frontmatter variables need values to validate the declarations they generate: without complete sample inputs, lint checks template syntax and emits a `promptfile/variables` warning listing unresolved inputs and the deferred declaration checks. Supply repeated `--var key=value` flags or a `--vars` JSON object to enable those checks. Schema compilation uses bundled declarations and does not fetch external references.
+
+Human output shows the number of files checked and separate error and warning counts, followed by diagnostics grouped by prompt path. JSON results use Gavel's standard linter-result array, including stable rule IDs, severities, file counts, and source positions where available. Warning-only results exit successfully; invalid content or execution failures exit nonzero. JSON output retains diagnostics on failure. The command performs validation only and does not modify promptfiles.
+
+## Review documents with Gavel
+
+`gavel lint prompt` runs a prompt with the `lint` preset, which replaces the prompt's output schema with Gavel's violation contract, so any prompt that asks for located findings works as a linter. Captain provides five document review examples in `examples/`. They run as read-only agents: they read the listed files themselves, search the working tree to check concrete references, and report each finding with its file, line, quoted text, severity and a stable `family/name` rule id. Errors fail the lint; warnings and info do not.
+
+<table>
+  <thead>
+    <tr><th>Prompt</th><th>Reader</th><th>Rule families</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>spec-internal-high</code></td><td>Team deciding what to build: PRDs, RFCs, architecture overviews, plans</td><td><code>req/</code> <code>doc/</code> <code>hl/</code> <code>int/</code></td></tr>
+    <tr><td><code>spec-internal-low</code></td><td>Implementers: detailed, schema and algorithm designs</td><td><code>req/</code> <code>doc/</code> <code>ll/</code> <code>int/</code></td></tr>
+    <tr><td><code>spec-public-high</code></td><td>Customers evaluating: product specs, solution overviews, whitepapers</td><td><code>req/</code> <code>doc/</code> <code>hl/</code> <code>pub/</code></td></tr>
+    <tr><td><code>spec-public-low</code></td><td>External integrators: API references, protocol and format specs</td><td><code>req/</code> <code>doc/</code> <code>ll/</code> <code>pub/</code></td></tr>
+    <tr><td><code>proposal-review</code></td><td>Evaluators: RFP responses, proposals, statements of work</td><td><code>req/</code> <code>doc/</code> <code>prop/</code></td></tr>
+  </tbody>
+</table>
+
+`req/` checks requirement quality (verifiable, unambiguous, singular, with units, consistent). `doc/` catches defects common in generated documents: unsourced numbers, cross-section inconsistencies, placeholders, boilerplate, and planned behavior described as existing. `hl/` and `ll/` hold each level to its job, so a PRD is not asked for field types and an API reference is not asked for market rationale. `int/` verifies references against the repository; `pub/` catches internal leaks, undefined terms and missing versioning. `prop/` traces every mandatory RFP requirement to the response when `rfp` is supplied.
+
+Each review prompt declares `permissions: {access: read-only}` rather than a tool list. The same file therefore runs read-only on claude, where it compiles to Edit, Write, Bash and sub-agent denies, and on codex, where it compiles to a read-only sandbox that never asks. Web tools stay available on both. `captain permissions explain examples/proposal-review.prompt --model agent:sonnet --model agent:gpt-6.1-sol` shows both postures; see [Portable access](/prompts/runtime/#portable-access).
+
+To use an example by name from any directory, copy it from `examples/` into `~/.config/captain/prompts/`, or into a repository's `.captain/prompts/` for project use. These examples are not embedded in the binary.
+
+<CodeExample client:load language="bash" title="Review documents" source={`
+# Validate the prompt declarations without calling a model. files is a list.
+captain lint promptfile examples/spec-internal-high.prompt --var 'files:=["docs/prd.md"]'
+
+# Show the rendered request, including the lint schema and read-only permissions.
+# gavel passes the paths as the files list, in one run.
+gavel lint prompt --dry-run examples/spec-internal-high.prompt docs/prd.md
+
+# Review a design against the high-level spec it implements.
+gavel lint prompt examples/spec-internal-low.prompt docs/design.md -- -V parent=docs/prd.md
+
+# Review several public documents together with an extra focus, grouped by rule.
+gavel lint prompt --summary examples/spec-public-low.prompt docs/api.md docs/errors.md -- -V focus=pagination
+
+# Trace an RFP response against the RFP.
+gavel lint prompt examples/proposal-review.prompt bid/response.md -- -V rfp=bid/rfp.md
 `} />

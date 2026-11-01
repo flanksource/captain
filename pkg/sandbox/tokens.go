@@ -62,7 +62,7 @@ type TokenResult struct {
 	WritePaths []string
 	Expiry     time.Time
 	// Placeholder, when set, is what the sandbox environment carries instead
-	// of the real values: an egress proxy (pkg/gitagent/proxy) substitutes it
+	// of the real values: an egress proxy (pkg/credproxy) substitutes it
 	// at the granted header on the way out, so the credential never enters
 	// the sandbox (issue #39 §6.2, SPEC-git-agent-protocol §9).
 	Placeholder string

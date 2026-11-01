@@ -15,7 +15,7 @@ var _ = Describe("Transcript and Database", func() {
 	parsed := func(marker string) *session.Session {
 		return &session.Session{
 			Provider: marker, Model: marker + "-model",
-			Messages: []session.Message{{ID: marker + "-m1"}},
+			Messages: []session.Message{{ID: marker + "-m1", Parts: []session.Part{{Type: session.PartText, Text: marker}}}},
 			Events:   []session.Event{{Type: marker + "-event"}},
 			Turns:    []session.Turn{{ID: marker + "-t1"}},
 			Usage:    api.Usage{InputTokens: 11, OutputTokens: 3},
@@ -48,6 +48,16 @@ var _ = Describe("Transcript and Database", func() {
 		Expect(messageIDs(result.Session)).To(Equal([]string{"transcript-m1"}))
 		Expect(result.Session.Turns[0].ID).To(Equal("transcript-t1"))
 		Expect(result.Provenance.Of(load.FacetUsage)).To(Equal(load.SourceTranscript))
+	})
+
+	It("contributes only the transcript's conversational messages", func() {
+		transcript := parsed("transcript")
+		transcript.Messages = append(transcript.Messages, session.Message{ID: "hook-1", Parts: []session.Part{{Type: session.PartTool, ToolName: "StopHookSummary"}}})
+
+		result, _ := load.Load(context.Background(), load.Transcript(transcript))
+
+		Expect(messageIDs(result.Session)).To(Equal([]string{"transcript-m1"}))
+		Expect(transcript.Messages).To(HaveLen(2), "the caller's parsed transcript is left intact")
 	})
 
 	It("uses the database aggregate when no transcript was parsed", func() {

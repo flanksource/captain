@@ -64,17 +64,20 @@ type Verify struct {
 	MaxIterations int `json:"maxIterations,omitempty" yaml:"maxIterations,omitempty" jsonschema:"minimum=0"`
 }
 
-// AfterStep is one post-run shell step: Commands run sequentially with `sh -c`
-// in Cwd, stopping at the first failure, when the run's outcome passes When.
+// AfterStep is one post-run step, run when the run's outcome passes When and its
+// `if` holds: Commands run sequentially with `sh -c` in Cwd, stopping at the
+// first failure; Tool runs an inline tool with With as its stdin; Prompt runs a
+// child .prompt with With as its variables.
 type AfterStep struct {
 	// When gates the step on the run's outcome: onVerify (default) runs only when
 	// the run did not error and verification passed (or none was declared);
 	// onSuccess runs when the run did not error; always runs regardless.
 	When CommitWhen `json:"when,omitempty" yaml:"when,omitempty" jsonschema:"enum=onVerify,enum=onSuccess,enum=always"`
-	// Cwd is where the commands run: absolute, or relative to the run's working
-	// directory (the worktree when setup relocated the run). Empty is the run's.
-	Cwd      string   `json:"cwd,omitempty" yaml:"cwd,omitempty"`
-	Commands []string `json:"commands" yaml:"commands"`
+	// Cwd is where the commands or child prompt run: absolute, or relative to the
+	// run's working directory (the worktree when setup relocated the run). Empty
+	// is the run's.
+	Cwd        string `json:"cwd,omitempty" yaml:"cwd,omitempty"`
+	HookAction `json:",inline" yaml:",inline"`
 }
 
 // EffectiveWhen resolves the default gate.
@@ -85,18 +88,17 @@ func (s AfterStep) EffectiveWhen() CommitWhen {
 	return s.When
 }
 
-// Validate refuses a gate it cannot honour and a step with nothing to run.
+// Validate refuses a gate it cannot honour and a step that runs nothing or
+// several things.
 func (s AfterStep) Validate() error {
 	if !s.When.Valid() {
 		return fmt.Errorf("when %q is invalid; want one of: onVerify, onSuccess, always", s.When)
 	}
-	if len(s.Commands) == 0 {
-		return fmt.Errorf("commands is empty")
+	if err := s.HookAction.Validate(HookEnvLifecycle); err != nil {
+		return err
 	}
-	for i, cmd := range s.Commands {
-		if strings.TrimSpace(cmd) == "" {
-			return fmt.Errorf("commands[%d] is empty", i)
-		}
+	if s.Tool != "" && s.Cwd != "" {
+		return fmt.Errorf("cwd is not read by a tool step: the tool runs in its own environment")
 	}
 	return nil
 }
@@ -113,7 +115,7 @@ func (w *Workflow) Validate() error {
 	}
 	for i, step := range w.After {
 		if err := step.Validate(); err != nil {
-			return fmt.Errorf("workflow.after[%d].%w", i, err)
+			return fmt.Errorf("workflow.after[%d]: %w", i, err)
 		}
 	}
 	if w.Verify == nil {

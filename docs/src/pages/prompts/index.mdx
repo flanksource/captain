@@ -19,7 +19,7 @@ Captain prompts are `.prompt` templates rendered through Google dotprompt and fo
 <div className="docs-card-grid">
   <div className="docs-card">
     <h3>Source</h3>
-    <p>A prompt can come from a positional file, `--prompt`, stdin (piped, or named with `-`), embedded examples, configured prompt dirs, or the implicit `.captain/prompts` directory. `-p`, `--system`, `--append-system` and `--vars` also accept `@file` or `@url`.</p>
+    <p>A prompt can come from a positional file, `--prompt`, stdin (piped, or named with `-`), embedded examples, configured prompt dirs, the implicit `.captain/prompts` directory, or the user's `~/.config/captain/prompts` directory. `-p`, `--system`, `--append-system` and `--vars` also accept `@file` or `@url`.</p>
   </div>
   <div className="docs-card">
     <h3>Template</h3>
@@ -95,6 +95,7 @@ REQUIREMENTS:
 
 ## Where to go next
 
+- [Prompt CLI](/prompts/cli/) covers discovery, authoring, preview, execution, observations, help and color.
 - [Prompt Format](/prompts/format/) covers frontmatter, roles, variables, and config precedence.
 - [Runtime Overlay](/prompts/runtime/) covers `api.Spec`, budgets, permissions, memory, model selection, and setup.
 - [Sources and API](/prompts/sources-api/) covers embedded/local sources and render/run API payloads.

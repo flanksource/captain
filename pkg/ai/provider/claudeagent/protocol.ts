@@ -5,8 +5,10 @@ import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 // bridge. Version 2 added can_use_tool interrupt and the elicit request.
 // Version 3 added session/state, which ends a turn, and parent_tool_use_id on
 // subagent tool notifications. Version 4 made the git add/commit guard
-// conditional on initialize's guardGitCommits.
-export const PROTOCOL_VERSION = 4;
+// conditional on initialize's guardGitCommits. Version 5 stamps each prompt's
+// uuid on its SDK user message and reports the prompts a result consumed
+// (user_message_uuids), so the host settles prompts the SDK folded together.
+export const PROTOCOL_VERSION = 5;
 
 export type JsonRpcId = number | string | null;
 
@@ -17,6 +19,7 @@ export interface PromptAttachment {
 }
 
 export interface PromptParams {
+  uuid?: string;
   text?: string;
   attachments?: PromptAttachment[];
 }
@@ -103,6 +106,9 @@ export class TurnQueue implements AsyncIterable<SDKUserMessage> {
   private ended = false;
 
   push(params: PromptParams) {
+    if (!params.uuid) {
+      throw new Error("prompt requires a uuid");
+    }
     const content: Exclude<SDKUserMessage["message"]["content"], string> = [];
     if (params.text) {
       content.push({ type: "text", text: params.text });
@@ -138,6 +144,8 @@ export class TurnQueue implements AsyncIterable<SDKUserMessage> {
       message: { role: "user", content },
       parent_tool_use_id: null,
       session_id: "",
+      // The result that consumes this prompt names it in user_message_uuids.
+      uuid: params.uuid as SDKUserMessage["uuid"],
     };
     const waiter = this.waiters.shift();
     if (waiter) {

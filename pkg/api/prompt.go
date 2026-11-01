@@ -34,10 +34,21 @@ type Prompt struct {
 	InputSchemaJSON   json.RawMessage `json:"inputSchemaJSON,omitempty" yaml:"inputSchemaJSON,omitempty" pretty:"-"`
 	OutputSchemaType  SchemaType      `json:"outputSchemaType,omitempty" yaml:"outputSchemaType,omitempty" pretty:"-"`
 	TypeSafeQuestions json.RawMessage `json:"typeSafeQuestions,omitempty" yaml:"typeSafeQuestions,omitempty" pretty:"-"`
+	// SchemaHooks are the frontmatter's output.hooks: run in order before the
+	// first model call, each returns the whole output schema that replaces
+	// TypeSafeQuestions or SchemaJSON. Only readonly tools may serve one.
+	SchemaHooks []HookAction `json:"schemaHooks,omitempty" yaml:"schemaHooks,omitempty" pretty:"-"`
+	// InputHooks are the frontmatter's input.hooks: run in order before the
+	// body renders, each returns {"vars": {...}}, which replaces Variables, or
+	// {"skip": "<reason>"}, which stops the run. Only readonly tools may serve one.
+	InputHooks []HookAction `json:"inputHooks,omitempty" yaml:"inputHooks,omitempty" pretty:"-"`
+	// Variables are the values the prompt was rendered with, kept when the spec
+	// declares hooks so a hook can read them as `vars`.
+	Variables map[string]any `json:"variables,omitempty" yaml:"variables,omitempty" pretty:"-"`
 	// SchemaStrictness governs how a response that fails JSON-schema validation is
 	// handled: "" uses the runtime default (Anthropic structured output retries,
 	// others skip post-validation); "none" always skips; "warning" logs and
-	// continues; "error" fails; "retry" re-asks the model with the validation
+	// continues; "error" fails; "repair" (alias "retry") re-asks the model with the validation
 	// error, then fails. Only meaningful alongside a schema (Schema or SchemaJSON).
 	SchemaStrictness SchemaStrictness `json:"schemaStrictness,omitempty" yaml:"schemaStrictness,omitempty" pretty:"-"`
 	// Metadata is arbitrary caller metadata. (ai.Request.Metadata)

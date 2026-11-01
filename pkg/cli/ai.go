@@ -155,7 +155,7 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 	if remote, err := remoteExecProviderFor(req, cfg); err != nil {
 		return nil, cleanup, err
 	} else if remote != nil {
-		wrapped, err := middleware.Wrap(remote, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
+		wrapped, err := middleware.Wrap(remote, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
 		if err != nil {
 			closeProvider(remote)
 			return nil, cleanup, err
@@ -174,19 +174,36 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 		cleanup()
 		return nil, func() {}, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg)); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg)); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}
 	return p, cleanup, nil
 }
 
-func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error) {
+func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (output any, runErr error) {
 	start := time.Now()
+	renderer := promptEventRenderer(ctx)
+	if renderer == nil && req.Prompt.HasSchema() {
+		renderer = NewEventRenderer(os.Stderr)
+		defer func() { runErr = errors.Join(runErr, renderer.Flush()) }()
+	}
+	if renderer != nil {
+		ctx = ai.WithEventObserver(ctx, func(event ai.Event) { renderer.Handle(0, event) })
+	}
 	resp, err := p.Execute(ctx, req)
 	if err != nil {
-		return nil, err
+		if renderer != nil {
+			if resp != nil && resp.Text != "" {
+				renderer.Handle(0, ai.Event{Kind: ai.EventText, Text: resp.Text, Rejected: true})
+			}
+			renderer.Handle(0, ai.Event{Kind: ai.EventError, Error: err.Error()})
+		}
+		if resp == nil {
+			return nil, err
+		}
 	}
+	runErr = err
 	model := firstNonEmpty(resp.Model, p.GetModel(), req.Name)
 	runtime := firstRuntime(resp.Runtime, p.GetRuntime(), api.RuntimeOf(req.Provider, req.Mode))
 	input := resolvedPromptInput(req, model, runtime, req.SessionID)
@@ -201,6 +218,7 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 	}
 	return AIPromptResult{
 		Text:             text,
+		TerminalOutcome:  resp.TerminalOutcome,
 		StructuredOutput: structuredOutput,
 		Model:            model,
 		Provider:         runtime.Provider,
@@ -211,8 +229,9 @@ func runBuffered(ctx context.Context, p ai.Provider, req ai.Request) (any, error
 		Input:            input,
 		InputTokens:      resp.Usage.InputTokens,
 		Output:           resp.Usage.OutputTokens,
+		CostUSD:          resp.CostUSD,
 		Duration:         time.Since(start).Round(time.Millisecond).String(),
-	}, nil
+	}, runErr
 }
 
 // runStreaming drives the streaming provider through ai.RunUntil with a single
@@ -222,6 +241,7 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 	start := time.Now()
 	var (
 		text             string
+		rejected         string
 		usage            ai.Usage
 		cost             float64
 		runtime          = sp.GetRuntime()
@@ -229,8 +249,14 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		session          = req.SessionID
 		structuredOutput map[string]any
 		structuredErr    error
+		terminal         ai.TerminalOutcomeTracker
+		terminalErr      error
 	)
-	renderer := NewEventRenderer(os.Stderr)
+	renderer := promptEventRenderer(ctx)
+	ownRenderer := renderer == nil
+	if ownRenderer {
+		renderer = NewEventRenderer(os.Stderr)
+	}
 	loop, err := ai.RunUntil(ctx, ai.LoopOptions{
 		Provider:      sp,
 		MaxIterations: 1,
@@ -242,6 +268,9 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 			return req, true
 		},
 		OnEvent: func(iteration int, ev ai.Event) {
+			if terminalErr == nil {
+				terminalErr = terminal.Observe(ev)
+			}
 			if ev.Model != "" {
 				model = ev.Model
 			}
@@ -250,13 +279,19 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 			}
 			renderer.Handle(iteration, ev)
 			if ev.Kind == ai.EventText {
-				text += ev.Text
+				if ev.Rejected {
+					rejected = ev.Text
+				} else {
+					text += ev.Text
+				}
 			}
 			if ev.Kind == ai.EventResult {
 				if len(ev.StructuredData) > 0 {
 					text = string(ev.StructuredData)
 					structuredOutput, structuredErr = structuredOutputMap(ev.StructuredData)
 				}
+			}
+			if ev.Kind == ai.EventResult || ev.Kind == ai.EventError {
 				if ev.Usage != nil {
 					usage = *ev.Usage
 				}
@@ -264,23 +299,29 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 			}
 		},
 	})
-	if renderErr := renderer.Flush(); renderErr != nil {
-		return nil, errors.Join(err, renderErr)
+	if ownRenderer {
+		err = errors.Join(err, renderer.Flush())
 	}
-	if err != nil {
+	if err != nil && (loop == nil || len(loop.Iterations) == 0) {
 		return nil, err
 	}
 	if structuredErr != nil {
 		return nil, structuredErr
 	}
-	if loop.StopReason == "error" {
-		return nil, fmt.Errorf("streaming loop stopped: %s", loop.StopReason)
+	if terminalErr != nil {
+		return nil, fmt.Errorf("invalid terminal outcome: %w", terminalErr)
+	}
+	if loop.StopReason == "error" && err == nil {
+		err = fmt.Errorf("streaming loop stopped: %s", loop.StopReason)
 	}
 	if loop.StopReason == "max-cost" {
-		return nil, fmt.Errorf("%w: spent $%.4f of $%.4f budget", ai.ErrBudgetExceeded, loop.TotalCost, req.Budget.Cost)
+		err = errors.Join(err, fmt.Errorf("%w: spent $%.4f of $%.4f budget", ai.ErrBudgetExceeded, loop.TotalCost, req.Budget.Cost))
 	}
 	if session == "" && len(loop.Iterations) > 0 {
 		session = loop.Iterations[0].SessionID
+	}
+	if err != nil && rejected != "" {
+		text = rejected
 	}
 	input := resolvedPromptInput(req, model, runtime, session)
 	dir := actualRunDir(input)
@@ -295,10 +336,11 @@ func runStreaming(ctx context.Context, sp ai.StreamingProvider, req ai.Request) 
 		HistoryFile:      historyFileForRun(providerOf(runtime), runtime.Mode, input.SessionID, dir),
 		Input:            input,
 		InputTokens:      usage.InputTokens,
+		TerminalOutcome:  terminal.Outcome(),
 		Output:           usage.OutputTokens,
 		CostUSD:          cost,
 		Duration:         time.Since(start).Round(time.Millisecond).String(),
-	}, nil
+	}, err
 }
 
 // firstRuntime is the first fully-resolved (provider, mode) pair among the
@@ -373,7 +415,7 @@ func RunAITest(opts AITestOptions) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if p, err = middleware.Wrap(p, middleware.WithLogging(), middleware.WithJevConversion()); err != nil {
+	if p, err = middleware.Wrap(p, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion()); err != nil {
 		return nil, err
 	}
 	if p.GetRuntime().Provider == "jev" {

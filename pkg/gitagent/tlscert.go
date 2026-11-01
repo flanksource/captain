@@ -28,6 +28,8 @@ import (
 const (
 	tlsCertName = "tls_cert.pem"
 	tlsKeyName  = "tls_key.pem"
+	// TLSKeyFileName is the endpoint's TLS private key under its keys dir.
+	TLSKeyFileName = tlsKeyName
 	// tlsValidity is deliberately long. The certificate is pinned by the agents
 	// that hold it rather than chained to a CA, so replacing it costs a
 	// re-enrollment of every agent — an expiry would arrive as an unexplained

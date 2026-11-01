@@ -70,7 +70,7 @@ func getInstance(ctx context.Context, provider *ai.ModelProvider, apiKey, baseUR
 func pluginFor(provider *ai.ModelProvider, apiKey, baseURL string) (api.Plugin, error) {
 	switch provider {
 	case ai.Anthropic:
-		return &anthropic.Anthropic{APIKey: apiKey, BaseURL: baseURL}, nil
+		return &anthropic.Anthropic{APIKey: apiKey, BaseURL: baseURL, Models: anthropicModels()}, nil
 	case ai.OpenAI:
 		plugin := &openai.OpenAI{APIKey: apiKey}
 		if baseURL != "" {

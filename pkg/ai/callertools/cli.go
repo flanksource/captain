@@ -67,6 +67,14 @@ func StartCLI(ctx context.Context, cfg api.Config, req api.Spec) (*CLIRun, error
 	return &CLIRun{endpoint: runtime.Endpoint(), tools: names, runtime: runtime}, nil
 }
 
+// Endpoint is where the run's caller-tool server listens and the credential a
+// client presents to it, for a run that relays it to an agent elsewhere.
+func (r *CLIRun) Endpoint() api.CallerToolEndpoint {
+	endpoint := r.endpoint
+	endpoint.Headers = cloneHeaders(r.endpoint.Headers)
+	return endpoint
+}
+
 // Close revokes the runtime this run owns and removes the credential files it
 // wrote. It is safe on a nil run.
 func (r *CLIRun) Close() error {

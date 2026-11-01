@@ -352,22 +352,41 @@ func (m Model) candidates() []Model {
 }
 
 // substituteModel picks a stand-in for a chain the user disabled entirely: the
-// catalog's top preferred model on an enabled runtime, favouring the original's
-// own provider family before crossing to another one. The per-request knobs are
-// carried over, with the effort re-resolved against the substitute's own catalog
-// entry so an unsupported tier does not travel with it.
+// catalog's top preferred model on an enabled runtime. It keeps the original's
+// runtime first, since switching mode changes what the run can do (an agent
+// moved to the API loses its tools), then its provider, then crosses providers;
+// on each runtime it prefers the original's model family. The per-request knobs
+// are carried over, with the effort re-resolved against the substitute's own
+// catalog entry so an unsupported tier does not travel with it.
 func substituteModel(m Model, disabled DisabledSet) (Model, bool) {
-	family := modelProvider(m)
+	provider := modelProvider(m)
+	var family string
+	if m.Provider != nil {
+		if known, ok := m.Provider.Lookup(m.Name); ok {
+			family = known.Family
+		}
+	}
+	rank := func(runtime Runtime) int {
+		switch {
+		case runtime.Provider == provider && runtime.Mode == m.Mode:
+			return 0
+		case runtime.Provider == provider:
+			return 1
+		default:
+			return 2
+		}
+	}
 	runtimes := AllRuntimes()
-	sort.SliceStable(runtimes, func(i, j int) bool {
-		return runtimes[i].Provider == family && runtimes[j].Provider != family
-	})
+	sort.SliceStable(runtimes, func(i, j int) bool { return rank(runtimes[i]) < rank(runtimes[j]) })
 	for _, runtime := range runtimes {
 		p, ok := runtime.ModelProvider()
 		if !ok || disabled.Runtime(p, runtime.Mode) {
 			continue
 		}
-		pick, ok := p.latestModel(runtime.Mode, "")
+		pick, ok := p.latestModel(runtime.Mode, family)
+		if !ok {
+			pick, ok = p.latestModel(runtime.Mode, "")
+		}
 		if !ok {
 			continue
 		}

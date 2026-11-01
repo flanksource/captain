@@ -1,6 +1,10 @@
 package api
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/flanksource/commons-db/workspace"
+)
 
 // CommitPhase names the lifecycle boundary a Commit is cut at. It mirrors
 // pkg/ai/agent.Phase, which pkg/api cannot import (pkg/api is the leaf).
@@ -156,45 +160,6 @@ func (s CommitStage) Validate() error {
 	return fmt.Errorf("invalid commit stage %q; want one of: worktree, changed", s)
 }
 
-// CommitGates is how much checking runs before each commit.
-type CommitGates string
-
-const (
-	// CommitGatesNone runs plain git with no checks.
-	CommitGatesNone CommitGates = "none"
-	// CommitGatesCheap runs only checks fast enough for every turn: gitignore
-	// and file-size, so secrets and build artifacts never enter the chain.
-	CommitGatesCheap CommitGates = "cheap"
-	// CommitGatesFull runs the host's complete pre-commit pipeline (hooks,
-	// lint, dependency checks). Captain has no such pipeline of its own; this
-	// requires a host-supplied commit callback and errors without one.
-	CommitGatesFull CommitGates = "full"
-)
-
-// AllCommitGates lists the non-empty gate levels.
-func AllCommitGates() []CommitGates {
-	return []CommitGates{CommitGatesNone, CommitGatesCheap, CommitGatesFull}
-}
-
-// Valid reports whether g is a recognised gate level (including the default "",
-// which means cheap).
-func (g CommitGates) Valid() bool {
-	switch g {
-	case "", CommitGatesNone, CommitGatesCheap, CommitGatesFull:
-		return true
-	default:
-		return false
-	}
-}
-
-// Validate fails loud on an unknown gate level, naming the valid set.
-func (g CommitGates) Validate() error {
-	if g.Valid() {
-		return nil
-	}
-	return fmt.Errorf("invalid commit gates %q; want one of: none, cheap, full", g)
-}
-
 // Commit declares one commit policy: which lifecycle boundary commits are cut
 // at, how they are cut, and what they pick up. A workflow may declare several.
 //
@@ -233,8 +198,11 @@ type Commit struct {
 	// Stage selects which files are committed; empty resolves by isolation
 	// (worktree when the run is isolated, changed otherwise).
 	Stage CommitStage `json:"stage,omitempty" yaml:"stage,omitempty" jsonschema:"enum=worktree,enum=changed"`
-	// Gates is how much checking runs before each commit; defaults to cheap.
-	Gates CommitGates `json:"gates,omitempty" yaml:"gates,omitempty" jsonschema:"enum=none,enum=cheap,enum=full"`
+	// Gates are the workspace gates each commit must pass, by registered name
+	// (secret-names, max-size with config.bytes, or a host's own). The excludes
+	// gate — content cloned from the source's gitignored files — always runs and
+	// is not listed; nothing else runs unless it is listed here.
+	Gates CommitGateSpecs `json:"gates,omitempty" yaml:"gates,omitempty"`
 	// DryRun reports what would be committed without writing anything.
 	DryRun bool `json:"dryRun,omitempty" yaml:"dryRun,omitempty"`
 }
@@ -272,19 +240,32 @@ func (c Commit) ShouldSquash() bool {
 	return *c.Squash
 }
 
-// EffectiveGates resolves Gates to its effective value.
-func (c Commit) EffectiveGates() CommitGates {
-	if c.Gates == "" {
-		return CommitGatesCheap
+// CommitGates lists every gate the workflow's commit policies declare, in
+// declaration order: what a commit the run cuts outside any one policy — the
+// setup snapshot — must pass too.
+func (w *Workflow) CommitGates() []workspace.GateSpec {
+	if w == nil {
+		return nil
 	}
-	return c.Gates
+	var gates []workspace.GateSpec
+	for _, c := range w.Commits {
+		gates = append(gates, c.Gates.Resolvable()...)
+	}
+	return gates
 }
 
 // Validate checks the commit policy's enum-typed fields and their combinations.
+// Gate names are resolved where the gates run (workspace.ResolveGates), since a
+// host registers its own gates in its process.
 func (c Commit) Validate() error {
-	for _, err := range []error{c.On.Validate(), c.Mode.Validate(), c.When.Validate(), c.Stage.Validate(), c.Gates.Validate()} {
+	for _, err := range []error{c.On.Validate(), c.Mode.Validate(), c.When.Validate(), c.Stage.Validate()} {
 		if err != nil {
 			return err
+		}
+	}
+	for i, gate := range c.Gates {
+		if gate.Name == "" {
+			return fmt.Errorf("commit gates[%d]: name is required", i)
 		}
 	}
 	if c.Squash != nil && *c.Squash && c.EffectiveMode() != CommitModeFixup {

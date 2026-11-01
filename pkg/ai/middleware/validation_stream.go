@@ -25,6 +25,7 @@ type streamedTurn struct {
 	// repair turn follows; the rejected answer is the turn's text.
 	rejection *ai.Event
 	failed    bool
+	textShown bool
 }
 
 func (t *streamedTurn) response() *ai.Response {
@@ -43,6 +44,7 @@ func forwardTurn(events <-chan ai.Event, out chan<- ai.Event) *streamedTurn {
 		switch ev.Kind {
 		case ai.EventText:
 			turn.text.WriteString(ev.Text)
+			turn.textShown = true
 		case ai.EventSystem:
 			if ev.SessionID != "" {
 				turn.sessionID = ev.SessionID
@@ -51,7 +53,9 @@ func forwardTurn(events <-chan ai.Event, out chan<- ai.Event) *streamedTurn {
 			if strings.HasPrefix(ev.Error, ai.ErrSchemaValidation.Error()) {
 				held := ev
 				turn.rejection = &held
-				turn.text.WriteString(ev.Text)
+				if turn.text.Len() == 0 {
+					turn.text.WriteString(ev.Text)
+				}
 				continue
 			}
 			turn.failed = true
@@ -70,12 +74,12 @@ func forwardTurn(events <-chan ai.Event, out chan<- ai.Event) *streamedTurn {
 }
 
 // ExecuteStream forwards the stream and validates the terminal result against
-// the request schema before releasing it. Under "retry" strictness a
+// the request schema before releasing it. Under "repair" strictness a
 // non-conforming result is repaired in further turns that resume the turn's
 // provider session, so an agent corrects its answer with the context its work
 // was done in; the released result carries the cost and usage of every turn.
-// "error" strictness, and "retry" once its budget is spent, follow the result
-// with an EventError that fails the iteration; "warning" only logs.
+// "error" strictness, and "repair" once its budget is spent, emit an EventError
+// instead of accepting the result; "warning" only logs.
 func (v *validatingProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
 	streamer, ok := v.provider.(ai.StreamingProvider)
 	if !ok {
@@ -83,11 +87,17 @@ func (v *validatingProvider) ExecuteStream(ctx context.Context, req ai.Request) 
 	}
 
 	strictness := v.effectiveStrictness(req)
-	if v.provider.GetRuntime().Provider == "jev" && strictness == api.SchemaStrictnessRetry {
+	if v.provider.GetRuntime().Provider == "jev" && strictness == api.SchemaStrictnessRepair {
 		return nil, fmt.Errorf("jev does not support schema repair retries")
 	}
+	if req.Prompt.OutputSchemaType == api.SchemaTypeTypeSafe {
+		return streamer.ExecuteStream(ctx, req)
+	}
 	schema, serr := ai.SchemaJSONFor(req.Prompt)
-	if strictness == api.SchemaStrictnessNone || serr != nil || len(schema) == 0 {
+	if serr != nil {
+		return nil, serr
+	}
+	if strictness == api.SchemaStrictnessNone || len(schema) == 0 {
 		return streamer.ExecuteStream(ctx, req) // nothing to validate; forward as-is
 	}
 
@@ -108,6 +118,13 @@ func (v *validatingProvider) validateStream(ctx context.Context, req ai.Request,
 	var cost float64
 	var usage ai.Usage
 	sawUsage := false
+	fail := func(message string) {
+		failure := ai.Event{Kind: ai.EventError, Error: message, CostUSD: cost}
+		if sawUsage {
+			failure.Usage = new(usage)
+		}
+		out <- failure
+	}
 	for attempt := 1; ; attempt++ {
 		spent := turn.result
 		if turn.rejection != nil {
@@ -120,10 +137,11 @@ func (v *validatingProvider) validateStream(ctx context.Context, req ai.Request,
 			}
 		}
 		if turn.rejection != nil {
-			if strictness == api.SchemaStrictnessRetry && attempt <= maxSchemaRetries {
+			turn.showRejected(out)
+			if strictness == api.SchemaStrictnessRepair && attempt <= maxSchemaRetries {
 				next, err := v.streamRepair(ctx, req, schema, turn.rejection.Error, turn, attempt, out)
 				if err != nil {
-					out <- ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("%s: repair attempt %d: %v", ai.ErrSchemaValidation, attempt, err)}
+					fail(fmt.Sprintf("%s: repair attempt %d: %v", ai.ErrSchemaValidation, attempt, err))
 					return
 				}
 				turn = next
@@ -139,19 +157,21 @@ func (v *validatingProvider) validateStream(ctx context.Context, req ai.Request,
 		}
 		verrs, err := v.validateResponse(schema, turn.response())
 		if err != nil {
-			out <- ai.Event{Kind: ai.EventError, Error: err.Error()}
+			turn.showRejected(out)
+			fail(err.Error())
 			return
 		}
-		if verrs != "" && !turn.failed && strictness == api.SchemaStrictnessRetry && attempt <= maxSchemaRetries {
+		if verrs != "" && !turn.failed && strictness == api.SchemaStrictnessRepair && attempt <= maxSchemaRetries {
+			turn.showRejected(out)
 			next, err := v.streamRepair(ctx, req, schema, verrs, turn, attempt, out)
 			if err != nil {
-				out <- ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("%s: repair attempt %d: %v", ai.ErrSchemaValidation, attempt, err)}
+				fail(fmt.Sprintf("%s: repair attempt %d: %v", ai.ErrSchemaValidation, attempt, err))
 				return
 			}
 			turn = next
 			continue
 		}
-		if turn.result != nil {
+		if turn.result != nil && (verrs == "" || strictness == api.SchemaStrictnessWarning) {
 			result := *turn.result
 			result.CostUSD = cost
 			if sawUsage {
@@ -164,7 +184,8 @@ func (v *validatingProvider) validateStream(ctx context.Context, req ai.Request,
 		case strictness == api.SchemaStrictnessWarning:
 			log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetRuntime(), v.provider.GetModel(), verrs)
 		default:
-			out <- ai.Event{Kind: ai.EventError, Error: fmt.Sprintf("%s: %s", ai.ErrSchemaValidation, verrs)}
+			turn.showRejected(out)
+			fail(fmt.Sprintf("%s: %s", ai.ErrSchemaValidation, verrs))
 		}
 		return
 	}
@@ -174,6 +195,7 @@ func (v *validatingProvider) validateStream(ctx context.Context, req ai.Request,
 // session the rejected turn ran in; a repair routed to another runtime cannot
 // share that session and runs standalone on the repair prompt alone.
 func (v *validatingProvider) streamRepair(ctx context.Context, parent ai.Request, schema json.RawMessage, verrs string, prev *streamedTurn, attempt int, out chan<- ai.Event) (*streamedTurn, error) {
+	out <- ai.Event{Kind: ai.EventSystem, Text: fmt.Sprintf("schema validation failed; repairing response (%d/%d): %s", attempt, maxSchemaRetries, verrs)}
 	req, cfg, useParent, err := v.repairRequest(parent, schema, verrs, prev.response(), attempt)
 	if err != nil {
 		return nil, err
@@ -201,4 +223,14 @@ func (v *validatingProvider) streamRepair(ctx context.Context, parent ai.Request
 		return nil, err
 	}
 	return forwardTurn(events, out), nil
+}
+
+func (t *streamedTurn) showRejected(out chan<- ai.Event) {
+	if !t.textShown && t.text.Len() > 0 {
+		out <- ai.Event{Kind: ai.EventText, Text: t.text.String(), Rejected: true}
+		t.textShown = true
+	}
+	if t.rejection != nil {
+		t.rejection.Text = ""
+	}
 }

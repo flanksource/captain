@@ -30,9 +30,6 @@ func New(cfg ai.Config) (*Provider, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, fmt.Errorf("%w: Jev requires TYPESAFE_API_KEY", ai.ErrNoAPIKey)
 	}
-	if len(cfg.Tools) > 0 || cfg.CallerTools != nil {
-		return nil, fmt.Errorf("jev does not support caller tools")
-	}
 	if cfg.Model.Temperature != nil || cfg.Model.Effort != "" {
 		return nil, fmt.Errorf("jev does not support temperature or reasoning effort")
 	}
@@ -112,9 +109,6 @@ func (p *Provider) prepare(req ai.Request) (native.Request, error) {
 	}
 	if len(req.Prompt.Attachments) > 0 {
 		return native.Request{}, fmt.Errorf("jev does not support attachments")
-	}
-	if len(req.ToolPreferences) > 0 || len(req.ToolPolicy) > 0 || len(req.Permissions.Tools) > 0 {
-		return native.Request{}, fmt.Errorf("jev does not support tool policies")
 	}
 	if req.Temperature != nil || req.Effort != "" {
 		return native.Request{}, fmt.Errorf("jev does not support temperature or reasoning effort")

@@ -45,6 +45,15 @@ type FieldSource struct {
 type FieldProvenance struct {
 	Source       FieldSource  `json:"source" yaml:"source"`
 	NormalizedBy *FieldSource `json:"normalizedBy,omitempty" yaml:"normalizedBy,omitempty"`
+	// Ignored records that the resolved runtime accepts the field but never
+	// carries it to the model.
+	Ignored *FieldIgnore `json:"ignored,omitempty" yaml:"ignored,omitempty"`
+}
+
+// FieldIgnore names what ignores a set field and why.
+type FieldIgnore struct {
+	By     FieldSource `json:"by" yaml:"by"`
+	Reason string      `json:"reason" yaml:"reason"`
 }
 
 // ComposedSpec is an ordered structural projection, not a validated runtime.
@@ -69,6 +78,10 @@ func ResolveSpecLayers(options ResolveSpecOptions) (ResolvedSpec, error) {
 	}
 	resolved := ResolvedSpec{Spec: composed.Spec, Trace: composed.Trace,
 		Provenance: composed.Provenance, Warnings: composed.Warnings}
+	if resolved.Access, err = ResolveAccessState(composed.Trace); err != nil {
+		return ResolvedSpec{}, err
+	}
+	resolved.Spec.Permissions.AccessState = resolved.Access
 	if err := resolved.Spec.ValidateStructure(); err != nil {
 		return ResolvedSpec{}, fmt.Errorf("effective spec: %w", err)
 	}
@@ -86,6 +99,9 @@ func ResolveSpecLayers(options ResolveSpecOptions) (ResolvedSpec, error) {
 		return ResolvedSpec{}, err
 	}
 	resolved.recordNormalization(before)
+	if err := resolved.recordIgnoredTools(); err != nil {
+		return ResolvedSpec{}, err
+	}
 	warnings, err := ValidateRuntimeSpec(resolved.Spec)
 	if err != nil {
 		return ResolvedSpec{}, err

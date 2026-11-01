@@ -15,6 +15,7 @@ type (
 	SandboxKind       = registry.SandboxKind
 	SandboxCapability = registry.SandboxCapability
 	SandboxDescriptor = registry.Sandbox
+	ToolPlacement     = registry.ToolPlacement
 )
 
 const (
@@ -28,6 +29,11 @@ const (
 	CapabilityRemoteExec       = registry.CapabilityRemoteExec
 	CapabilityIsolateWorkspace = registry.CapabilityIsolateWorkspace
 	CapabilityEgressProxy      = registry.CapabilityEgressProxy
+
+	ToolPlacementHost       = registry.ToolPlacementHost
+	ToolPlacementSandbox    = registry.ToolPlacementSandbox
+	ToolPlacementSupervisor = registry.ToolPlacementSupervisor
+	ToolPlacementSidecar    = registry.ToolPlacementSidecar
 )
 
 // ParseSandboxKind normalizes a selectable mode token; empty resolves to Off.
@@ -97,7 +103,42 @@ type CommandWrapper interface {
 // all but relocate the whole run elsewhere (git-agent). An adapter with this
 // capability replaces provider execution for the run.
 type RemoteExecutor interface {
-	Execute(ctx context.Context, spec Spec) (*Response, error)
+	Execute(ctx context.Context, spec Spec, opts RemoteExecOptions) (*Response, error)
+}
+
+// RemoteExecOptions carry what a relocated run needs besides its spec.
+type RemoteExecOptions struct {
+	// CallerTools is the run's caller-tool server on this host, which the
+	// remote agent reaches through the adapter's own transport. Nil when the
+	// run has no caller tools.
+	CallerTools *CallerToolEndpoint
+	// CredentialReleases serve, once each, the grant values of the run's
+	// sidecar-proxied tools, by tool name.
+	CredentialReleases map[string]CredentialRelease
+	// ToolProxies are the credential proxies of the run's proxied sidecar
+	// tools, served on this host, by tool name.
+	ToolProxies map[string]ToolProxyEndpoints
+}
+
+// ToolProxyEndpoints are where a proxied tool reaches the proxies holding its
+// credentials and what it presents to them. Nothing here is a credential the
+// proxies forward: EgressSecret and KubeToken only open the proxies, and CAPEM
+// is the public certificate of the run's tunnel authority.
+type ToolProxyEndpoints struct {
+	// Egress is the egress proxy's host:port; empty without grants.
+	Egress       string
+	EgressSecret string
+	CAPEM        []byte
+	// KubeURL is the kube proxy; empty without a kubernetes connection.
+	KubeURL   string
+	KubeToken string
+}
+
+// CredentialRelease is a single-use loopback server holding one tool's grant
+// values and the token its one reader must present.
+type CredentialRelease struct {
+	Addr  string
+	Token string
 }
 
 // WorkspaceIsolating marks an adapter whose run happens in its own working

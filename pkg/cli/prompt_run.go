@@ -45,39 +45,76 @@ type PromptRunSummary struct {
 // prompt` is a deprecated alias.
 func runPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRunResult, error) {
 	_, isHTTP := clickyrpc.RequestFromContext(ctx)
+	if !isHTTP {
+		opts, err := actionFlagsToOptions(flags)
+		if err != nil {
+			return PromptRunResult{}, err
+		}
+		opts.InputFiles = inputFilesFromContext(ctx)
+		return RunPrompt(ctx, PromptInvocation{Reference: id, Options: opts})
+	}
+	req, err := readRenderRequest(ctx, flags)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	rendered, err := renderPrompt(ctx, id, req)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	return launchRendered(ctx, promptLaunch{ID: id, Rendered: rendered, Chat: req.Chat})
+}
 
-	var rendered PromptRenderResult
-	var opts AIPromptOptions
-	var chatRequested bool
-	if isHTTP {
-		req, err := readRenderRequest(ctx, flags)
-		if err != nil {
-			return PromptRunResult{}, err
-		}
-		if rendered, err = renderPrompt(ctx, id, req); err != nil {
-			return PromptRunResult{}, err
-		}
-		chatRequested = req.Chat
-	} else {
-		var err error
-		if opts, err = actionFlagsToOptions(flags); err != nil {
-			return PromptRunResult{}, err
-		}
-		stdin, err := readStdinIfCLI(ctx)
-		if err != nil {
-			return PromptRunResult{}, err
-		}
-		if rendered, err = renderPromptCLI(ctx, id, opts, opts.Vars, stdin); err != nil {
-			return PromptRunResult{}, err
-		}
+// promptLaunch is one async launch: the rendered prompt under its reference
+// id, whether it is a chat, and where its task goes (see PromptInvocation's
+// Group and Name).
+type promptLaunch struct {
+	ID       string
+	Rendered PromptRenderResult
+	Chat     bool
+	Group    *task.Group
+	Name     string
+	OnEvent  func(int, ai.Event)
+}
+
+// runGroup is the group the launch's tasks join: the caller's, or a
+// `prompt <name>` run group of its own keyed by groupID.
+func (l promptLaunch) runGroup(groupID, mode string, opts ...task.TaskGroupOption) *task.Group {
+	if l.Group != nil {
+		return l.Group
+	}
+	return task.StartGroup[PromptRunSummary]("prompt "+l.Rendered.Name, append([]task.TaskGroupOption{
+		task.WithGroupID(groupID),
+		task.WithKind("prompt"),
+		task.WithLabels(promptTaskLabelsWithID(l.Rendered, l.ID, mode)),
+	}, opts...)...).Group
+}
+
+// taskName names one of the launch's tasks: `execute`, or a variant's
+// selector, in a group of its own; the caller's name (default: the prompt's),
+// suffixed with the selector, in the caller's group.
+func (l promptLaunch) taskName(selector string) string {
+	if l.Group == nil {
+		return firstNonEmpty(selector, "execute")
+	}
+	name := firstNonEmpty(l.Name, l.Rendered.Name)
+	if selector == "" {
+		return name
+	}
+	return name + ":" + selector
+}
+
+// launchRendered validates a rendered prompt and starts it as an async run (or
+// a batch of runs, one per runtime). It is the one launch path the HTTP action
+// and LaunchPrompt share.
+func launchRendered(ctx context.Context, launch promptLaunch) (PromptRunResult, error) {
+	rendered, chat := launch.Rendered, launch.Chat
+	if rendered.Skip != nil {
+		return skippedRunResult(rendered), nil
 	}
 	if rendered.ValidationError != "" {
 		return PromptRunResult{}, errors.New(rendered.ValidationError)
 	}
-	if !isHTTP {
-		logRuntimeWarnings(rendered.Resolution.Warnings)
-	}
-	if chatRequested {
+	if chat {
 		if rendered.Input.Prompt.HasSchema() {
 			return PromptRunResult{}, errors.New("chat mode does not support structured-output prompts")
 		}
@@ -86,53 +123,44 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 		}
 	}
 
-	if isHTTP {
-		if len(rendered.Runtimes) > 0 {
-			return launchAsyncBatch(ctx, id, rendered, rendered.Runtimes, chatRequested)
-		}
-		return launchAsyncRun(id, rendered, chatRequested)
+	if len(rendered.Runtimes) > 0 {
+		return launchAsyncBatch(ctx, launch)
 	}
-	return executeSyncRun(ctx, rendered, opts)
+	return launchAsyncRun(launch)
 }
 
 var executePromptRequestFunc = executePromptRequest
 
 // launchAsyncRun starts the background clicky task + SSE stream and returns the
-// run handle (the serve/web-UI contract). The run is followed over HTTP, never
-// on the hosting process's terminal (captain serve, gavel serve), so its task
-// group is WithNoRender: a chat idling between turns would otherwise read as a
-// stuck task line beside the host's own output.
-func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) (PromptRunResult, error) {
+// run handle (the serve/web-UI contract).
+func launchAsyncRun(launch promptLaunch) (PromptRunResult, error) {
+	rendered, chat := launch.Rendered, launch.Chat
 	timeout, err := renderedTimeout(rendered)
 	if err != nil {
 		return PromptRunResult{}, err
 	}
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
+	stream.observer = launch.OnEvent
 	capabilities := chatCapabilitiesFor(rendered.Provider, rendered.Mode)
 	stream.setRun(PromptRunFrame{
 		RunID: runID, Status: "running", Chat: chat, Model: rendered.Model,
 		Provider: rendered.Provider, Mode: rendered.Mode, Capabilities: capabilities,
 	})
 
-	group := task.StartGroup[PromptRunSummary](
-		"prompt "+rendered.Name,
-		task.WithGroupID(runID),
-		task.WithKind("prompt"),
-		task.WithLabels(promptTaskLabelsWithID(rendered, id, "")),
-		task.WithNoRender(),
-	)
+	execute := func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+		return runPromptStream(t, rendered, timeout, runID, stream, nil)
+	}
 	if chat {
 		chatSession := newChatSession(runID, rendered, timeout, stream, nil)
 		promptChats.register(chatSession)
-		group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+		execute = func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
 			return chatSession.run(t)
-		})
-	} else {
-		group.Add("execute", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
-			return runPromptStream(t, rendered, timeout, runID, stream, nil)
-		})
+		}
 	}
+	task.StartTask(launch.taskName(""), execute,
+		task.WithGroup(launch.runGroup(runID, "")),
+		task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
 	return PromptRunResult{
 		RunID: runID, Status: "running", Model: rendered.Model, Provider: rendered.Provider, Mode: rendered.Mode,
 		Chat: chat, Capabilities: capabilities,
@@ -141,6 +169,12 @@ func launchAsyncRun(id string, rendered PromptRenderResult, chat bool) (PromptRu
 
 func workflowConfigured(workflow *api.Workflow) bool {
 	return workflow != nil && (workflow.Verify != nil || len(workflow.Commits) > 0 || len(workflow.After) > 0 || workflow.AutoVerifyWithoutFixture)
+}
+
+// requiresRunner reports a spec the direct provider call cannot honour: its
+// workflow's hooks and its inline tools are only built by promptrun.
+func requiresRunner(spec api.Spec) bool {
+	return workflowConfigured(spec.Workflow) || len(spec.Tools) > 0
 }
 
 // executeSyncRun runs the prompt in-process (CLI) — live output to stderr, final
@@ -152,32 +186,44 @@ func executeSyncRun(ctx context.Context, rendered PromptRenderResult, opts AIPro
 	return executeSyncRunSingle(ctx, rendered, opts)
 }
 
-func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
-	group := task.StartGroup[PromptRunResult](
-		"prompt "+rendered.Name,
+func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (result PromptRunResult, err error) {
+	ctx, terminal, err := attachPromptTerminal(ctx, &rendered, opts.NoStream)
+	if err != nil {
+		return PromptRunResult{}, err
+	}
+	if terminal != nil {
+		defer func() { err = errors.Join(err, terminal.Close()) }()
+	}
+	groupOptions := []task.TaskGroupOption{
 		task.WithKind("prompt"),
 		task.WithLabels(promptTaskLabels(rendered, "")),
-	)
+	}
+	if terminal != nil {
+		groupOptions = append(groupOptions, task.WithNoRender())
+	}
+	group := task.StartGroup[PromptRunResult]("prompt "+rendered.Name, groupOptions...)
 	run := group.Add("execute "+rendered.Mode+":"+rendered.Model, func(_ flanksourceContext.Context, t *task.Task) (PromptRunResult, error) {
 		taskCtx := ai.ContextWithLogger(t.Context(), t)
 		return executeSyncRunSingleDirect(taskCtx, t, rendered, opts, nil)
-	}, task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
+	}, task.WithContext(ctx), task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
 	return run.GetResult()
 }
 
 func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered PromptRenderResult, opts AIPromptOptions, binding *promptSessionBinding) (PromptRunResult, error) {
-	// A configured workflow must go through the runner-backed path: the direct
-	// provider call below never constructs verify/commit/judge hooks, so taking
-	// it would complete the run with every declared check silently skipped.
-	if workflowConfigured(rendered.Input.Workflow) {
+	// A configured workflow or inline tools must go through the runner-backed
+	// path: the direct provider call below never constructs verify/commit/judge
+	// hooks or binds inline tools, so taking it would complete the run with the
+	// declared checks skipped and the declared tools missing.
+	if requiresRunner(rendered.Input) {
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
 	r, err := executeDirectPrompt(ctx, rendered, opts)
-	recording := promptRecordingInput{Rendered: rendered, Binding: binding}
-	if recordErr := recordCompletedRun(ctx, recording, directRun(rendered, r, err)); err != nil || recordErr != nil {
-		return PromptRunResult{}, errors.Join(err, recordErr)
+	if err == nil {
+		err = unansweredPromptQuestions(r.TerminalOutcome)
 	}
-	return PromptRunResult{
+	recording := promptRecordingInput{Rendered: rendered, Binding: binding}
+	_, recordErr := recordCompletedRun(ctx, recording, directRun(rendered, r, err))
+	result := PromptRunResult{
 		Status:           "completed",
 		Model:            r.Model,
 		Provider:         r.Provider,
@@ -191,7 +237,11 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 		OutputTokens:     r.Output,
 		CostUSD:          r.CostUSD,
 		Duration:         r.Duration,
-	}, nil
+	}
+	if err != nil || recordErr != nil {
+		result.Status = "failed"
+	}
+	return result, errors.Join(err, recordErr)
 }
 
 // executeDirectPrompt is one direct provider call: no runner, no hooks.
@@ -201,14 +251,14 @@ func executeDirectPrompt(ctx context.Context, rendered PromptRenderResult, opts 
 		return AIPromptResult{}, err
 	}
 	out, err := executePromptRequestFunc(ctx, rendered.Input, rendered.Config, timeout, opts.NoStream)
-	if err != nil {
+	if out == nil {
 		return AIPromptResult{}, err
 	}
 	result, ok := out.(AIPromptResult)
 	if !ok {
 		return AIPromptResult{}, fmt.Errorf("direct prompt execution returned %T, not AIPromptResult", out)
 	}
-	return result, nil
+	return result, err
 }
 
 // directRun is a direct provider call as promptrun files it: answered, or
@@ -224,7 +274,7 @@ func directRun(rendered PromptRenderResult, r AIPromptResult, err error) promptr
 		},
 	}
 	if err != nil {
-		done.Outcome = promptrun.Outcome{State: database.PromptRunStateFailed, Error: err.Error()}
+		done.Outcome.State, done.Outcome.Phase, done.Outcome.Error = database.PromptRunStateFailed, database.PromptRunPhaseGenerate, err.Error()
 	}
 	return done
 }
@@ -250,13 +300,7 @@ func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, noStream 
 	} else {
 		summary, err = runPromptStream(t, rendered, timeout, runID, stream, binding)
 	}
-	if err != nil {
-		return PromptRunResult{}, err
-	}
-	if !summary.Success {
-		return PromptRunResult{}, errors.New(firstNonEmpty(summary.Error, "verification failed"))
-	}
-	return PromptRunResult{
+	result := PromptRunResult{
 		Status:           "completed",
 		RunID:            summary.RunID,
 		Model:            summary.Model,
@@ -269,7 +313,14 @@ func executeSyncWorkflowRun(t *task.Task, rendered PromptRenderResult, noStream 
 		OutputTokens:     summary.OutputTokens,
 		CostUSD:          summary.CostUSD,
 		Duration:         summary.Duration,
-	}, nil
+	}
+	if err != nil || !summary.Success {
+		result.Status = "failed"
+		if err == nil {
+			err = errors.New(firstNonEmpty(summary.Error, "verification failed"))
+		}
+	}
+	return result, err
 }
 
 func executeSyncBatch(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {

@@ -134,6 +134,7 @@ export function App() {
               ) : route.kind === "adapter-schemas" ? (
                 <AdapterSchemasPage
                   selection={route.selection}
+                  search={locationSearch}
                   onNavigate={router.navigate}
                 />
               ) : route.kind === "budgets" ? (

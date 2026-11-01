@@ -57,10 +57,6 @@ func (composed *ComposedSpec) applyDefaults(options ResolveSpecOptions) error {
 		composed.Warnings = append(composed.Warnings, fmt.Sprintf("%s: %s; using the registry runtime default during the compatibility window", missing.Path, diagnostic.Error()))
 	}
 	composed.fillSavedSpec(saved)
-	if options.Saved != nil && !fieldCovered(composed.Spec.Fields(), "/budget/maxTokens") {
-		composed.Spec.Budget.MaxTokens = 4096
-		composed.Provenance["/budget/maxTokens"] = FieldProvenance{Source: FieldSource{Kind: FieldSourceCatalog, Name: "Captain defaults", Key: "captain.defaults.maxTokens"}}
-	}
 	if options.RequireModel && strings.TrimSpace(composed.Spec.Name) == "" {
 		return &aiflags.UnconfiguredError{Field: "model", Model: composed.Spec.Name, Provider: composed.Spec.Provider}
 	}

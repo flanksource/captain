@@ -26,3 +26,15 @@ Run the focused rendering and transport examples/tests from the Captain checkout
 go test ./pkg/ai/prompt -run '^TestPromptDocuments$' -ginkgo.focus='Declared prompt rendering' -count=1
 go test ./pkg/ai -run '^TestAttachmentCapabilities$' -ginkgo.focus='Named prompt Spec transport' -count=1
 ```
+
+## DeepSeek image attachments
+
+`deepseek-flash` accepts PNG, JPEG, GIF, and WebP images. The `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` names accept the same formats. `deepseek-v4-pro` is text-only; PDF, SVG, audio, and video attachments are rejected.
+
+Set `DEEPSEEK_API_KEY`, then attach an existing image to a prompt:
+
+```sh
+captain prompt run --model api:deepseek-flash --attach chart.png -p "Describe this chart."
+```
+
+For Go callers, put references in `Spec.Prompt.Attachments` or user-message attachment parts and resolve them with the attachment store before execution. Captain sends prepared images inline through the existing OpenAI-compatible Chat Completions endpoint; it does not upload them to DeepSeek's Files API.

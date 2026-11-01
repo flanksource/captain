@@ -8,19 +8,21 @@ import (
 	"github.com/flanksource/captain/pkg/api/registry"
 )
 
-//go:embed */*.schema.json
+//go:embed */*.schema.json resources
 var schemaFiles embed.FS
 
-// SchemaDocument is one native runtime contract exposed to schema viewers.
+// SchemaDocument is one execution, configuration or resource contract.
 type SchemaDocument struct {
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"`
 	Provider    string          `json:"provider"`
-	Mode        string          `json:"mode"`
+	Mode        string          `json:"mode,omitempty"`
 	Title       string          `json:"title"`
 	Description string          `json:"description"`
 	Schema      json.RawMessage `json:"schema"`
 }
 
-// Schemas returns every non-cmux native runtime schema in canonical registry order.
+// Schemas returns non-cmux execution schemas followed by native and Captain resources.
 func Schemas() ([]SchemaDocument, error) {
 	var documents []SchemaDocument
 	for _, provider := range registry.Providers() {
@@ -36,7 +38,11 @@ func Schemas() ([]SchemaDocument, error) {
 			documents = append(documents, document)
 		}
 	}
-	return documents, nil
+	resources, err := resourceSchemas()
+	if err != nil {
+		return nil, err
+	}
+	return append(documents, resources...), nil
 }
 
 func readSchemaDocument(path string) (SchemaDocument, error) {
@@ -59,6 +65,7 @@ func readSchemaDocument(path string) (SchemaDocument, error) {
 		return SchemaDocument{}, fmt.Errorf("adapter schema %s has incomplete viewer metadata", path)
 	}
 	return SchemaDocument{
+		ID: metadata.Adapter.Provider + "/" + metadata.Adapter.Mode, Kind: "execution",
 		Provider: metadata.Adapter.Provider, Mode: metadata.Adapter.Mode,
 		Title: metadata.Title, Description: metadata.Description, Schema: raw,
 	}, nil

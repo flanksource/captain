@@ -5,13 +5,15 @@ import (
 	"github.com/flanksource/captain/pkg/ai/cache"
 )
 
-// DefaultOptions is captain's standard middleware stack for a Config: response
-// logging is always applied, and response caching is added when cfg configures
-// it (a cache TTL or DB path, with NoCache unset). This lives in middleware, not
+// DefaultOptions is captain's standard middleware stack for a Config: tracing
+// and response logging are always applied, and response caching is added when
+// cfg configures it (a cache TTL or DB path, with NoCache unset). Tracing wraps
+// the bare provider, so each span is one real model call: a schema-repair
+// retry gets its own span and a cache hit gets none. This lives in middleware, not
 // ai.NewProvider, because middleware imports ai (wrapping ai.Provider) and the
 // reverse import would be a cycle.
 func DefaultOptions(cfg ai.Config, runtime ai.Runtime) []Option {
-	opts := []Option{WithLogging()}
+	opts := []Option{WithTracing(), WithLogging()}
 	if runtime.Provider != "jev" {
 		opts = append(opts, WithSchemaValidation(cfg))
 	}

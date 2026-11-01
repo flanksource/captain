@@ -33,6 +33,8 @@ export type SessionRecord = {
   project?: string;
   slug?: string;
   title?: string;
+  /** User-assigned session name (Claude's /rename); never derived. */
+  name?: string;
   initialPrompt?: string;
   startedAt?: string;
   endedAt?: string;

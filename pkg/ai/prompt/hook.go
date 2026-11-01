@@ -55,8 +55,14 @@ type HookSpec struct {
 }
 
 // Hook returns the template's `hook:` frontmatter, or nil when it declares none.
+// It reads the declared frontmatter (declaredSource), so a prompt that
+// templates other keys is not mistaken for a broken one.
 func (t *Template) Hook() (*HookSpec, error) {
-	loc := frontmatterRe.FindStringSubmatch(t.source)
+	declared, err := declaredSource(t.source)
+	if err != nil {
+		return nil, &HookParseError{Prompt: t.name, Err: err}
+	}
+	loc := frontmatterRe.FindStringSubmatch(declared)
 	if loc == nil {
 		return nil, nil
 	}
@@ -64,7 +70,7 @@ func (t *Template) Hook() (*HookSpec, error) {
 		Hook *HookSpec `yaml:"hook"`
 	}
 	if err := yaml.Unmarshal([]byte(loc[1]), &fm); err != nil {
-		return nil, fmt.Errorf("parse prompt %s frontmatter: %w", t.name, err)
+		return nil, &HookParseError{Prompt: t.name, Err: err}
 	}
 	if fm.Hook == nil || fm.Hook.Disabled {
 		return fm.Hook, nil

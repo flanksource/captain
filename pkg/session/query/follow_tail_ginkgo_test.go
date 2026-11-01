@@ -147,6 +147,42 @@ var _ = Describe("Follow before the transcript is ingested", Ordered, func() {
 		Expect(bodies(streamed)).To(Equal([]string{"conversational"}))
 		expectNoMessage(events)
 	})
+
+	// A reader holds the session read's tail and resumes the follow after its
+	// newest message, so both must project the transcript to the same messages.
+	It("resumes after the newest message of a session read that ended on a lifecycle event", func(ctx SpecContext) {
+		home := GinkgoT().TempDir()
+		GinkgoT().Setenv("HOME", home)
+		const cwd = "/work/follow_tail_cursor"
+		providerID := uuid.NewString()
+		root, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: providerID, Source: "claude", Provider: "anthropic", HostID: "follow-tail", CWD: cwd,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		logPath := filepath.Join(home, ".claude", "projects", claude.NormalizePath(cwd), providerID+".jsonl")
+		appendClaudeLine(logPath, map[string]any{"type": "ai-title", "aiTitle": "Cursor", "sessionId": providerID})
+		appendClaudeEntry(logPath, providerID, cwd, "a1", "answered")
+		appendClaudeLine(logPath, map[string]any{
+			"type": "system", "subtype": "stop_hook_summary", "uuid": "hook-1", "sessionId": providerID, "cwd": cwd,
+			"timestamp": "2026-09-24T10:00:01Z", "hookCount": 1,
+		})
+		parsed, err := transcript.Parse(transcript.Candidate{ID: providerID, Source: "claude", Path: logPath})
+		Expect(err).NotTo(HaveOccurred())
+		overview, err := db.GetSessionOverviewByIdentity(ctx, root.ID.String())
+		Expect(err).NotTo(HaveOccurred())
+		read, _, err := ComposeSession(ctx, db, *overview, ComposeOptions{Transcript: parsed})
+		Expect(err).NotTo(HaveOccurred())
+
+		var readIDs []string
+		for _, message := range read.Session.Messages {
+			readIDs = append(readIDs, message.ID)
+		}
+		Expect(readIDs).To(Equal([]string{"a1"}))
+		events, err := Follow(ctx, db, root.ID.String(), FollowOptions{Replay: true, After: readIDs[len(readIDs)-1]})
+		Expect(err).NotTo(HaveOccurred())
+		nextState(events)
+		expectNoMessage(events)
+	})
 })
 
 func appendClaudeEntry(path, sessionID, cwd, id, text string) {

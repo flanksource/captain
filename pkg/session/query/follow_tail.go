@@ -187,13 +187,7 @@ func (t *transcriptTail) messages() ([]session.Message, error) {
 	if parsed == nil {
 		return nil, nil
 	}
-	messages := make([]session.Message, 0, len(parsed.Messages))
-	for _, message := range parsed.Messages {
-		if session.IsConversationalMessage(message) {
-			messages = append(messages, message)
-		}
-	}
-	return messages, nil
+	return session.ConversationalMessages(parsed.Messages), nil
 }
 
 // buildClaudeTail builds a growing Claude log. BuildTranscriptFile refuses a

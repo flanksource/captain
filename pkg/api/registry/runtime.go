@@ -136,6 +136,16 @@ func SupportsCallerTools(p *Provider, mode RuntimeMode) bool {
 	return ok && caps.CallerTools
 }
 
+// IgnoresTools reports whether a runtime drops caller tools and tool-governing
+// fields rather than refusing a run that sets them.
+func IgnoresTools(p *Provider, mode RuntimeMode) bool {
+	if p == nil {
+		return false
+	}
+	caps, ok := p.Caps(mode)
+	return ok && caps.IgnoresTools
+}
+
 // ToolPolicyRuntimes lists the runtimes that can carry a per-tool policy, in
 // canonical order, for help and error text.
 func ToolPolicyRuntimes() []Runtime {

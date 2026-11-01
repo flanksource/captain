@@ -46,7 +46,7 @@ var _ = Describe("Claude Agent prompt parameters", func() {
 		pdf := api.AttachmentRef{ID: api.AttachmentIDPrefix + string(make([]byte, 64)), MediaType: "application/pdf"}.
 			WithPreparedContent(api.AttachmentContent{Bytes: []byte("pdf")})
 
-		params, err := buildPromptParams(ai.Request{Prompt: api.Prompt{User: "inspect", Attachments: []api.AttachmentRef{image, pdf}}})
+		params, err := buildPromptParams(ai.Request{Prompt: api.Prompt{User: "inspect", Attachments: []api.AttachmentRef{image, pdf}}}, "prompt-1")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(params.Text).To(Equal("inspect"))
 		Expect(params.Attachments).To(Equal([]promptAttachment{

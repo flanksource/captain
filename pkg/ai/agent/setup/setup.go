@@ -24,6 +24,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	dbcontext "github.com/flanksource/commons-db/context"
 	"github.com/flanksource/commons-db/shell"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // Apply prepares req.Setup and rewrites req to describe the prepared state:
@@ -179,6 +180,14 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 	p.prepared = res
 	hc.Workspace().Cwd = res.Cwd
 	if !Relocates(checkout) {
+		inspected, err := InspectWorkspace(res.Cwd)
+		if err != nil {
+			return err
+		}
+		if inspected.Worktree != nil {
+			hc.Workspace().Worktree = inspected.Worktree
+			hc.Workspace().Repo = inspected.Worktree.Repo
+		}
 		return nil
 	}
 	p.relocation = &relocation{kind: "checkout", path: res.Cwd}
@@ -190,11 +199,23 @@ func (p *Plugin) PreRun(hc *agent.HookContext) error {
 	p.relocation.kind = "worktree"
 	p.relocation.keep, p.relocation.existing = wt.Keep, wt.Mode == shell.WorktreeExisting
 	p.relocation.existingBranch = wt.Mode == shell.WorktreeBranch
-	// Only a worktree setup created holds a copy of the source's work-in-progress;
-	// an existing one's uncommitted state is its owner's, and never committed here.
-	state, err := recordWorktree(res.Cwd, wt.Mode == shell.WorktreeNew)
+	if res.Workspace == nil {
+		return fmt.Errorf("setup: worktree %s was prepared without a workspace", res.Cwd)
+	}
+	state, err := recordWorktree(res.Cwd)
 	if err != nil {
 		return err
+	}
+	// Only a worktree setup created holds a copy of the source's work-in-progress;
+	// an existing one's uncommitted state is its owner's, and never committed here.
+	if wt.Mode == shell.WorktreeNew {
+		gates, err := workspace.ResolveGates(hc.Request.Workflow.CommitGates())
+		if err != nil {
+			return fmt.Errorf("setup: commit gates: %w", err)
+		}
+		if err := snapshotSetup(dbcontext.NewContext(hc), res.Workspace, state, gates); err != nil {
+			return err
+		}
 	}
 	// Worktree is how later hooks tell an isolated tree from the caller's own
 	// checkout — the commit hook stages the whole tree only when it is set — so a
@@ -221,10 +242,10 @@ func (p *Plugin) Post(hc *agent.HookContext, _ agent.Phase) error {
 	if p.prepared == nil {
 		return nil
 	}
-	cleanup, moved, wt := p.prepared.Cleanup, p.relocation, p.worktree
+	cleanup, ws, moved, wt := p.prepared.Cleanup, p.prepared.Workspace, p.relocation, p.worktree
 	p.prepared, p.relocation, p.worktree = nil, nil, nil
 	if wt != nil {
-		if err := teardownWorktree(wt, moved, cleanup); err != nil {
+		if err := teardownWorktree(dbcontext.NewContext(hc), ws, wt, moved, cleanup); err != nil {
 			return err
 		}
 		hc.Notify("%s", teardownNotice(wt))

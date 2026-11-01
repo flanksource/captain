@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/flanksource/captain/pkg/ai"
 	"net/http"
 	"sync"
 	"time"
@@ -34,6 +36,7 @@ type runStream struct {
 	summary       *PromptRunSummary
 	errMsg        string
 	endedAt       time.Time
+	observer      func(int, ai.Event)
 }
 
 func newRunStream() *runStream {
@@ -284,6 +287,77 @@ func (b *runBroker) get(runID string) (*runStream, bool) {
 	defer b.mu.Unlock()
 	s, ok := b.runs[runID]
 	return s, ok
+}
+
+// AwaitPromptRun blocks until the run reaches the terminal frame its SSE stream
+// ends with and returns that summary. A run that ended in an error frame returns
+// its summary together with that error. ctx cancellation returns ctx.Err() and
+// leaves the run going.
+func AwaitPromptRun(ctx context.Context, runID string) (PromptRunSummary, error) {
+	stream, ok := promptRuns.get(runID)
+	if !ok {
+		return PromptRunSummary{}, fmt.Errorf("unknown prompt run %q", runID)
+	}
+	for {
+		snapshot, ch := stream.subscribeEvents()
+		if snapshot.Done {
+			return terminalSummary(runID, snapshot.Summary, snapshot.Error)
+		}
+		// The channel closes at the terminal frame, or when the subscriber fell
+		// behind and was dropped; either way the next snapshot says which.
+		if err := drainRunEvents(ctx, stream, ch); err != nil {
+			return PromptRunSummary{}, err
+		}
+	}
+}
+
+var (
+	ErrUnknownPromptRun  = errors.New("unknown prompt run")
+	ErrPromptRunTerminal = errors.New("prompt run is terminal")
+)
+
+// StopPromptRun stops a launched run, as POST /{runId}/stop does: a chat run
+// through its chat, any other through its stream. The run then ends with a
+// "stopped" terminal frame.
+func StopPromptRun(runID string) error {
+	stream, ok := promptRuns.get(runID)
+	if !ok {
+		return fmt.Errorf("%w %q", ErrUnknownPromptRun, runID)
+	}
+	stopped := false
+	if chat, found := promptChats.getRun(runID); found {
+		stopped = chat.stop()
+	} else {
+		stopped = stream.requestStop()
+	}
+	if !stopped {
+		return fmt.Errorf("%w: %q", ErrPromptRunTerminal, runID)
+	}
+	return nil
+}
+
+func drainRunEvents(ctx context.Context, stream *runStream, ch chan runStreamEvent) error {
+	for {
+		select {
+		case <-ctx.Done():
+			stream.unsubscribeEvents(ch)
+			return ctx.Err()
+		case _, open := <-ch:
+			if !open {
+				return nil
+			}
+		}
+	}
+}
+
+func terminalSummary(runID string, summary *PromptRunSummary, errMsg string) (PromptRunSummary, error) {
+	if summary == nil {
+		return PromptRunSummary{}, fmt.Errorf("prompt run %q finished without a summary (error %q)", runID, errMsg)
+	}
+	if errMsg != "" {
+		return *summary, fmt.Errorf("prompt run %q failed: %s", runID, errMsg)
+	}
+	return *summary, nil
 }
 
 // prunePromptRuns periodically evicts finished runs older than the retention

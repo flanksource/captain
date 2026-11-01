@@ -249,6 +249,10 @@ func matrixSettings(provenance api.ToolProvenance) []matrixSetting {
 				func(c api.PermissionCapabilities) api.Support { return c.ResourceSupport(kind, mode) }})
 		}
 	}
+	for _, level := range api.AllAccessLevels() {
+		out = append(out, matrixSetting{"access " + string(level),
+			func(c api.PermissionCapabilities) api.Support { return c.AccessSupport(level) }})
+	}
 	return out
 }
 

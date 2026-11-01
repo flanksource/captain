@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
 	capapi "github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	"github.com/flanksource/clicky/api"
 	"github.com/flanksource/clicky/entity"
 )
@@ -33,11 +37,108 @@ func (f aiEnumFilter[T]) Options(T) map[string]api.Textable          { return f.
 func aiFilters[T any]() []entity.Filter[T] {
 	return []entity.Filter[T]{
 		aiEnumFilter[T]{key: "model", label: "Model", options: modelFilterOptions},
+		aiEnumFilter[T]{key: "fallback", label: "Fallback Models", options: modelFilterOptions},
+		aiEnumFilter[T]{key: "multi-models", label: "Models", options: modelFilterOptions},
 		aiEnumFilter[T]{key: "effort", label: "Reasoning Effort", options: effortFilterOptions},
 		aiEnumFilter[T]{key: "scope", label: "Verifier Scope", options: scopeFilterOptions},
 		aiEnumFilter[T]{key: "mode", label: "Runtime Mode", options: modeFilterOptions},
 		aiEnumFilter[T]{key: "provider", label: "Provider", options: providerFilterOptions},
+		aiEnumFilter[T]{key: "permission-mode", label: "Permission Mode", options: permissionModeFilterOptions},
+		aiEnumFilter[T]{key: "access", label: "Access", options: accessFilterOptions},
+		aiCatalogFilter[T]{key: "sandbox", label: "Sandbox", options: sandboxFilterOptions},
+		aiCatalogFilter[T]{key: "preset", label: "Runtime Presets", options: presetFilterOptions},
+		aiCatalogFilter[T]{key: "perms", label: "Permission Sets", options: presetFilterOptions},
 	}
+}
+
+// aiCatalogFilter is aiEnumFilter for an option set read from captain's
+// config or database: it is an entity.FallibleFilter, so a source that fails
+// fails the lookup and completion rather than offering nothing.
+type aiCatalogFilter[T any] struct {
+	key     string
+	label   string
+	options func(context.Context) (map[string]api.Textable, error)
+}
+
+func (f aiCatalogFilter[T]) Key() string                                { return f.key }
+func (f aiCatalogFilter[T]) Label() string                              { return f.label }
+func (f aiCatalogFilter[T]) Lookup(*T) (map[string]api.Textable, error) { return nil, nil }
+func (f aiCatalogFilter[T]) LookupOptions(ctx context.Context, _ T) (map[string]api.Textable, error) {
+	return f.options(ctx)
+}
+
+// Options exists for the entity.Filter contract only: clicky asks a
+// FallibleFilter through LookupOptions, which can report the failure.
+func (f aiCatalogFilter[T]) Options(T) map[string]api.Textable {
+	panic(fmt.Sprintf("aiCatalogFilter %q: options are read through LookupOptions", f.key))
+}
+
+// firstClause is a description up to its first sentence or clause break:
+// enough to tell options apart in a one-line label.
+func firstClause(description string) string {
+	end := len(description)
+	for _, sep := range []string{". ", ": ", "; "} {
+		if i := strings.Index(description, sep); i >= 0 && i < end {
+			end = i
+		}
+	}
+	return strings.TrimSuffix(strings.TrimSpace(description[:end]), ".")
+}
+
+func permissionModeFilterOptions() map[string]api.Textable {
+	out := map[string]api.Textable{}
+	for _, mode := range capapi.AllPermissionModes() {
+		out[string(mode)] = api.Text{Content: string(mode)}
+	}
+	return out
+}
+
+func accessFilterOptions() map[string]api.Textable {
+	labels := map[capapi.AccessLevel]string{capapi.AccessReadOnly: "Read-only", capapi.AccessFull: "Full"}
+	out := map[string]api.Textable{}
+	for _, level := range capapi.AllAccessLevels() {
+		out[string(level)] = api.Text{Content: labels[level]}
+	}
+	return out
+}
+
+// sandboxFilterOptions offers the sandbox modes and the Docker/Git Agent
+// backends configured by name, as --sandbox accepts both.
+func sandboxFilterOptions(context.Context) (map[string]api.Textable, error) {
+	out := map[string]api.Textable{}
+	for _, mode := range capapi.AllSandboxModes() {
+		out[string(mode)] = api.Text{Content: string(mode)}
+	}
+	cfg, _, err := captainconfig.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load sandbox backends: %w", err)
+	}
+	for name, backend := range cfg.Sandbox.Backends {
+		out[name] = api.Text{Content: fmt.Sprintf("%s (%s backend)", name, backend.Kind)}
+	}
+	return out, nil
+}
+
+// presetFilterOptions offers the runtime presets by name (what --preset and
+// --perms accept), labelled with the first clause of their descriptions.
+func presetFilterOptions(ctx context.Context) (map[string]api.Textable, error) {
+	catalog, err := buildRuntimeCatalog(ctx, runtimeprofiles.DefaultCatalogOptions{})
+	if err != nil {
+		return nil, err
+	}
+	presets, err := catalog.ListPresets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]api.Textable, len(presets))
+	for _, preset := range presets {
+		label := preset.Name
+		if summary := firstClause(preset.Description); summary != "" {
+			label += " — " + summary
+		}
+		out[preset.Name] = api.Text{Content: label}
+	}
+	return out, nil
 }
 
 // effortFilterOptions sources the reasoning-effort values from captain's shared

@@ -22,6 +22,10 @@ type promptRecordingInput struct {
 	// a provider session to continue is admitted on — a chat's, shared by all of
 	// its turns. Nil gives the run a session of its own.
 	SessionID uuid.UUID
+	// Chat files the run as one turn of a live chat (run mode "chat"): its end
+	// leaves the session running, and the chat writes the session's terminal
+	// lifecycle when it ends.
+	Chat bool
 }
 
 // promptRecording is how `captain prompt run` hands its run to promptrun to
@@ -38,10 +42,14 @@ func promptRecording(ctx context.Context, input promptRecordingInput) (*promptru
 		return nil, fmt.Errorf("record prompt run: %w", err)
 	}
 	rendered := input.Rendered
+	mode := "run"
+	if input.Chat {
+		mode = "chat"
+	}
 	rec := &promptrun.Recording{
 		DB: db, Placement: placement, Origin: "captain", AdmissionKey: input.RunID,
 		PromptMarkdown: rendered.Input.Prompt.User,
-		Runtime: database.PromptRunRuntime{Mode: "run", Requested: database.PromptRunRuntimeSelection{
+		Runtime: database.PromptRunRuntime{Mode: mode, Requested: database.PromptRunRuntimeSelection{
 			Provider: rendered.Provider, Mode: rendered.Mode, Model: rendered.Model, Effort: string(rendered.Config.Model.Effort),
 		}},
 	}
@@ -115,24 +123,31 @@ func promptResolution(rendered PromptRenderResult, spec api.Spec) api.ResolvedSp
 
 // recordCompletedRun files a run that executed outside promptrun.Run — a
 // direct provider call, a chat turn, a run that failed before dispatch.
-func recordCompletedRun(ctx context.Context, input promptRecordingInput, done promptrun.Completed) error {
+func recordCompletedRun(ctx context.Context, input promptRecordingInput, done promptrun.Completed) (*database.PromptRun, error) {
 	rec, err := promptRecording(context.WithoutCancel(ctx), input)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	return recordCompleted(ctx, rec, done)
 }
 
-// recordCompleted files a completed run through a recording already made; a
-// nil recording is a run with no store to file it in.
-func recordCompleted(ctx context.Context, rec *promptrun.Recording, done promptrun.Completed) error {
+// recordCompleted files a completed run through a recording already made and
+// returns the filed run; a nil recording is a run with no store to file it in,
+// and returns no run.
+func recordCompleted(ctx context.Context, rec *promptrun.Recording, done promptrun.Completed) (*database.PromptRun, error) {
 	if rec == nil {
-		return nil
+		return nil, nil
 	}
-	if _, err := promptrun.RecordCompleted(context.WithoutCancel(ctx), rec, done); err != nil {
-		return fmt.Errorf("record prompt run %q: %w", rec.AdmissionKey, err)
+	ctx = context.WithoutCancel(ctx)
+	id, err := promptrun.RecordCompleted(ctx, rec, done)
+	if err != nil {
+		return nil, fmt.Errorf("record prompt run %q: %w", rec.AdmissionKey, err)
 	}
-	return nil
+	run, err := rec.DB.GetPromptRun(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("read recorded prompt run %q: %w", rec.AdmissionKey, err)
+	}
+	return run, nil
 }
 
 // unstartedRun is a run that failed before it reached a provider.

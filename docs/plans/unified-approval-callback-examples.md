@@ -1,5 +1,7 @@
 # Unified approval callback: request examples
 
+These are design-time evidence and protocol examples, not a current runtime capability catalog. Findings labelled G19/G20 describe the pre-migration implementation. See [Approvals](../src/pages/agents/approvals.mdx) for current behavior and migration guidance.
+
 This is a companion to [unified-approval-callback.md](unified-approval-callback.md). It shows how each approval kind reaches `Config.OnApproval`:
 
 - the native request as it arrives

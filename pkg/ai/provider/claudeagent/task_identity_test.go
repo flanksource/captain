@@ -66,7 +66,7 @@ var _ = Describe("Supervised agent task identity", func() {
 
 		Expect(provider.taskMetadata()).To(Equal(ai.AgentMetadata{State: ai.AgentIdle}))
 
-		provider.setActive(&turnState{planMode: true, pending: 2})
+		provider.setActive(&turnState{planMode: true, unsettled: map[string]bool{"first": true, "steered": true}})
 		provider.rememberSession("df7aa36e")
 
 		Expect(provider.taskMetadata()).To(Equal(ai.AgentMetadata{

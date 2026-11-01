@@ -58,8 +58,19 @@ func (s Spec) validateRuntimeFields() error {
 	if err := s.ToolPolicy.Validate(); err != nil {
 		return err
 	}
+	if err := s.Tools.Validate(); err != nil {
+		return err
+	}
 	if err := s.Workflow.Validate(); err != nil {
 		return fmt.Errorf("workflow: %w", err)
+	}
+	if err := s.validateHookTools(); err != nil {
+		return err
+	}
+	if s.Batch != nil {
+		if err := s.Batch.Validate(); err != nil {
+			return err
+		}
 	}
 	if s.Sandbox != nil {
 		if err := s.Sandbox.ValidateStructure(); err != nil {

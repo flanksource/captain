@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -21,6 +22,9 @@ type localPromptFile struct {
 }
 
 func openLocalPromptFile(record promptRecord, createRoot bool) (*localPromptFile, error) {
+	if record.ReadPath != "" {
+		return nil, fmt.Errorf("linked prompt %s is read-only; use create to save a copy", record.Path)
+	}
 	rel, err := localPromptRel(record.Rel)
 	if err != nil {
 		return nil, err
@@ -33,6 +37,21 @@ func openLocalPromptFile(record promptRecord, createRoot bool) (*localPromptFile
 	root, err := os.OpenRoot(record.Source.Root)
 	if err != nil {
 		return nil, fmt.Errorf("open prompt source: %w", err)
+	}
+	if createRoot {
+		for path := rel; path != "."; path = filepath.Dir(path) {
+			info, err := root.Lstat(path)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err == nil && info.Mode()&fs.ModeSymlink != 0 {
+				err = fmt.Errorf("linked prompt paths are read-only; use create with an unlinked destination")
+			}
+			if err != nil {
+				_ = root.Close()
+				return nil, fmt.Errorf("inspect prompt destination %s: %w", record.Path, err)
+			}
+		}
 	}
 	return &localPromptFile{root: root, rel: rel, path: filepath.Join(record.Source.Root, rel)}, nil
 }
@@ -112,7 +131,7 @@ func promptRecordModTime(record promptRecord) string {
 		}
 		return modTimeString(info)
 	}
-	file, err := openLocalPromptFile(record, false)
+	file, err := openPromptReadFile(record)
 	if err != nil {
 		return ""
 	}

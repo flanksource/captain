@@ -20,14 +20,19 @@ const afterErrorTail = 8 << 10
 // `sh -c` through the same bounded process runner as a verify command, reports
 // on the run's stream under the verify verdict kinds, and the first failure
 // stops the step and fails the run.
+//
+// A tool or prompt step runs through Opts.Actions instead, with its `with`
+// rendered over the lifecycle variables. Its output is recorded for later steps
+// as steps[Index]; a skipped or commands step records null.
 type AfterHook struct {
 	Index int
 	Step  api.AfterStep
 	Opts  Options
+	steps *[]any
 }
 
 // AfterHooksFor builds one AfterHook per workflow.after step, in declaration
-// order. Nil when the workflow declares none.
+// order, sharing one steps record. Nil when the workflow declares none.
 func AfterHooksFor(wf *api.Workflow, opts Options) ([]any, error) {
 	if wf == nil || len(wf.After) == 0 {
 		return nil, nil
@@ -35,9 +40,14 @@ func AfterHooksFor(wf *api.Workflow, opts Options) ([]any, error) {
 	if err := wf.Validate(); err != nil {
 		return nil, err
 	}
+	steps := make([]any, 0, len(wf.After))
 	hooks := make([]any, 0, len(wf.After))
 	for i, step := range wf.After {
-		hooks = append(hooks, &AfterHook{Index: i, Step: step, Opts: opts})
+		if len(step.Commands) == 0 && opts.Actions == nil {
+			kind, _ := step.Kind()
+			return nil, fmt.Errorf("workflow.after[%d] runs a %s, but the run supplies no hook action runner", i, kind)
+		}
+		hooks = append(hooks, &AfterHook{Index: i, Step: step, Opts: opts, steps: &steps})
 	}
 	return hooks, nil
 }
@@ -47,10 +57,37 @@ func (h *AfterHook) Name() string { return fmt.Sprintf("after[%d]", h.Index) }
 func (h *AfterHook) Phases() []agent.Phase { return []agent.Phase{agent.PhaseRun} }
 
 func (h *AfterHook) Post(hc *agent.HookContext, _ agent.Phase) error {
+	output, err := h.post(hc)
+	if h.steps != nil {
+		*h.steps = append(*h.steps, output)
+	}
+	return err
+}
+
+func (h *AfterHook) post(hc *agent.HookContext) (any, error) {
 	if reason := h.skipReason(hc); reason != "" {
 		hc.Notify("[post-run] %s skipped: %s", h.Name(), reason)
-		return nil
+		return nil, nil
 	}
+	vars, err := h.variables(hc)
+	if err != nil {
+		return nil, err
+	}
+	run, err := h.Step.EvalIf(api.HookEnvLifecycle, vars)
+	if err != nil {
+		return nil, fmt.Errorf("workflow.after[%d]: %w", h.Index, err)
+	}
+	if !run {
+		hc.Notify("[post-run] %s skipped: if %s is false", h.Name(), h.Step.If)
+		return nil, nil
+	}
+	if len(h.Step.Commands) == 0 {
+		return h.runAction(hc, vars)
+	}
+	return nil, h.runCommands(hc)
+}
+
+func (h *AfterHook) runCommands(hc *agent.HookContext) error {
 	dir, err := h.dir(hc)
 	if err != nil {
 		return err

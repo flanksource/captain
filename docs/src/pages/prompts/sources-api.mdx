@@ -22,10 +22,15 @@ Captain discovers prompt sources in this order:
 2. Directories configured under `prompts.dirs` in `~/.captain.yaml`.
 3. Directories passed to `captain serve --prompt-dir`.
 4. An implicit writable local source at `.captain/prompts` when no other writable source exists.
+5. An implicit writable local source at `~/.config/captain/prompts`, or `$XDG_CONFIG_HOME/captain/prompts` when that variable is set. It is listed even when the directory does not exist yet, and it never replaces `.captain/prompts` as the default save target.
 
 Embedded prompts are read-only. Saving an embedded prompt from the workbench writes a local fork, stripping the embedded walk root so `testdata/commit.prompt` becomes `commit.prompt`.
 
-CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. Bare filenames are resolved across the discovered sources. An existing file in the current directory takes precedence; if more than one discovered source contains the same filename, Captain reports the ambiguity and requires an ID or explicit path.
+Local sources discover ordinary directories recursively, excluding `.git`, `node_modules`, `vendor`, and `dist`. Symbolic links directly inside a source directory are also supported: a linked `.prompt` file is included, and a linked directory contributes only its immediate regular `.prompt` files. Subdirectories and further links inside a linked directory are not followed. Links nested inside ordinary subdirectories are not discovered. Broken links, resolution cycles, and unreadable targets stay in the catalog with a `promptfile/symlink` warning in their `diagnostics` array, identifying the affected path. Healthy prompts remain available. Render and run fail explicitly when the selected prompt cannot be read.
+
+Linked prompts retain their logical source paths and IDs and report `writable: false`. They support list, get, render, and run; update and delete refuse them without changing the link or its target. Use create to save an editable local copy. For example, `~/.config/captain/prompts/shared -> /path/to/shared-prompts` exposes `/path/to/shared-prompts/review.prompt` as `shared/review.prompt`, but excludes `/path/to/shared-prompts/nested/review.prompt`.
+
+CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare filename with or without the `.prompt` extension. An existing `.prompt` file in the current directory takes precedence. Bare filenames then use the first matching local source in discovery order: configured directories, caller-supplied directories (such as `--prompt-dir`), the implicit project directory when active, and the user configuration directory. Embedded sources are checked afterward. For example, a project's `branch-rebase.prompt` overrides `~/.config/captain/prompts/library/branch-rebase.prompt`. `captain prompt list` prints lookup locations in precedence order. Duplicate basenames within a single source remain ambiguous and require an ID or explicit path. Explicit IDs and paths can address a shadowed prompt directly.
 
 ## Entity records
 
@@ -42,12 +47,13 @@ CLI prompt commands accept an opaque prompt ID, an explicit file path, or a bare
   "writable": false,
   "model": "claude-sonnet-4-6",
   "variables": [
-    { "name": "diff", "type": "string" }
+    { "name": "patch", "type": "string", "required": true },
+    { "name": "maxBodyLines", "type": "integer", "required": true }
   ]
 }
 `} />
 
-Every summary and detail also carries `version` — a hash of the exact file content — and `updatedAt`.
+Readable summaries and details also carry `version` — a hash of the exact file content — and `updatedAt`. An unreadable linked prompt instead carries `diagnostics: [{"rule":"promptfile/symlink","severity":"warning","message":"..."}]`, reports `writable: false`, and has no content version. A broken directory link is represented by its logical directory path so its warning remains inspectable by ID.
 
 `PromptDetail` extends the summary with raw `content`, `inputSchema`, `inputDefault`, and metadata extracted by dotprompt. A prompt whose frontmatter no longer parses is still returned: `content` holds the raw text and `parseError` the parser message, so the editor can open it for repair. Render and run refuse such a prompt until it parses again.
 
@@ -77,18 +83,17 @@ When `verify.fixtureRunner` is configured, the document also carries `fixtureSch
 
 ## Render request
 
-Rendering accepts template variables and an optional runtime `spec` overlay. It may also carry `content`: an unsaved draft that is rendered (or run) in place of the saved file. A `spec.model` that merely echoes the saved prompt's own frontmatter is ignored for a draft, so a draft that changes `model:` runs with the draft's model; any other override is kept. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
+Rendering accepts template variables and an optional runtime `spec` overlay. It may also carry `content`: an unsaved draft that is rendered (or run) in place of the saved file. Without a prompt id the draft is self-contained: its own frontmatter sets the model and runtime, as a saved `.prompt` file's would. A `spec.model` that merely echoes the saved prompt's own frontmatter is ignored for a draft, so a draft that changes `model:` runs with the draft's model; any other override is kept. It returns the rendered user/system prompt, full typed request input, config mirror, schema metadata, and a validation error field when the request is incomplete.
 
 <CodeExample client:load language="json" title="PromptRenderRequest" source={`
 {
   "variables": {
-    "diff": "diff --git a/README.md b/README.md"
+    "patch": "diff --git a/README.md b/README.md",
+    "maxBodyLines": 4
   },
   "spec": {
-    "model": {
-      "name": "claude-sonnet-4-6",
-      "mode": "agent"
-    },
+    "model": "claude-sonnet-4-6",
+    "mode": "agent",
     "budget": {
       "timeout": "2h",
       "maxTokens": 4096

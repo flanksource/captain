@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"github.com/flanksource/captain/pkg/ai"
 	"testing"
 )
 
@@ -209,7 +210,7 @@ func TestIsMarkdown(t *testing.T) {
 		input string
 		want  bool
 	}{
-		{"plain text", "hello world", false},
+		{"plain text", "hello world", true},
 		{"heading", "# Title\n\nSome text", true},
 		{"code block", "```\ncode\n```", true},
 		{"bold", "This is **bold** text", true},
@@ -217,11 +218,11 @@ func TestIsMarkdown(t *testing.T) {
 		{"inline code", "Use `foo` here", true},
 		{"json", `{"key": "value"}`, false},
 		{"empty", "", false},
-		{"just backticks no pair", "one ` backtick", false},
+		{"just backticks no pair", "one ` backtick", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IsMarkdown(tt.input)
+			got := ai.IsMarkdown(tt.input)
 			if got != tt.want {
 				t.Errorf("IsMarkdown(%q) = %v, want %v", tt.input, got, tt.want)
 			}

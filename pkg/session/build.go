@@ -61,6 +61,7 @@ func buildSession(ps claude.ParsedSession) *Session {
 		Agents:         h.agents,
 		Messages:       h.messages,
 		PermissionMode: meta.permissionMode,
+		Name:           meta.name,
 	}
 
 	applyMetadata(s, ps, allEntries)
@@ -68,6 +69,9 @@ func buildSession(ps claude.ParsedSession) *Session {
 		root := ps.Transcripts[0]
 		s.Title = latestClaudeSessionTitle(root.ToolUses)
 		s.InitialPrompt = firstClaudeUserPrompt(root.Entries)
+	}
+	if s.Name != "" {
+		s.Title = s.Name
 	}
 	if s.Title == "" {
 		s.Title = s.Slug

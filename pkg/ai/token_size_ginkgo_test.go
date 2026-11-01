@@ -53,6 +53,16 @@ var _ = Describe("Token sizing", func() {
 		Expect(errors.Is(err, api.ErrTokenCountingUnsupported)).To(BeTrue())
 	})
 
+	It("estimates a Jev request's TypeSafe questions as part of its input", func() {
+		questions := `{"product":{"type":"choice","instructions":"Which product?","criteria":{"annuity":"Annuity","unknown":"Unknown"}}}`
+		result, err := ai.SizeTokens(context.Background(), ai.TokenSizeOptions{Method: "estimate", Request: api.Spec{
+			Model:  api.Model{Name: "jev-latest", Mode: api.ModeAPI},
+			Prompt: api.Prompt{User: "test", OutputSchemaType: api.SchemaTypeTypeSafe, TypeSafeQuestions: []byte(questions)},
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.TotalTokens).To(Equal(1 + (len(questions)+3)/4))
+	})
+
 	It("refuses Jev provider counting without resolving credentials", func() {
 		_, err := ai.SizeTokens(context.Background(), ai.TokenSizeOptions{Method: "provider", Request: api.Spec{Model: api.Model{Name: "jev-latest", Mode: api.ModeAPI}, Prompt: api.Prompt{User: "test"}}})
 		Expect(errors.Is(err, api.ErrTokenCountingUnsupported)).To(BeTrue())

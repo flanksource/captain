@@ -14,19 +14,23 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
-	agentcommit "github.com/flanksource/captain/pkg/ai/agent/commit"
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/api"
+	dbcontext "github.com/flanksource/commons-db/context"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // DefaultHookTimeout bounds one hook's wall clock inside a blocked push
 // (R5.5); tighter than verify.DefaultCmdTimeout because a push is waiting.
 const DefaultHookTimeout = 5 * time.Minute
 
-// HookWorkspace is the materialized tree a hook set runs against.
+// HookWorkspace is the materialized tree a hook set runs against, and the
+// pushed range From..To in Repo it was materialized from.
 type HookWorkspace struct {
-	Dir     string   // absolute path of the materialized tree
-	Changed []string // repo-relative paths the push changed
+	Dir      string   // absolute path of the materialized tree
+	Changed  []string // repo-relative paths the push changed
+	Repo     string   // the receiving repository holding From..To
+	From, To string
 }
 
 // HookSetOptions configures one tier's hook-set run.
@@ -55,7 +59,7 @@ func RunHookSet(ctx context.Context, ws HookWorkspace, opts HookSetOptions) Tier
 	if wf == nil {
 		return verdict
 	}
-	if finding, failed := runCommitGates(ws, wf); failed {
+	if finding, failed := runCommitGates(ctx, ws, wf); failed {
 		verdict.Status = StatusRejected
 		verdict.Findings = append(verdict.Findings, finding)
 		return verdict
@@ -92,15 +96,20 @@ func RunHookSet(ctx context.Context, ws HookWorkspace, opts HookSetOptions) Tier
 	return verdict
 }
 
-// runCommitGates applies each declared commit policy's content gates over the
-// changed paths (the receive-side analogue of commit.Hook's pre-commit check).
-func runCommitGates(ws HookWorkspace, wf *api.Workflow) (Finding, bool) {
-	for _, c := range wf.Commits {
-		if err := agentcommit.CheckGates(ws.Dir, c.EffectiveGates(), 0, ws.Changed); err != nil {
-			return Finding{
-				Hook: "gate:commit", Kind: "commit",
-				Message: err.Error(),
-			}, true
+// runCommitGates applies the workspace gates the workflow's commit policies
+// configure over the pushed range — the receive-side analogue of commit.Hook's
+// pre-commit gates. An unresolvable gate rejects like a refusing one.
+func runCommitGates(ctx context.Context, ws HookWorkspace, wf *api.Workflow) (Finding, bool) {
+	gates, err := workspace.ResolveGates(wf.CommitGates())
+	if err != nil {
+		return Finding{Hook: "gate:commit", Kind: "commit", Message: err.Error()}, true
+	}
+	repo := &workspace.Workspace{Kind: workspace.KindHead, Source: ws.Repo, Dir: ws.Repo}
+	check := workspace.Check{Phase: workspace.PhasePush, From: ws.From, To: ws.To, Paths: ws.Changed}
+	dbctx := dbcontext.NewContext(ctx)
+	for _, gate := range gates {
+		if err := gate.Check(dbctx, repo, check); err != nil {
+			return Finding{Hook: "gate:" + gate.Name(), Kind: "commit", Message: err.Error()}, true
 		}
 	}
 	return Finding{}, false

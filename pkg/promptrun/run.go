@@ -25,6 +25,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/ai/agent/verify"
 	"github.com/flanksource/captain/pkg/ai/middleware"
+	"github.com/flanksource/captain/pkg/ai/tools/exectool"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/promptcontext"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
@@ -58,6 +59,12 @@ type Input struct {
 	// the provider from Config and prepares Request.Setup through the setup
 	// plugin, in-process.
 	Provider ai.Provider
+	// Relocated builds the provider of a run that executes on another machine
+	// (a git-agent sandbox). Unlike Provider it is called with the run's final
+	// Config — inline tools and the approval broker bound — because the run's
+	// caller tools are served from here while the agent runs there. Like
+	// Provider, it owns the workspace: Run adds no setup hook.
+	Relocated func(ai.Config) (ai.Provider, error)
 	// Hooks are the caller's own agent hooks — a host's commit pipeline, an
 	// environment stamp. They sit after the workflow's checks and before setup,
 	// so a Post hook of theirs at PhaseRun still sees a live worktree.
@@ -100,6 +107,13 @@ type Input struct {
 	// Resolved.Spec before admission, so what is recorded and every verify retry
 	// carry the enriched prompt. Empty leaves the prompt untouched.
 	ContextSources []promptcontext.Source
+
+	// inlineTools is the workspace the spec's inline tools run in, bound by
+	// bindInlineTools; Hooks orders its refresh after setup.
+	inlineTools *exectool.Workspace
+	// recorder is the recorded run's own recorder, set once it is admitted, so a
+	// child prompt a hook starts is filed under it.
+	recorder *Recorder
 }
 
 type ApprovalOptions struct {
@@ -119,6 +133,9 @@ func Run(ctx context.Context, in Input) (Result, error) {
 		return Result{}, err
 	}
 	if err := applyContext(ctx, &in); err != nil {
+		return Result{}, err
+	}
+	if err := bindInlineTools(&in); err != nil {
 		return Result{}, err
 	}
 	if in.Record == nil {
@@ -219,6 +236,7 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 			callerProgress(report)
 		}
 	}
+	in.recorder = rec
 	hooks, err := Hooks(ctx, *in, provider)
 	if err != nil {
 		return nil, err
@@ -324,7 +342,11 @@ func buildProvider(in Input) (ai.Provider, func(), error) {
 	if in.Resolved.Spec.NoCache {
 		cfg.NoCache = true
 	}
-	provider, err := middleware.NewProvider(cfg)
+	newProvider := middleware.NewProvider
+	if in.Relocated != nil {
+		newProvider = in.Relocated
+	}
+	provider, err := newProvider(cfg)
 	if err != nil {
 		return nil, release, err
 	}

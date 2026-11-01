@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/flanksource/commons/logger"
 )
 
 //go:embed agent.ts
@@ -104,8 +106,10 @@ func ensureDependencies(agentDir string) error {
 
 	cmd := exec.Command(npmPath, "install")
 	cmd.Dir = agentDir
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	// The log output, not os.Stderr: a foreground run routes it through the
+	// renderer that owns the terminal, so the install log is not drawn over it.
+	out := logger.GetOutput()
+	cmd.Stdout, cmd.Stderr = out, out
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("npm install in %s failed: %w", agentDir, err)
 	}

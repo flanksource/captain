@@ -10,37 +10,25 @@ import RuntimeSpecDemo from "../../components/RuntimeSpecDemo.tsx";
 
 # Runtime overlay
 
-The prompt file provides the base request, but it is not the last word. Captain resolves the final runtime request by layering command flags, saved defaults, and workbench edits over the rendered prompt.
+Captain combines runtime presets, rendered frontmatter, and explicit CLI or workbench choices into one typed request. Saved defaults fill gaps after composition.
 
 <RuntimeSpecDemo client:only="react" />
 
 ## Precedence
 
-<div className="docs-step">
-  <h3>1. Prompt frontmatter</h3>
-  <p>The `.prompt` file declares the base model, budget, permissions, memory, setup, and prompt metadata.</p>
-</div>
-<div className="docs-step">
-  <h3>2. Saved defaults</h3>
-  <p>`captain configure` values fill gaps such as default model, mode, max tokens, budget, no-cache, and memory toggles.</p>
-</div>
-<div className="docs-step">
-  <h3>3. CLI or UI overlay</h3>
-  <p>Explicit runtime choices override the base file and defaults. Negative toggles such as no-MCP and no-hooks stay enabled once set by any layer.</p>
-</div>
-<div className="docs-step">
-  <h3>4. Context normalization</h3>
-  <p>The prompt command resolves an empty workspace directory to the invocation cwd and resolves relative directories from that same cwd before provider dispatch.</p>
-</div>
+1. **Select presets.** Explicit request `presets` or repeated `--preset` flags replace frontmatter `presets`; `--no-presets` supplies an explicit empty selection.
+2. **Compose authored layers.** Sort by ascending `order`, then scope (`global`, `context`, `surface`, `user`), preserving selection order for ties. At ordinary order, presets precede the prompt and explicit request. Restrictive catalogs intersect and the strictest nonzero budget limit wins. A high-order preset can override an ordinary request: built-in `Lint` uses `order: 100` to enforce its output schema.
+3. **Fill saved defaults.** `captain configure` values supply missing model, mode, effort, generation, budget and memory settings. Each fallback inherits defaults from its own provider.
+4. **Normalize and validate.** Relative or empty `setup.cwd` resolves against the invocation directory. Resolve model aliases and fallbacks and check runtime capabilities before dispatch.
+
+Explicit `false`, zero, empty collections and null values retain their authored presence; lower-layer toggles are not permanently latched on. Every authored layer is structurally validated even if another layer would overwrite it. `resolution.trace`, `resolution.provenance` and `resolution.warnings` describe the result. Rendering previews this resolution without running setup or calling a model.
 
 ## Runtime payload
 
 <CodeExample client:load language="json" title="Resolved request sketch" source={`
 {
-  "model": {
-    "name": "claude-sonnet-4-6",
-    "mode": "agent"
-  },
+  "model": "claude-sonnet-4-6",
+  "mode": "agent",
   "prompt": {
     "source": "options.prompt",
     "system": "You are a careful refactoring assistant.",
@@ -55,7 +43,8 @@ The prompt file provides the base request, but it is not the last word. Captain 
     "mode": "acceptEdits",
     "presets": ["edit"],
     "tools": {
-      "allow": ["Read", "Edit"]
+      "Read": "allow",
+      "Edit": "allow"
     },
     "mcp": {
       "disabled": true
@@ -70,19 +59,28 @@ The prompt file provides the base request, but it is not the last word. Captain 
 }
 `} />
 
+## Schema repair
+
+Set `prompt.schemaStrictness: repair` to correct responses that do not match the output schema. Captain shows each rejected Markdown response, then asks the model to repair its answer with the schema and validation errors. It makes at most two repair attempts; if neither produces valid output, the run returns a schema error and retains the rejected response and reported findings. Token usage and cost include every attempt.
+
+`retry` remains a compatibility alias for `repair` in existing prompts, API requests, and stored presets. Saving or serializing the policy writes `repair`. Use `error` to fail immediately, `warning` to report local validation violations without repair, and `none` to disable local post-validation. Native provider output constraints still apply.
+
 ## Built-in runtime presets
 
-`permissions.presets: ["edit"]` above is a permission bundle: acceptEdits plus a curated Read/Edit/Write/Glob/Grep allowlist, the same thing `--edit` sets. Runtime presets are a separate, larger unit: named, reusable spec layers stored in the database or in preset directories, selected by id or name. Captain ships three runtime presets that every catalog lists last, with source `builtin`:
+`permissions.presets: ["edit"]` above is a permission bundle: acceptEdits plus a curated Read/Edit/Write/Glob/Grep allowlist, the same thing `--edit` sets. Runtime presets are named, reusable spec layers stored in the database or preset directories, selected by id or name. Captain ships four runtime presets that every catalog lists last, with source `builtin`:
 
 | Preset | Permissions |
 |---|---|
 | Edit | `mode: acceptEdits`, `presets: [edit]` (uses the bundle above) |
 | Plan | `mode: plan`; `read: allow`, `shell: deny`; sets no `web_search` or `web_fetch` policy |
 | Read-only | no mode; `edit`, `write`, `shell`, `web_search`, `web_fetch` denied; sets no `read` policy |
+| Lint | Structured `violations` output schema with `schemaStrictness: repair`; `scope: surface`, `order: 100` |
 
 A built-in only names the tools it has an opinion about, so layering one never loosens a deny another layer set: `presets: [Read-only, Plan]` keeps Read-only's web denies.
 
 Tool keys such as `shell` and `edit` are portable aliases that each runtime translates to its own tool names (`Bash` on claude, `shell` on codex, `run_shell_command` on gemini). A `claude:Bash` prefix scopes a key to one provider. When keys collide on one tool, deny wins. On agent runtimes, a name that is neither an alias, an `mcp__` tool, nor any agent's built-in is ignored (caller tools are governed by `toolPolicy`, not `permissions.tools`). On runtimes that cannot filter tools (codex, gemini), an allow written as an alias, such as `shell: allow`, is inert, while a deny is refused loudly.
+
+Tools a prompt declares inline under `tools` (see [Inline tools](/prompts/format/#inline-tools)) are caller tools too. Their `readonly`, `destructive` and `permission` fields set the default authority, and `toolPolicy` and `toolPreferences` rules override it by tool name.
 
 Built-ins are read-only. To change one, create a preset with the same name in the database or a preset directory: `~/.config/captain/presets`, a `runtime.presetDirs` entry, or `<repo>/.captain/presets`. It overrides the built-in everywhere, including runs and profiles that stored the built-in's id, and deleting it brings the built-in back.
 
@@ -104,6 +102,54 @@ Because deny wins, the override drops `shell: deny` rather than trying to lift i
 captain runtime-preset list            # the override replaces the built-in Plan row
 captain runtime-preset resolve Plan    # shows the override's layer and effective spec
 `} />
+
+## Portable access
+
+Each runtime speaks its own permission dialect: claude restricts per tool, codex restricts through its sandbox and approval policy, and gemini through an approval mode. A `permissions.tools` deny list therefore cannot make a run read-only on codex, where the shell is also how the agent reads files. `permissions.access` states the intent once, and Captain compiles it into each runtime's own dialect when the provider for that runtime is built. A fallback in another family is compiled for its own runtime too.
+
+<CodeExample client:load language="yaml" title="review.prompt frontmatter" source={`
+permissions:
+  access: read-only   # read-only | full; unset leaves every runtime unchanged
+`} />
+
+With `read-only`, the agent may read the workspace. It cannot create, modify or delete files, spawn sub-agents, message or trigger other sessions, schedule prompts, create worktrees, use third-party MCP servers, or obtain write access by approval. Web tools and the network keep whatever `tools` and the sandbox say. `full` adds nothing; it overrides a read-only intent inherited from an earlier layer, or set with `--access full`.
+
+| Runtime | `read-only` compiles to | Support |
+|---|---|---|
+| claude agent, cli, cmux | `--disallowedTools` for every edit, write and shell tool plus every tool that acts outside the agent's own process (`Agent`, `Task`, `Workflow`, `TeamCreate`, `TeamDelete`, `SendMessage`, `RemoteTrigger`, `CronCreate`, `CronDelete`, `EnterWorktree`, `ExitWorktree`); MCP disabled. An authored sandbox is left as it is. | exact |
+| codex agent, cli, cmux | native sandbox `read-only`, approval `never`, MCP disabled, and no execpolicy allow rules (see below). The shell stays, because it is codex's read path, and the sandbox confines it. | exact |
+| gemini cli | `--approval-mode plan` | approximate: the gemini client enforces it, not an OS sandbox |
+| api modes | nothing to restrict: no built-in file tools run | exact |
+
+Codex execpolicy rules need special handling. A `prefix_rule(..., decision="allow")` in `~/.codex/rules/*.rules`, or in a project's `.codex/rules`, runs the matching command outside the sandbox, even when the sandbox is read-only and approval is `never`. A rule allowing `git add` would let a read-only run write the git index. A read-only run keeps them out:
+
+- `codex exec` (the cli mode) runs with `--ignore-rules`.
+- The app-server (the agent mode) and the interactive TUI (cmux) have no such switch. They start in a captain-managed `CODEX_HOME` at `~/.config/captain/codex-read-only` (under `$XDG_CONFIG_HOME` when set). That home links only `auth.json`, `config.toml` and `AGENTS.md` from your codex home, and it has no `rules` directory. `config.toml` has no field that declares rules. Captain's session history scans this home's `sessions` directory too.
+- On those two runtimes, a project rules file that allows a command is refused before the run, with its path. Codex reads project rules from the working directory up to the nearest `.git`, and the isolated home cannot hide them.
+
+`captain permissions explain` shows which of these applies on each runtime.
+
+The contract does not cover Captain's own caller tools, which stay governed by `toolPolicy`. A posture a runtime cannot reach is refused before the model is called: on codex, `access: read-only` with `sandbox: off`, a docker or git-agent sandbox, `filesystem.access: workspace-write`, `writableRoots`, or cmux `cliArgs` looser than `sandbox: read-only` with `askForApproval: never` are all refused. The `access` rows of `captain permissions matrix` show the same table.
+
+### Existing tool and sandbox rules
+
+Captain also reads read-only intent from each runtime's own dialect, layer by layer, and the later layer wins:
+
+- A layer whose `permissions.tools` deny every edit, write and shell tool, such as the built-in Read-only preset, says read-only in claude's dialect.
+- A layer with a native sandbox whose `filesystem.access` is `read-only` says it in codex's dialect.
+- A later layer that allows an edit, write or shell tool, sets the sandbox to `off` or `workspace-write`, or sets `access: full` lifts the intent. `mode: plan` never converts, because plan mode writes its plan file.
+
+A converted intent is applied only on runtimes that speak another dialect, so a spec running on its own family is unchanged. On codex, the edit, write and shell denies of the built-in Read-only preset are now accepted as a read-only sandbox that never asks. Its web denies stay as they are: `web_fetch` has no codex tool and is reported as ignored, and `web_search` is still refused until codex can deny it natively, so the preset as a whole is still refused on codex. A read-only sandbox on claude also gains Edit and Write denies, because claude's sandbox confines only Bash. That is the one behaviour change, and it only tightens.
+
+The built-in presets themselves are unchanged. To see what a prompt becomes on each runtime, or to rewrite a block into the portable form, use:
+
+<CodeExample client:load language="bash" title="Explain and convert" source={`
+captain permissions explain proposal-review --model agent:sonnet --model agent:gpt-6.1-sol
+captain permissions convert .captain/presets/read-only.yaml          # prints the diff
+captain permissions convert .captain/presets/read-only.yaml --write  # rewrites the file
+`} />
+
+`convert` only rewrites a block when the portable form is equivalent or tighter on every runtime, and keeps any rule it did not absorb, such as a web deny, beside `access`. Otherwise it refuses and gives the reason.
 
 ## Model and mode
 

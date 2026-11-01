@@ -11,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/codexhome"
 	"github.com/flanksource/captain/pkg/database"
 )
 
@@ -65,7 +66,7 @@ func (m *Monitor) handleHookEvent(ctx context.Context, watcher *transcriptWatche
 			// The rollout may not be flushed yet; arm today's day dir so the
 			// eventual write is tailed, and let recon cover the rest.
 			log.Debugf("hook codex/%s: no rollout found for thread %s yet", ev.Event, ev.SessionID)
-			watcher.watchDir(codexDayDir(time.Now()), "codex")
+			watchCodexDayDirs(watcher, time.Now())
 			return
 		}
 	}
@@ -181,28 +182,40 @@ func (m *Monitor) endHookSessionProcesses(ctx context.Context, ev HookEvent) {
 // returns false so an untrusted hook can never point ingestion at an arbitrary
 // file.
 func withinHookRoot(provider, cleanPath string) bool {
-	root, err := hookTranscriptRoot(provider)
-	if err != nil || root == "" {
-		return false
-	}
-	return strings.HasPrefix(cleanPath, root+string(filepath.Separator))
+	root, err := hookTranscriptRootOf(provider, cleanPath)
+	return err == nil && root != ""
 }
 
-func hookTranscriptRoot(provider string) (string, error) {
+// hookTranscriptRoots are the session roots a provider writes transcripts
+// under. Codex has two: the user's home and the isolated home captain starts
+// read-only runs in.
+func hookTranscriptRoots(provider string) ([]string, error) {
 	switch provider {
 	case "claude":
-		return claude.GetProjectsDir(), nil
+		return []string{claude.GetProjectsDir()}, nil
 	case "codex":
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, ".codex", "sessions"), nil
+		return codexhome.SessionRoots()
 	case api.TranscriptSourceAPI:
-		return history.APITranscriptRoot()
+		root, err := history.APITranscriptRoot()
+		return []string{root}, err
 	default:
-		return "", fmt.Errorf("unknown hook provider %q", provider)
+		return nil, fmt.Errorf("unknown hook provider %q", provider)
 	}
+}
+
+// hookTranscriptRootOf is the provider root that contains path, or "" when
+// none does.
+func hookTranscriptRootOf(provider, path string) (string, error) {
+	roots, err := hookTranscriptRoots(provider)
+	if err != nil {
+		return "", err
+	}
+	for _, root := range roots {
+		if root != "" && strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return root, nil
+		}
+	}
+	return "", nil
 }
 
 // resolveCodexTranscript finds the rollout file for a codex thread id. The
@@ -216,14 +229,15 @@ func resolveCodexTranscript(threadID string) string {
 	suffix := "-" + threadID + ".jsonl"
 	now := time.Now()
 	for _, day := range []time.Time{now, now.AddDate(0, 0, -1)} {
-		dir := codexDayDir(day)
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if strings.HasSuffix(entry.Name(), suffix) {
-				return filepath.Join(dir, entry.Name())
+		for _, dir := range codexDayDirs(day) {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if strings.HasSuffix(entry.Name(), suffix) {
+					return filepath.Join(dir, entry.Name())
+				}
 			}
 		}
 	}

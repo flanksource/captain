@@ -292,7 +292,12 @@ func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load rewritten kubeconfig: %v", err)
 	}
-	response, err := http.Get(rewritten.Clusters["captain-proxy"].Server + "/api/v1/namespaces/prod/pods?token=not-observed")
+	request, err := http.NewRequest(http.MethodGet, rewritten.Clusters["captain-proxy"].Server+"/api/v1/namespaces/prod/pods?token=not-observed", nil)
+	if err != nil {
+		t.Fatalf("build Kubernetes proxy request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+rewritten.AuthInfos["captain-proxy"].Token)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatalf("request Kubernetes proxy: %v", err)
 	}

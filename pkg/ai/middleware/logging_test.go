@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -20,10 +22,13 @@ type sampleOut struct {
 	Note string `json:"note,omitempty"`
 }
 
-type stubProvider struct{ resp *ai.Response }
+type stubProvider struct {
+	resp *ai.Response
+	err  error
+}
 
 func (s stubProvider) Execute(context.Context, ai.Request) (*ai.Response, error) {
-	return s.resp, nil
+	return s.resp, s.err
 }
 func (s stubProvider) GetModel() string       { return "test-model" }
 func (s stubProvider) GetRuntime() ai.Runtime { return ai.RuntimeOf(ai.Anthropic, ai.ModeAPI) }
@@ -85,6 +90,45 @@ func TestLoggingProvider_UsesEffortQualifiedRuntimeIdentity(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("logging middleware output missing %q\n--- output ---\n%s", want, got)
 		}
+	}
+}
+
+// TestLoggingProvider_LogsRejectedReplyOnError covers a reply the provider
+// rejected as invalid JSON: the parse error names only the first bad byte, so
+// the reply itself must be visible under -v to diagnose the failure.
+func TestLoggingProvider_LogsRejectedReplyOnError(t *testing.T) {
+	const reply = "I found three style issues in report.mdx"
+	for _, tt := range []struct {
+		level     string
+		wantReply bool
+	}{
+		{"info", false},
+		{"debug", true},
+	} {
+		t.Run(tt.level, func(t *testing.T) {
+			prev := logger.GetOutput()
+			t.Cleanup(func() { logger.SetOutput(prev) })
+			var buf bytes.Buffer
+			logger.SetOutput(&buf)
+			logger.GetLogger("ai").SetLogLevel(tt.level)
+
+			p, err := WithLogging()(stubProvider{
+				resp: &ai.Response{Text: reply},
+				err:  fmt.Errorf("%w: data is not valid JSON: invalid character 'I'", ai.ErrSchemaValidation),
+			})
+			if err != nil {
+				t.Fatalf("WithLogging: %v", err)
+			}
+			if _, err := p.Execute(context.Background(), ai.Request{}); !errors.Is(err, ai.ErrSchemaValidation) {
+				t.Fatalf("Execute error = %v, want ErrSchemaValidation", err)
+			}
+
+			got := ansi.ReplaceAllString(buf.String(), "")
+			if strings.Contains(got, reply) != tt.wantReply || strings.Contains(got, "rejected response") != tt.wantReply {
+				t.Errorf("at %s level, rejected reply logged = %v, want %v\n--- output ---\n%s",
+					tt.level, strings.Contains(got, reply), tt.wantReply, got)
+			}
+		})
 	}
 }
 

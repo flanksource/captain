@@ -26,11 +26,14 @@ type transcriptWatcher struct {
 	// ingest runs after the debounce window; ingestor.ingestFile in production.
 	ingest func(ctx context.Context, source, path string)
 
-	mu       sync.Mutex
-	dirs     map[string]string // watched directory -> source kind
-	tracked  map[string]string // explicitly tracked file -> source kind
-	timers   map[string]*time.Timer
-	debounce time.Duration
+	mu           sync.Mutex
+	dirs         map[string]string // watched directory -> source kind
+	tracked      map[string]string // explicitly tracked file -> source kind
+	timers       map[string]*time.Timer
+	debounce     time.Duration
+	closed       bool
+	processPaths map[string]string
+	processDirs  map[string]string
 }
 
 func newTranscriptWatcher(m *Monitor, ingestor *ingestor) (*transcriptWatcher, error) {
@@ -41,15 +44,13 @@ func newTranscriptWatcher(m *Monitor, ingestor *ingestor) (*transcriptWatcher, e
 	w := &transcriptWatcher{
 		monitor: m, watcher: watcher,
 		dirs: map[string]string{}, tracked: map[string]string{}, timers: map[string]*time.Timer{},
+		processPaths: map[string]string{}, processDirs: map[string]string{},
 		debounce: m.cfg.Debounce,
 	}
 	w.ingest = func(ctx context.Context, source, path string) {
 		if err := ingestor.ingestFile(ctx, source, path); err != nil {
 			log.Warnf("ingest %s: %v", path, err)
 		}
-	}
-	ingestor.watchSubagents = func(rootTranscriptPath string) {
-		w.watchDir(subagentsDir(rootTranscriptPath), "claude")
 	}
 	ingestor.requeue = w.schedule
 	registerActiveWatcher(w)
@@ -84,12 +85,18 @@ func (w *transcriptWatcher) errors() chan error          { return w.watcher.Erro
 func (w *transcriptWatcher) close() {
 	unregisterActiveWatcher(w)
 	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
+	w.closed = true
 	for _, timer := range w.timers {
 		timer.Stop()
 	}
 	w.timers = map[string]*time.Timer{}
-	w.mu.Unlock()
-	_ = w.watcher.Close()
+	if err := w.watcher.Close(); err != nil {
+		log.Errorf("close transcript watcher: %v", err)
+	}
 }
 
 // track registers one transcript file and watches its directory (and, for
@@ -99,11 +106,13 @@ func (w *transcriptWatcher) track(path, source string) {
 		return
 	}
 	w.mu.Lock()
-	_, known := w.tracked[path]
+	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
 	w.tracked[path] = source
-	w.mu.Unlock()
-	if !known {
-		w.watchDir(filepath.Dir(path), source)
+	if err := w.reconcileLocked(); err != nil {
+		log.Errorf("track transcript %s: %v", path, err)
 	}
 }
 
@@ -112,24 +121,30 @@ func (w *transcriptWatcher) watchDir(dir, source string) {
 		return
 	}
 	w.mu.Lock()
-	_, known := w.dirs[dir]
-	if !known {
-		w.dirs[dir] = source
-	}
-	w.mu.Unlock()
-	if known {
+	defer w.mu.Unlock()
+	if w.closed {
 		return
 	}
-	if err := w.watcher.Add(dir); err != nil {
-		log.Debugf("watch %s: %v", dir, err)
-		w.mu.Lock()
-		delete(w.dirs, dir)
-		w.mu.Unlock()
+	w.processDirs[dir] = source
+	if err := w.reconcileLocked(); err != nil {
+		log.Errorf("watch transcript directory %s: %v", dir, err)
 	}
 }
 
 // handle debounces one fsnotify event into a future ingest of the file.
 func (w *transcriptWatcher) handle(ctx context.Context, event fsnotify.Event) {
+	if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+		w.mu.Lock()
+		if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+			delete(w.dirs, event.Name)
+		}
+		if !w.closed {
+			if err := w.reconcileLocked(); err != nil {
+				log.Errorf("refresh transcript watches: %v", err)
+			}
+		}
+		w.mu.Unlock()
+	}
 	if !event.Op.Has(fsnotify.Write) && !event.Op.Has(fsnotify.Create) {
 		return
 	}
@@ -144,6 +159,9 @@ func (w *transcriptWatcher) handle(ctx context.Context, event fsnotify.Event) {
 func (w *transcriptWatcher) schedule(ctx context.Context, source, path string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.closed {
+		return
+	}
 	if timer, ok := w.timers[path]; ok {
 		timer.Reset(w.debounce)
 		return
@@ -287,6 +305,7 @@ func armActiveWatchers(ctx context.Context, source, path string) {
 	}
 	activeWatchers.mu.Unlock()
 	for _, watcher := range watchers {
+		watcher.monitor.TrackTranscript(path, source)
 		watcher.track(path, source)
 		watcher.schedule(ingestCtx, source, path)
 	}

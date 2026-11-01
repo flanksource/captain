@@ -188,6 +188,7 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded session
 	}
 	item.DetailSource = provenance.Facets()
 	enrichSessionDetail(detail, item.Summary)
+	foldDetailUsage(&item.Summary, detail)
 	// A question is not waiting on a person while the agent still has the turn: a
 	// chat running on the session, or the agent's own process still alive (an
 	// interactive TUI asking in place).
@@ -378,6 +379,26 @@ func sessionChatCapabilities(item SessionGetItem) ChatCapabilities {
 		capabilities.Resume = true
 	}
 	return capabilities
+}
+
+// foldDetailUsage fills what the store has not projected yet from the composed
+// detail, so the summary agrees with the transcript it heads. An API run's
+// transcript reaches the session overview only when a monitor next ingests it;
+// until then the overview reports no tokens, cost or tool calls for a session
+// whose transcript has all three. A projected value is kept.
+func foldDetailUsage(summary *SessionRecord, detail *session.Session) {
+	summary.ToolCalls = max(summary.ToolCalls, session.CountToolParts(detail.Messages))
+	if summary.Tokens == nil && detail.Usage.TotalTokens() > 0 {
+		summary.Tokens = &SessionTokensWire{
+			InputTokens: detail.Usage.InputTokens, OutputTokens: detail.Usage.OutputTokens,
+			CacheReadTokens: detail.Usage.CacheReadTokens, CacheCreationTokens: detail.Usage.CacheWriteTokens,
+			TotalTokens: detail.Usage.TotalTokens(),
+		}
+	}
+	if summary.CostUSD == 0 {
+		summary.CostUSD = detail.Cost.Total()
+	}
+	summary.Health = deriveSessionHealth(*summary)
 }
 
 func enrichSessionDetail(detail *session.Session, summary SessionRecord) {

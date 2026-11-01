@@ -1,6 +1,7 @@
 package commit
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // TestSharedTreeCommitsOnlyAgentFiles is the isolation invariant: a run that
@@ -200,12 +202,12 @@ func TestRefusalNamesOnlyCommittableRecordedEdits(t *testing.T) {
 // TestTrackedButIgnoredEditsAreSkippedNotFatal covers the awkward middle case a
 // force-added build bundle creates: it is tracked, so `git status` reports it
 // dirty, but `git add` still refuses it for matching an ignore rule. Attributing
-// it therefore does not produce a commit — it kills the run inside stage(). It is
+// it therefore does not produce a commit — it kills the run while staging. It is
 // dropped instead, and a sibling edit in the same turn still gets committed.
 func TestTrackedButIgnoredEditsAreSkippedNotFatal(t *testing.T) {
 	dir := newRepo(t)
 	hc := shared(dir)
-	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesNone, Message: "feat: rebuild"})
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: rebuild"})
 
 	write(t, dir, ".gitignore", "dist/\n")
 	write(t, dir, "dist/bundle.js", "// v1\n")
@@ -236,7 +238,7 @@ func TestTrackedButIgnoredEditsAreSkippedNotFatal(t *testing.T) {
 func TestOnlyTrackedIgnoredEditIsANoOp(t *testing.T) {
 	dir := newRepo(t)
 	hc := shared(dir)
-	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesNone, Message: "chore: rebuild"})
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "chore: rebuild"})
 
 	write(t, dir, ".gitignore", "dist/\n")
 	write(t, dir, "dist/bundle.js", "// v1\n")
@@ -333,28 +335,31 @@ func TestDeletionsAreCommitted(t *testing.T) {
 	}
 }
 
-func TestCheapGatesRejectDangerousFiles(t *testing.T) {
+// TestConfiguredGatesRejectDangerousFiles: the policy's gate specs resolve
+// through the workspace registry and refuse before anything is committed.
+func TestConfiguredGatesRejectDangerousFiles(t *testing.T) {
+	const maxBytes = 1 << 10
+	gates := []workspace.GateSpec{
+		{Name: workspace.SecretNamesGateName},
+		{Name: workspace.MaxSizeGateName, Config: map[string]any{"bytes": maxBytes}},
+	}
 	cases := []struct {
-		name    string
-		path    string
-		body    string
-		wantErr string
+		name, path, body, wantGate string
 	}{
-		{name: "dotenv", path: ".env", body: "TOKEN=hunter2\n", wantErr: "credentials"},
-		{name: "environment-specific dotenv", path: ".env.production", body: "TOKEN=hunter2\n", wantErr: "credentials"},
-		{name: "private key", path: "certs/server.pem", body: "-----BEGIN PRIVATE KEY-----\n", wantErr: "credentials"},
-		{name: "oversized artifact", path: "dist/bundle.js", body: strings.Repeat("x", DefaultMaxFileSize+1), wantErr: "over"},
+		{name: "dotenv", path: ".env", body: "TOKEN=hunter2\n", wantGate: workspace.SecretNamesGateName},
+		{name: "private key", path: "certs/server.pem", body: "-----BEGIN PRIVATE KEY-----\n", wantGate: workspace.SecretNamesGateName},
+		{name: "oversized artifact", path: "dist/bundle.js", body: strings.Repeat("x", maxBytes+1), wantGate: workspace.MaxSizeGateName},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := newRepo(t)
 			hc := isolated(dir)
-			h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: oops"})
+			h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: oops", Gates: gates})
 
 			write(t, dir, tc.path, tc.body)
-			err := h.Post(hc, agent.PhaseAgent)
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("Post() = %v, want an error containing %q", err, tc.wantErr)
+			var gateErr *workspace.GateError
+			if err := h.Post(hc, agent.PhaseAgent); !errors.As(err, &gateErr) || gateErr.Gate != tc.wantGate {
+				t.Fatalf("Post() = %v, want the %s gate to refuse %s", err, tc.wantGate, tc.path)
 			}
 			if commitCount(t, dir) != 1 {
 				t.Errorf("nothing should have been committed, subjects: %v", subjects(t, dir))
@@ -363,33 +368,35 @@ func TestCheapGatesRejectDangerousFiles(t *testing.T) {
 	}
 }
 
-// TestExampleDotenvIsNotTreatedAsSecret: .env.example is documentation and is
-// meant to be committed; a gate that blocks it would be unusable.
-func TestExampleDotenvIsNotTreatedAsSecret(t *testing.T) {
+// TestUnconfiguredGatesCommitASecretNamedFile: no gate runs unless the policy
+// lists it, so a deliberate .env commit needs no opt-out.
+func TestUnconfiguredGatesCommitASecretNamedFile(t *testing.T) {
 	dir := newRepo(t)
 	hc := isolated(dir)
-	h := New(api.Commit{On: api.CommitOnAgent, Message: "docs: add env example"})
-
-	write(t, dir, ".env.example", "TOKEN=\n")
-	if err := h.Post(hc, agent.PhaseAgent); err != nil {
-		t.Fatalf("agent phase: %v", err)
-	}
-	if !contains(filesInHead(t, dir, "HEAD"), ".env.example") {
-		t.Errorf("commit should contain .env.example, got %v", filesInHead(t, dir, "HEAD"))
-	}
-}
-
-func TestGatesNoneCommitsWhatCheapWouldRefuse(t *testing.T) {
-	dir := newRepo(t)
-	hc := isolated(dir)
-	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesNone, Message: "chore: deliberate"})
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "chore: deliberate"})
 
 	write(t, dir, ".env", "TOKEN=hunter2\n")
 	if err := h.Post(hc, agent.PhaseAgent); err != nil {
-		t.Fatalf("agent phase with gates: none: %v", err)
+		t.Fatalf("agent phase with no gates: %v", err)
 	}
 	if !contains(filesInHead(t, dir, "HEAD"), ".env") {
-		t.Errorf("gates: none should commit it deliberately, got %v", filesInHead(t, dir, "HEAD"))
+		t.Errorf("an ungated policy should commit it, got %v", filesInHead(t, dir, "HEAD"))
+	}
+}
+
+// TestUnknownGateFailsTheCommit: a misspelled gate must fail loudly rather than
+// commit with fewer checks than the policy asked for.
+func TestUnknownGateFailsTheCommit(t *testing.T) {
+	dir := newRepo(t)
+	hc := isolated(dir)
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: x", Gates: []workspace.GateSpec{{Name: "secret-name"}}})
+
+	write(t, dir, "x.go", "package main\n")
+	if err := h.Post(hc, agent.PhaseAgent); err == nil || !strings.Contains(err.Error(), `unknown gate "secret-name"`) {
+		t.Fatalf("Post() = %v, want an unknown-gate error", err)
+	}
+	if commitCount(t, dir) != 1 {
+		t.Errorf("nothing should have been committed, subjects: %v", subjects(t, dir))
 	}
 }
 
@@ -398,7 +405,7 @@ func TestGatesNoneCommitsWhatCheapWouldRefuse(t *testing.T) {
 func TestIgnoredFilesAreNeverStaged(t *testing.T) {
 	dir := newRepo(t)
 	hc := isolated(dir)
-	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesNone, Message: "feat: build"})
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: build"})
 
 	write(t, dir, ".gitignore", "build/\n")
 	write(t, dir, "build/out.bin", "artifact\n")
@@ -412,33 +419,18 @@ func TestIgnoredFilesAreNeverStaged(t *testing.T) {
 	}
 }
 
-// TestFullGatesRequireAHostPipeline: captain has no pre-commit pipeline of its
-// own, so asking for one without supplying it must fail rather than quietly
-// commit with fewer checks than were requested.
-func TestFullGatesRequireAHostPipeline(t *testing.T) {
-	dir := newRepo(t)
-	hc := isolated(dir)
-	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesFull, Message: "feat: gated"})
-
-	write(t, dir, "x.go", "package main\n")
-	err := h.Post(hc, agent.PhaseAgent)
-	if err == nil || !strings.Contains(err.Error(), "Hook.Do") {
-		t.Fatalf("Post() = %v, want an error pointing at the host callback", err)
-	}
-}
-
-// TestAnchorAutoRequiresAHostCallback: last-touch routing is gavel's, and
+// TestAnchorAutoIsRefused: captain does not implement last-touch routing, and
 // pretending to honour it would put fixups on the wrong commits. It fails on the
 // very first turn rather than after committing work under the wrong policy.
-func TestAnchorAutoRequiresAHostCallback(t *testing.T) {
+func TestAnchorAutoIsRefused(t *testing.T) {
 	dir := newRepo(t)
 	hc := isolated(dir)
 	h := New(api.Commit{On: api.CommitOnTurn, Anchor: "auto"})
 
 	write(t, dir, "x.go", "package main\n")
 	err := h.Post(hc, agent.PhaseTurn)
-	if err == nil || !strings.Contains(err.Error(), "Hook.Do") {
-		t.Fatalf("Post() = %v, want an error pointing at the host callback", err)
+	if err == nil || !strings.Contains(err.Error(), "anchor: auto") {
+		t.Fatalf("Post() = %v, want an error refusing anchor: auto", err)
 	}
 	if commitCount(t, dir) != 1 {
 		t.Errorf("nothing should have been committed, subjects: %v", subjects(t, dir))
@@ -461,21 +453,28 @@ func TestExplicitAnchorFixesUpOntoAnExistingCommit(t *testing.T) {
 	}
 }
 
-// TestDoCallbackReceivesAResolvedPlan pins the host seam: everything gavel needs
-// is on the Plan, so it never re-derives paths, mode or anchor.
-func TestDoCallbackReceivesAResolvedPlan(t *testing.T) {
+// TestHostExtensionsShapeTheCommit pins the host seam gavel builds on: Message
+// gets the resolved Plan, a host hook's rewrite is restaged and committed, and a
+// host gate sees the final staged set.
+func TestHostExtensionsShapeTheCommit(t *testing.T) {
 	dir := newRepo(t)
 	hc := isolated(dir)
 
 	var got Plan
-	const hostMessage = "feat: cut by the host pipeline"
-	h := New(api.Commit{On: api.CommitOnAgent, Gates: api.CommitGatesFull, Message: "feat: hosted"})
-	h.Do = func(_ *agent.HookContext, plan Plan) (string, error) {
+	var gated []string
+	const hostMessage, formatted = "feat: composed by the host", "package main // formatted\n"
+	h := New(api.Commit{On: api.CommitOnAgent, Message: "feat: hosted"})
+	h.HostMessage = func(_ *agent.HookContext, plan Plan) (string, error) {
 		got = plan
-		mustGit(t, plan.Dir, append([]string{"add", "--"}, plan.Paths...)...)
-		mustGit(t, plan.Dir, "commit", "--no-verify", "-m", hostMessage)
-		return mustGit(t, plan.Dir, "rev-parse", "HEAD"), nil
+		return hostMessage, nil
 	}
+	h.HostHooks = []workspace.Hook{testHook(func(ws *workspace.Workspace, paths []string) error {
+		return os.WriteFile(filepath.Join(ws.Dir, paths[0]), []byte(formatted), 0o600)
+	})}
+	h.HostGates = []workspace.Gate{testGate(func(c workspace.Check) error {
+		gated = c.Paths
+		return nil
+	})}
 
 	write(t, dir, "hosted.go", "package main\n")
 	if err := h.Post(hc, agent.PhaseAgent); err != nil {
@@ -484,22 +483,19 @@ func TestDoCallbackReceivesAResolvedPlan(t *testing.T) {
 
 	// Dir is the resolved working-tree root, not whatever the caller passed:
 	// Plan.Paths are repo-relative, so the host needs the base they hang off.
-	if got.Dir != canonicalDir(dir) || got.Phase != agent.PhaseAgent || got.Subject != "feat: hosted" {
-		t.Errorf("plan = %+v, want dir %s with phase/subject resolved", got, canonicalDir(dir))
+	want := Plan{Dir: canonicalDir(dir), Phase: agent.PhaseAgent, Mode: api.CommitModeCommit,
+		Subject: "feat: hosted", Stage: api.CommitStageWorktree, Paths: []string{"hosted.go"}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("plan = %+v, want %+v", got, want)
 	}
-	if got.Gates != api.CommitGatesFull || got.Stage != api.CommitStageWorktree {
-		t.Errorf("plan policy = %+v, want gates full and worktree staging", got)
+	if fmt.Sprint(gated) != fmt.Sprint([]string{"hosted.go"}) {
+		t.Errorf("host gate saw %v, want [hosted.go]", gated)
 	}
-	if fmt.Sprint(got.Paths) != fmt.Sprint([]string{"hosted.go"}) {
-		t.Errorf("plan paths = %v, want [hosted.go]", got.Paths)
+	if body := mustGit(t, dir, "show", "HEAD:hosted.go"); body+"\n" != formatted {
+		t.Errorf("committed %q, want the host hook's rewrite %q", body, formatted)
 	}
-	// The host owns the commit: exactly its one commit lands, under its message.
 	if log := subjects(t, dir); fmt.Sprint(log) != fmt.Sprint([]string{hostMessage, "chore: seed"}) {
-		t.Errorf("subjects = %v, want only the host's commit on top of the seed", log)
-	}
-	want := []api.CommitRecord{{SHA: mustGit(t, dir, "rev-parse", "HEAD"), Message: hostMessage}}
-	if fmt.Sprint(hc.Workspace().Commits) != fmt.Sprint(want) {
-		t.Errorf("workspace commits = %+v, want the host's commit %+v", hc.Workspace().Commits, want)
+		t.Errorf("subjects = %v, want the host's message on top of the seed", log)
 	}
 }
 

@@ -59,6 +59,31 @@ var _ = Describe("Jev output", func() {
 		Expect(response.Runtime).To(Equal(api.Runtime{Provider: "jev", Mode: api.ModeAPI}))
 	})
 
+	It("ignores caller tools and tool-governing fields, sending a native request without them", func() {
+		var sent map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			Expect(json.NewDecoder(r.Body).Decode(&sent)).To(Succeed())
+			_, err := io.WriteString(w, `{"model":"jev-latest","answers":{"value":{"type":"choice","choice":"approved","confidence":0.9,"probabilities":{"approved":0.9,"rejected":0.1}}},"usage":{"input_tokens":20,"output_tokens":1}}`)
+			Expect(err).NotTo(HaveOccurred())
+		}))
+		DeferCleanup(server.Close)
+		tool := api.ToolDefinition{Name: "emit-choices", Handler: func(context.Context, map[string]any) (any, error) { return nil, nil }}
+		provider, err := newConvertedProvider(ai.Config{
+			Model: api.Model{Name: "jev-latest"}, APIKey: "test-key", APIURL: server.URL,
+			Tools: []api.ToolDefinition{tool}, CallerTools: &api.CallerToolEndpoint{},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = provider.Execute(context.Background(), ai.Request{
+			Prompt:          api.Prompt{User: "Decision context", SchemaJSON: json.RawMessage(`{"type":"string","enum":["approved","rejected"]}`)},
+			ToolPreferences: api.ToolPreferences{tool.Name: api.ToolPolicyAllow},
+			ToolPolicy:      api.PermissionPolicy{{ToolMatch: api.ToolMatch{Name: api.MatchPatterns{tool.Name}}, Policy: api.ToolPolicyAllow}},
+			Permissions:     api.Permissions{Tools: api.Tools{"Bash": api.ToolPolicyDeny}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(sent).To(HaveLen(3))
+		Expect(sent).To(SatisfyAll(HaveKey("model"), HaveKey("state"), HaveKey("questions")))
+	})
+
 	It("returns a scalar enum as a JSON string", func() {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var body map[string]any

@@ -56,12 +56,12 @@ import (
 // Explicit records changed flags whose zero values must override saved values.
 type ModelFlags struct {
 	Explicit    registry.FieldPresence `flag:"-" json:"-" yaml:"-"`
-	Model       string                 `flag:"model" help:"Model name(s), e.g. claude-sonnet-5-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')"`
-	Fallback    []string               `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)"`
-	Mode        string                 `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). The provider comes from the model name; a mode prefix on --model wins, and contradicting it fails loud"`
-	Effort      string                 `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)"`
-	Temperature string                 `flag:"temperature" help:"Sampling temperature (0.0-2.0)"`
-	NoCache     bool                   `flag:"no-cache" help:"Disable response caching"`
+	Model       string                 `flag:"model" help:"Model name(s), e.g. claude-sonnet-5-5, a compact selector like agent:opus:high, or a comma-separated primary,fallback list (defaults to the value saved by 'captain configure')" category:"Model selection"`
+	Fallback    []string               `flag:"fallback" help:"Model to try if the primary is unavailable (repeatable; comma-separated allowed)" category:"Model selection"`
+	Mode        string                 `flag:"mode" help:"Runtime mechanism: api|cli|agent|cmux (sdk aliases agent). The provider comes from the model name; a mode prefix on --model wins, and contradicting it fails loud" category:"Model selection"`
+	Effort      string                 `flag:"effort" help:"Reasoning effort: low|medium|high|xhigh|max|ultra (model-dependent)" category:"Model selection"`
+	Temperature string                 `flag:"temperature" help:"Sampling temperature (0.0-2.0)" category:"Model selection"`
+	NoCache     bool                   `flag:"no-cache" help:"Disable response caching" category:"Model selection"`
 }
 
 // ToModel projects authored flags without normalizing compact selectors.

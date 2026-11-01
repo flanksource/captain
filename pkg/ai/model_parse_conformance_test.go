@@ -83,7 +83,7 @@ var agreedCases = []parseCase{
 	// the bare path went through an alias-blind claim — an accident of which
 	// parser ran, not a decision.
 	{in: "sol", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAgent, "")},
-	{in: "terra", want: model("gpt-5.6-terra", api.OpenAI, api.ModeAgent, "")},
+	{in: "terra", want: model("gpt-6.1-terra", api.OpenAI, api.ModeAgent, "")},
 	{in: "luna", want: model("gpt-6-luna", api.OpenAI, api.ModeAgent, "")},
 	{in: "astra", want: model("gpt-6-astra", api.OpenAI, api.ModeAgent, "")},
 	{in: "api:astra:high", want: model("gpt-6-astra", api.OpenAI, api.ModeAPI, api.EffortHigh)},

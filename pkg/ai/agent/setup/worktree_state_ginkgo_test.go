@@ -146,6 +146,30 @@ var _ = Describe("the setup plugin's worktree state", func() {
 		Expect(gitIn(repo, "status", "--porcelain")).NotTo(BeEmpty(), "the source checkout is never touched")
 	})
 
+	It("never snapshots content the source ignores but the worktree's base branch does not", func() {
+		gitIn(repo, "branch", "old")
+		writeFile(repo, ".gitignore", "cache/\n.npmrc\n")
+		gitIn(repo, "commit", "-q", "-am", "chore: ignore .npmrc")
+		writeFile(repo, ".npmrc", "//registry.example.com/:_authToken=not-a-real-token\n")
+		base := gitIn(repo, "rev-parse", "old")
+		plugin, hc := worktreeHook(repo)
+		hc.Request.Setup.Checkout.Worktree.Base = "old"
+		hc.Request.Setup.Checkout.Worktree.Uncommitted = shell.CloneSkip
+
+		wt := preRun(plugin, hc, repo)
+
+		Expect(filepath.Join(wt.Path, ".npmrc")).To(BeARegularFile(), "ignored content is still cloned in")
+		Expect(wt.Setup).To(Equal(base), "the cloned .npmrc is not work to snapshot")
+		Expect(gitIn(wt.Path, "log", "--name-only", "--format=", base+"..HEAD")).To(BeEmpty())
+
+		Expect(plugin.Post(hc, agent.PhaseRun)).To(Succeed())
+
+		Expect(wt.Kept).To(BeFalse(), "a cloned .npmrc does not make the worktree dirty")
+		Expect(wt.Dirty).To(BeEmpty())
+		Expect(wt.Removed).To(BeTrue())
+		Expect(wt.Path).NotTo(BeADirectory())
+	})
+
 	It("no setup commit when the copied tree is clean", func() {
 		base := gitIn(repo, "rev-parse", "HEAD")
 		writeFile(repo, "cache/build.bin", "ignored output\n")

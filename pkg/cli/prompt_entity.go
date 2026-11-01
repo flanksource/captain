@@ -12,7 +12,9 @@ import (
 	"sync"
 
 	"github.com/flanksource/captain/pkg/ai"
+	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/clicky"
 	clickyapi "github.com/flanksource/clicky/api"
 	clickyrpc "github.com/flanksource/clicky/rpc"
@@ -48,18 +50,20 @@ type PromptSummary struct {
 	Mode        string   `json:"mode,omitempty"`
 	Presets     []string `json:"presets,omitempty"`
 	// RuntimeProfile is the profile (id or name) the frontmatter pins, if any.
-	RuntimeProfile string           `json:"runtimeProfile,omitempty"`
-	Runtimes       []api.Model      `json:"runtimes,omitempty"`
-	Variables      []PromptVariable `json:"variables,omitempty"`
-	ParseError     string           `json:"parseError,omitempty"`
-	UpdatedAt      string           `json:"updatedAt,omitempty"`
+	RuntimeProfile string                 `json:"runtimeProfile,omitempty"`
+	Runtimes       []api.Model            `json:"runtimes,omitempty"`
+	Variables      []PromptVariable       `json:"variables,omitempty"`
+	ParseError     string                 `json:"parseError,omitempty"`
+	Diagnostics    []promptlib.Diagnostic `json:"diagnostics,omitempty"`
+	UpdatedAt      string                 `json:"updatedAt,omitempty"`
 	// Version identifies the exact content this summary describes; writes echo
 	// it back as baseVersion so a concurrent edit is reported, not clobbered.
 	Version string `json:"version,omitempty"`
 }
 
-func (p PromptSummary) GetID() string   { return p.ID }
-func (p PromptSummary) GetName() string { return p.Name }
+func (p PromptSummary) GetID() string          { return p.ID }
+func (p PromptSummary) GetName() string        { return p.Name }
+func (p PromptSummary) GetDescription() string { return p.Description }
 
 func (p PromptSummary) Columns() []clickyapi.ColumnDef {
 	return []clickyapi.ColumnDef{
@@ -68,6 +72,7 @@ func (p PromptSummary) Columns() []clickyapi.ColumnDef {
 		clickyapi.Column("relPath").Label("Path").MaxWidth(54).Build(),
 		clickyapi.Column("model").Label("Model").Build(),
 		clickyapi.Column("description").Label("Description").MaxWidth(80).Build(),
+		clickyapi.Column("validation").Label("Validation").MaxWidth(80).Build(),
 	}
 }
 
@@ -78,6 +83,7 @@ func (p PromptSummary) Row() map[string]any {
 		"relPath":     p.RelPath,
 		"model":       p.Model,
 		"description": p.Description,
+		"validation":  p.RowDetail(),
 	}
 }
 
@@ -104,6 +110,7 @@ type PromptWriteRequest struct {
 }
 
 type PromptRenderRequest struct {
+	Directory string         `json:"-"`
 	Variables map[string]any `json:"variables,omitempty"`
 	// Presets selects ordered reusable task specs. A present empty list clears
 	// a frontmatter selection.
@@ -114,7 +121,8 @@ type PromptRenderRequest struct {
 	Spec           *api.Spec   `json:"spec,omitempty"`
 	Runtimes       []api.Model `json:"runtimes,omitempty"`
 	Chat           bool        `json:"chat,omitempty"`
-	// Content, when set, is an unsaved draft rendered in place of the saved file.
+	// Content, when set, is an unsaved draft rendered in place of the saved file;
+	// without a prompt id it is a self-contained prompt, frontmatter included.
 	Content string `json:"content,omitempty"`
 	// Literal marks Content as caller data rather than an authored template, so
 	// the frontmatter split is skipped. CLI-only: an HTTP caller always names a
@@ -143,6 +151,9 @@ type PromptRenderResult struct {
 	// the final request after saved defaults, so the trace explains Input.
 	Resolution      api.ResolvedSpec `json:"resolution"`
 	ValidationError string           `json:"validationError,omitempty"`
+	// Skip is set when an input hook asked not to run the prompt; a run reports
+	// it as status skipped without calling a model.
+	Skip *promptrun.Skip `json:"skip,omitempty"`
 }
 
 // PromptActionFlags is the full flag surface for `captain prompt run|render` —
@@ -154,17 +165,19 @@ type PromptActionFlags struct {
 	AIRuntimeOptions
 
 	Prompt         string   `flag:"prompt" clicky:"cli-file-read" help:"Prompt text, @file or @url to load it, or - for stdin; alternative to the positional" short:"p"`
-	Preset         []string `flag:"preset" help:"Runtime preset (id or name) layered beneath the prompt frontmatter (repeatable)"`
-	NoPresets      bool     `flag:"no-presets" help:"Clear presets selected by prompt frontmatter"`
-	RuntimeProfile string   `flag:"runtime-profile" help:"Deprecated and ignored; use --preset"`
+	Preset         []string `flag:"preset" help:"Runtime preset (id or name) layered beneath the prompt frontmatter (repeatable)" category:"Model runtime"`
+	NoPresets      bool     `flag:"no-presets" help:"Clear presets selected by prompt frontmatter" category:"Model runtime"`
+	RuntimeProfile string   `flag:"runtime-profile" help:"Deprecated and ignored; use --preset" category:"Model runtime"`
 	System         string   `flag:"system" clicky:"cli-file-read" help:"System prompt (or @file/@url)" short:"s"`
 	AppendSystem   string   `flag:"append-system" clicky:"cli-file-read" help:"Append text to the default system prompt (or @file/@url)"`
-	Var            []string `flag:"var" help:"Template variable key=value (repeatable); a value of @file loads it, - reads stdin" short:"V"`
+	Var            []string `flag:"var" split:"false" help:"Template variable (repeatable): key=value (@file loads it, - reads stdin), key:=json, key[]=@file or key[]=- for a list of lines" short:"V"`
 	Attach         []string `flag:"attach" help:"Attach a local path or URL (repeatable; RFC 4180 comma-separated values allowed)" short:"A"`
 	Vars           string   `flag:"vars" clicky:"cli-file-read" help:"JSON object of template variables (or @file.json)"`
-	MultiModels    []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M"`
-	Timeout        string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)"`
-	NoStream       bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)"`
+	MultiModels    []string `flag:"multi-models" help:"Run prompt once per runtime selector in parallel, e.g. cli:sonnet-5,cmux:opus (repeatable; comma-separated allowed)" short:"M" category:"Model selection"`
+	Timeout        string   `flag:"timeout" help:"Request timeout (default 120s; a relocating sandbox waits for the remote agent instead)" category:"Model runtime"`
+	NoStream       bool     `flag:"no-stream" help:"Disable streaming; print only the final text (CLI)" category:"Model runtime"`
+	Batch          int      `flag:"batch" help:"Split the input files (positional files after the prompt, plus --attach) into runs of N files each (spec batch.size)" category:"Model runtime"`
+	BatchConc      int      `flag:"batch-concurrency" help:"How many batched runs execute at once (spec batch.concurrency, default 1)" category:"Model runtime"`
 }
 
 func (PromptActionFlags) ClickyActionFlags() {}
@@ -186,6 +199,8 @@ type promptRecord struct {
 	Path      string
 	Rel       string
 	UpdatedAt string
+	ReadPath  string
+	LinkError error
 }
 
 type promptRef struct {
@@ -217,12 +232,12 @@ func RegisterPromptEntity() {
 			CreateWithContext(createPrompt).
 			UpdateWithContext(updatePrompt).
 			DeleteWithContext(deletePrompt).
-			WithAction(clicky.ActionWithFlagsAndContext("render", PromptActionFlags{}, renderPromptAction).
+			WithAction(clicky.WithActionFilters(clicky.ActionWithFlagsAndContext("render", PromptActionFlags{}, renderPromptAction).
 				WithShort("Render a prompt (id, name, .prompt file, --prompt/-p, or stdin) without calling a model").
-				WithOptionalID()).
-			WithAction(clicky.ActionWithFlagsAndContext("run", PromptActionFlags{}, runPromptAction).
+				WithOptionalID(), aiFilters[PromptActionFlags]())).
+			WithAction(clicky.WithActionFlagSchema(clicky.WithActionFilters(clicky.ActionWithFlagsAndContext("run", PromptActionFlags{}, runPromptAction).
 				WithShort("Run a prompt (id, name, .prompt file, --prompt/-p, or stdin)").
-				WithOptionalID()).
+				WithOptionalID(), aiFilters[PromptActionFlags]()), "vars", promptVarsSchema)).
 			WithAction(clicky.ActionWithFlagsAndContext("observe", PromptObserveFlags{}, observePromptAction).
 				WithShort("Run exactly one runtime and emit a captain.observation/v1 JSON document").
 				WithOptionalID()).
@@ -399,7 +414,7 @@ func deletePrompt(ctx context.Context, id string) error {
 		return err
 	}
 	if !record.Source.Writable {
-		return fmt.Errorf("embedded prompts are read-only")
+		return fmt.Errorf("prompt source %q is read-only; use create to save a copy", record.Source.Label)
 	}
 	file, err := openLocalPromptFile(record, false)
 	if err != nil {
@@ -417,6 +432,17 @@ func deletePrompt(ctx context.Context, id string) error {
 // and frontmatter layers); the CLI passes explicit flags plus
 // filepath/-p/stdin sources.
 func renderPromptAction(ctx context.Context, id string, flags map[string]string) (PromptRenderResult, error) {
+	rendered, err := renderPromptRequest(ctx, id, flags)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	if err := previewSchemaHooks(ctx, &rendered); err != nil {
+		return PromptRenderResult{}, err
+	}
+	return rendered, nil
+}
+
+func renderPromptRequest(ctx context.Context, id string, flags map[string]string) (PromptRenderResult, error) {
 	if _, isHTTP := clickyrpc.RequestFromContext(ctx); isHTTP {
 		req, err := readRenderRequest(ctx, flags)
 		if err != nil {
@@ -426,6 +452,10 @@ func renderPromptAction(ctx context.Context, id string, flags map[string]string)
 	}
 	opts, err := actionFlagsToOptions(flags)
 	if err != nil {
+		return PromptRenderResult{}, err
+	}
+	opts.InputFiles = inputFilesFromContext(ctx)
+	if err := validateInputFiles(opts.InputFiles); err != nil {
 		return PromptRenderResult{}, err
 	}
 	stdin, err := readStdinIfCLI(ctx)

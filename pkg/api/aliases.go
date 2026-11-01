@@ -85,6 +85,12 @@ func SupportsCallerTools(p *ModelProvider, mode RuntimeMode) bool {
 	return registry.SupportsCallerTools(p, mode)
 }
 
+// IgnoresTools reports whether a runtime drops caller tools and tool-governing
+// fields rather than refusing a run that sets them.
+func IgnoresTools(p *ModelProvider, mode RuntimeMode) bool {
+	return registry.IgnoresTools(p, mode)
+}
+
 // ProviderFor resolves the family that owns a model name, failing loud when the
 // name matches nothing. It answers about the family only — a mode is never
 // inferred from a name.

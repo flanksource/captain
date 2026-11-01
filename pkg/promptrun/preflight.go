@@ -13,6 +13,9 @@ import (
 // Capability warnings are separate from invalid-state errors. Input estimates
 // use four bytes per token; they are a guardrail, not an exact tokenizer count.
 func Preflight(in Input) ([]string, error) {
+	if err := bindInlineTools(&in); err != nil {
+		return nil, err
+	}
 	admission, err := preflight(in)
 	return admission.warnings, err
 }

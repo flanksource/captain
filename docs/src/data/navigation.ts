@@ -32,6 +32,12 @@ export const docSections: DocSection[] = [
         status: "ready",
       },
       {
+        label: "Prompt CLI",
+        href: "/prompts/cli/",
+        description: "Commands, examples, help, color, and structured output.",
+        status: "ready",
+      },
+      {
         label: "Prompt Format",
         href: "/prompts/format/",
         description: ".prompt frontmatter, roles, and variables.",
@@ -110,31 +116,37 @@ export const docSections: DocSection[] = [
     ],
   },
   {
-    label: "Next Sections",
+    label: "Reference",
     items: [
       {
         label: "Serve",
         href: "/serve/",
         description: "Embedded API and web UI.",
-        status: "stub",
+        status: "ready",
       },
       {
         label: "Sessions",
         href: "/sessions/",
         description: "Claude and Codex history surfaces.",
-        status: "stub",
+        status: "ready",
       },
       {
         label: "Configuration",
         href: "/configuration/",
         description: "Saved defaults and runtime toggles.",
-        status: "stub",
+        status: "ready",
       },
       {
         label: "Fixtures",
         href: "/fixtures/",
         description: "Benchmark fixtures and evidence reports.",
-        status: "stub",
+        status: "ready",
+      },
+      {
+        label: "Sandboxes",
+        href: "/sandboxes/",
+        description: "Isolation, container images, git-agent workers and credentials.",
+        status: "ready",
       },
     ],
   },

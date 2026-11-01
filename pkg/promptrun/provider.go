@@ -37,19 +37,42 @@ type bufferedProvider struct {
 }
 
 func (p bufferedProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
+	events := make(chan ai.Event, 4)
+	ctx = ai.WithEventObserver(ctx, func(event ai.Event) {
+		select {
+		case events <- event:
+		case <-ctx.Done():
+		}
+	})
+	go func() {
+		defer close(events)
+		p.executeBuffered(ctx, req, events)
+	}()
+	return events, nil
+}
+
+func (p bufferedProvider) executeBuffered(ctx context.Context, req ai.Request, events chan<- ai.Event) {
 	resp, err := p.Execute(ctx, req)
 	if err != nil {
-		return nil, err
+		failure := ai.Event{Kind: ai.EventError, Error: err.Error()}
+		if resp != nil {
+			failure.Model, failure.Usage, failure.CostUSD = resp.Model, &resp.Usage, resp.CostUSD
+			if resp.Text != "" {
+				events <- ai.Event{Kind: ai.EventText, Text: resp.Text, Model: resp.Model, Rejected: true}
+			}
+		}
+		events <- failure
+		return
 	}
 	if resp == nil {
-		return nil, errors.New("buffered provider returned a nil response")
+		events <- ai.Event{Kind: ai.EventError, Error: "buffered provider returned a nil response"}
+		return
 	}
 	structured, err := bufferedStructuredData(resp.StructuredData)
 	if err != nil {
-		return nil, err
+		events <- ai.Event{Kind: ai.EventError, Error: err.Error()}
+		return
 	}
-
-	events := make(chan ai.Event, 3)
 	if resp.Workspace != nil && resp.Workspace.SessionID != "" {
 		events <- ai.Event{Kind: ai.EventSystem, SessionID: resp.Workspace.SessionID, Model: resp.Model}
 	}
@@ -61,8 +84,6 @@ func (p bufferedProvider) ExecuteStream(ctx context.Context, req ai.Request) (<-
 		Kind: ai.EventResult, Success: true, Model: resp.Model, Usage: &usage,
 		CostUSD: resp.CostUSD, StructuredData: structured, ToolApproval: resp.ToolApproval,
 	}
-	close(events)
-	return events, nil
 }
 
 func bufferedStructuredData(value any) (json.RawMessage, error) {

@@ -121,7 +121,7 @@ func (r *Recorder) transcribeAPIRun() {
 // Start marks the run running with the spec that actually runs — the one setup
 // already transformed — and the runtime it resolved to, then binds a provider
 // session known up front.
-func (r *Recorder) Start(spec *api.Spec) error {
+func (r *Recorder) Start(spec *api.Spec, workspace *api.Workspace) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	rendered, err := SpecDocument(*spec)
@@ -131,7 +131,10 @@ func (r *Recorder) Start(spec *api.Spec) error {
 	run, err := r.updateRun(func(run *database.PromptRun) (database.UpdatePromptRunInput, bool) {
 		state, phase := database.PromptRunStateRunning, r.activePhase()
 		runtime := r.resolvedRuntime(run.Runtime, spec)
-		update := database.UpdatePromptRunInput{State: &state, Phase: &phase, Runtime: &runtime, RenderedSpec: &rendered}
+		update := database.UpdatePromptRunInput{
+			State: &state, Phase: &phase, Runtime: &runtime, RenderedSpec: &rendered,
+			Workspace: api.NewWorkspaceRecord(workspace),
+		}
 		if len(r.offered) > 0 {
 			update.Metadata = &map[string]any{"callerTools": r.offered}
 		}
@@ -201,11 +204,18 @@ func (r *Recorder) bindTranscript(providerSessionID string) error {
 	if err != nil {
 		return err
 	}
-	admission, err := r.bindProviderSession(run.SessionID, providerSessionID)
+	admission, err := r.db.GetSession(r.ctx, run.SessionID)
+	if err != nil {
+		return fmt.Errorf("promptrun: load admission session: %w", err)
+	}
+	existing, err := r.existingTranscript(run, admission, providerSessionID)
 	if err != nil {
 		return err
 	}
-	transcript, err := r.transcriptSession(run, admission)
+	if admission, err = r.bindProviderSession(admission, providerSessionID); err != nil {
+		return err
+	}
+	transcript, err := r.transcriptSession(run, admission, existing)
 	if err != nil {
 		return err
 	}
@@ -275,15 +285,11 @@ func (r *Recorder) closeAPITranscript(outcome Outcome) error {
 	return err
 }
 
-func (r *Recorder) bindProviderSession(sessionID uuid.UUID, providerSessionID string) (*database.Session, error) {
-	admission, err := r.db.GetSession(r.ctx, sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("promptrun: load admission session: %w", err)
-	}
+func (r *Recorder) bindProviderSession(admission *database.Session, providerSessionID string) (*database.Session, error) {
 	if admission.ProviderSessionID == providerSessionID {
 		return admission, nil
 	}
-	admission, err = r.db.UpdateSessionState(r.ctx, database.UpdateSessionStateInput{
+	admission, err := r.db.UpdateSessionState(r.ctx, database.UpdateSessionStateInput{
 		ID: admission.ID, ExpectedVersion: admission.StateVersion, ProviderSessionID: &providerSessionID,
 	})
 	if err != nil {
@@ -292,10 +298,33 @@ func (r *Recorder) bindProviderSession(sessionID uuid.UUID, providerSessionID st
 	return admission, nil
 }
 
+// existingTranscript is the transcript child this run continues. An admission
+// session is one provider conversation, so a child filed for another agent
+// family or provider session refuses the run — checked before the provider id
+// is bound, so a refused run leaves the admission exactly as it was.
+func (r *Recorder) existingTranscript(run *database.PromptRun, admission *database.Session, providerSessionID string) (*database.Session, error) {
+	source := TranscriptSource(r.runtime)
+	if run.ExecutionSessionID != nil || source == "" || admission.Source == source {
+		return nil, nil
+	}
+	existing, err := r.db.GetTranscriptSession(r.ctx, admission.ID)
+	switch {
+	case errors.Is(err, database.ErrSessionNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("promptrun: load transcript session: %w", err)
+	case existing.Source == source && existing.ProviderSessionID == providerSessionID:
+		return existing, nil
+	}
+	return nil, fmt.Errorf("promptrun: %w: session %s is a %s conversation (%s); a %s run (%s) cannot continue it — start a new session",
+		database.ErrSessionConflict, admission.ID, existing.Source, existing.ProviderSessionID, source, providerSessionID)
+}
+
 // transcriptSession is the session the provider's on-disk log is ingested into.
 // A run binds its execution session once; a resumed run re-arms the one it has.
-// A runtime that writes no transcript (the API mode) has none.
-func (r *Recorder) transcriptSession(run *database.PromptRun, admission *database.Session) (*database.Session, error) {
+// A runtime that writes no transcript (the API mode) has none. existing is the
+// transcript child an earlier run of this conversation already filed.
+func (r *Recorder) transcriptSession(run *database.PromptRun, admission, existing *database.Session) (*database.Session, error) {
 	if run.ExecutionSessionID != nil {
 		return r.db.GetSession(r.ctx, *run.ExecutionSessionID)
 	}
@@ -304,7 +333,10 @@ func (r *Recorder) transcriptSession(run *database.PromptRun, admission *databas
 		return nil, nil
 	}
 	transcript := admission
-	if admission.Source != source {
+	switch {
+	case existing != nil:
+		transcript = existing
+	case admission.Source != source:
 		var err error
 		if transcript, err = r.createTranscriptSession(admission, source); err != nil {
 			return nil, err
@@ -464,7 +496,9 @@ type recordHook struct{ recorder *Recorder }
 
 func (h *recordHook) Name() string { return "promptrun-recorder" }
 
-func (h *recordHook) PreRun(hc *agent.HookContext) error { return h.recorder.Start(hc.Request) }
+func (h *recordHook) PreRun(hc *agent.HookContext) error {
+	return h.recorder.Start(hc.Request, hc.Workspace())
+}
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {

@@ -22,6 +22,10 @@ type OpenAICLIOptions struct {
 	// Codex TOML key-value overrides emitted on the command line.
 	Config []string `json:"config,omitempty,omitzero"`
 
+	// Experimental access program requested for this turn with the OpenAI provider.
+	// Fork requires a prompt and review does not support this option.
+	CyberAccessProgram *OpenAICLIOptionsCyberAccessProgram `json:"cyberAccessProgram,omitempty,omitzero"`
+
 	// Whether Codex executes without approval prompts or sandbox isolation.
 	DangerouslyBypassApprovalsAndSandbox *bool `json:"dangerouslyBypassApprovalsAndSandbox,omitempty,omitzero"`
 
@@ -106,6 +110,12 @@ type OpenAICLIOptionsColor string
 const OpenAICLIOptionsColorAlways OpenAICLIOptionsColor = "always"
 const OpenAICLIOptionsColorAuto OpenAICLIOptionsColor = "auto"
 const OpenAICLIOptionsColorNever OpenAICLIOptionsColor = "never"
+
+type OpenAICLIOptionsCyberAccessProgram string
+
+const OpenAICLIOptionsCyberAccessProgramDaybreakBlue OpenAICLIOptionsCyberAccessProgram = "daybreak_blue"
+const OpenAICLIOptionsCyberAccessProgramDaybreakRed OpenAICLIOptionsCyberAccessProgram = "daybreak_red"
+const OpenAICLIOptionsCyberAccessProgramStandard OpenAICLIOptionsCyberAccessProgram = "standard"
 
 type OpenAICLIOptionsSandbox string
 

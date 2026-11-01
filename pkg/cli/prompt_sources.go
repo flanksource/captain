@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
@@ -70,7 +71,7 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 			}
 		}
 	}
-	cwd, err := os.Getwd()
+	cwd, err := promptDirectory(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +99,22 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 			Implicit: true,
 		})
 	}
+	// The user prompt directory comes after the fallback so it never becomes
+	// the default save target in place of the repository's .captain/prompts.
+	configHome, err := captainconfig.Home()
+	if err != nil {
+		return nil, err
+	}
+	if dir := filepath.Join(configHome, "prompts"); !seen[dir] {
+		sources = append(sources, promptSource{
+			Kind:     "local",
+			ID:       hashPromptDir(dir),
+			Label:    dir,
+			Root:     dir,
+			Writable: true,
+			Implicit: true,
+		})
+	}
 	return sources, nil
 }
 
@@ -107,6 +124,20 @@ func promptSourcesFromContext(ctx context.Context) PromptSources {
 	}
 	sources, _ := ctx.Value(promptSourcesContextKey{}).(PromptSources)
 	return sources
+}
+
+func promptLookupSources(sources []promptSource) []promptSource {
+	ordered := slices.Clone(sources)
+	slices.SortStableFunc(ordered, func(a, b promptSource) int {
+		if (a.FS == nil) == (b.FS == nil) {
+			return 0
+		}
+		if a.FS == nil {
+			return -1
+		}
+		return 1
+	})
+	return ordered
 }
 
 // hostPromptSource turns a host's fs.FS into a read-only source whose id is its

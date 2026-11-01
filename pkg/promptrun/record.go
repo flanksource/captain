@@ -33,6 +33,9 @@ type Recording struct {
 	Origin       string
 	SpecProfile  string
 	BatchID      *uuid.UUID
+	// ParentRunID files the run as a child of another run in the same session
+	// tree, e.g. a prompt a hook of that run started.
+	ParentRunID *uuid.UUID
 	// InputPlanID / InputPlanRevisionID name the plan the run executes.
 	InputPlanID         *uuid.UUID
 	InputPlanRevisionID *uuid.UUID
@@ -59,6 +62,20 @@ type Recording struct {
 type Placement struct {
 	SessionID uuid.UUID
 	Sessions  []database.CreateSessionInput
+}
+
+// AdmittedSessionID is the id of the session the run is admitted on, known
+// before admission: the existing session, or the admission session's id when
+// the tree names one. uuid.Nil means the admission session's id is assigned
+// only when it is ensured (a tree keyed by provider session id).
+func (p Placement) AdmittedSessionID() uuid.UUID {
+	if p.SessionID != uuid.Nil {
+		return p.SessionID
+	}
+	if len(p.Sessions) == 0 {
+		return uuid.Nil
+	}
+	return p.Sessions[len(p.Sessions)-1].ID
 }
 
 func (p Placement) validate() error {
@@ -114,7 +131,7 @@ func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 			return fmt.Errorf("promptrun: place run: %w", err)
 		}
 		run, err := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
-			ID: rec.PromptRunID, SessionID: session.ID, BatchID: rec.BatchID,
+			ID: rec.PromptRunID, SessionID: session.ID, BatchID: rec.BatchID, ParentRunID: rec.ParentRunID,
 			InputPlanID: rec.InputPlanID, InputPlanRevisionID: rec.InputPlanRevisionID,
 			Origin: rec.Origin, SpecProfile: rec.SpecProfile, AdmissionKey: rec.AdmissionKey,
 			RenderedSpec: rendered, Metadata: metadata, Runtime: rec.Runtime,

@@ -10,6 +10,7 @@ import (
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 )
 
 // runtimeCatalogFixture is a file-backed preset/profile catalog pinned on the
@@ -261,6 +262,21 @@ var _ = Describe("prompt layers", func() {
 		Expect(rendered.Model).To(Equal("claude-sonnet-4-6"))
 		Expect(rendered.Input.Prompt.Source).To(Equal("<ephemeral>"))
 		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "scratch.prompt", "render request"}))
+	})
+
+	It("renders a self-contained draft without a saved prompt", func() {
+		f, _, _ := newRuntimeCatalogFixture()
+		draft := "---\nname: Feedback\nmodel: claude-sonnet-4-6\nbudget:\n  maxTurns: 4\n---\n{{role \"user\"}}\nReview {{page}}.\n"
+
+		rendered, err := renderPrompt(f.ctx, "", PromptRenderRequest{Content: draft, Variables: map[string]any{"page": "welcome"}})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered.ValidationError).To(BeEmpty())
+		Expect(rendered).To(MatchFields(IgnoreExtras, Fields{
+			"ID": BeEmpty(), "Name": Equal("Feedback"), "Model": Equal("claude-sonnet-4-6"), "User": Equal("Review welcome."),
+		}))
+		Expect(rendered.Input.Budget.MaxTurns).To(Equal(4))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"draft.prompt"}))
 	})
 
 	It("layers --preset beneath the CLI flags", func() {

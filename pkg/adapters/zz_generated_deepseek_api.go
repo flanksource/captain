@@ -7,38 +7,98 @@ import "encoding/json"
 // Native DeepSeek Chat Completions request options used by Captain's
 // OpenAI-compatible API runtime.
 type DeepSeekAPIOptions struct {
+	// Audio configuration. See the linked native reference for semantics and
+	// availability.
+	Audio *DeepseekAPIChatCompletionAudioParam `json:"audio,omitempty,omitzero"`
+
 	// Deprecated penalty based on how frequently a token has appeared.
 	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty,omitzero"`
 
+	// Function call configuration. See the linked native reference for semantics and
+	// availability.
+	FunctionCall *DeepseekAPIChatCompletionNewParamsFunctionCallUnion `json:"function_call,omitempty,omitzero"`
+
+	// Functions configuration. See the linked native reference for semantics and
+	// availability.
+	Functions []DeepseekAPIChatCompletionNewParamsFunction `json:"functions,omitempty,omitzero"`
+
+	// Logit bias configuration. See the linked native reference for semantics and
+	// availability.
+	LogitBias DeepSeekAPIOptionsLogitBias `json:"logit_bias,omitempty,omitzero"`
+
 	// Whether token log probabilities are included in the response.
 	Logprobs *bool `json:"logprobs,omitempty,omitzero"`
+
+	// Max completion tokens configuration. See the linked native reference for
+	// semantics and availability.
+	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty,omitzero"`
 
 	// Maximum number of tokens generated in the completion.
 	MaxTokens *int `json:"max_tokens,omitempty,omitzero"`
 
 	// Conversation messages and tool results sent to DeepSeek.
-	Messages json.RawMessage `json:"messages"`
+	Messages []DeepseekAPIChatCompletionMessageParamUnion `json:"messages"`
+
+	// Metadata configuration. See the linked native reference for semantics and
+	// availability.
+	Metadata DeepSeekAPIOptionsMetadata `json:"metadata,omitempty,omitzero"`
+
+	// Modalities configuration. See the linked native reference for semantics and
+	// availability.
+	Modalities []string `json:"modalities,omitempty,omitzero"`
 
 	// DeepSeek chat or reasoner model identifier.
 	Model DeepSeekAPIOptionsModel `json:"model"`
 
+	// N configuration. See the linked native reference for semantics and
+	// availability.
+	N *int `json:"n,omitempty,omitzero"`
+
+	// Parallel tool calls configuration. See the linked native reference for
+	// semantics and availability.
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty,omitzero"`
+
+	// Prediction configuration. See the linked native reference for semantics and
+	// availability.
+	Prediction *DeepseekAPIChatCompletionPredictionContentParam `json:"prediction,omitempty,omitzero"`
+
 	// Deprecated penalty based on whether a token has appeared.
 	PresencePenalty *float64 `json:"presence_penalty,omitempty,omitzero"`
+
+	// Prompt cache key configuration. See the linked native reference for semantics
+	// and availability.
+	PromptCacheKey *string `json:"prompt_cache_key,omitempty,omitzero"`
 
 	// Relative reasoning effort requested from supported DeepSeek models.
 	ReasoningEffort *DeepSeekAPIOptionsReasoningEffort `json:"reasoning_effort,omitempty,omitzero"`
 
 	// Plain-text or JSON-object response format.
-	ResponseFormat *json.RawMessage `json:"response_format,omitempty,omitzero"`
+	ResponseFormat *DeepseekAPIChatCompletionNewParamsResponseFormatUnion `json:"response_format,omitempty,omitzero"`
+
+	// Safety identifier configuration. See the linked native reference for semantics
+	// and availability.
+	SafetyIdentifier *string `json:"safety_identifier,omitempty,omitzero"`
+
+	// Seed configuration. See the linked native reference for semantics and
+	// availability.
+	Seed *int `json:"seed,omitempty,omitzero"`
+
+	// Service tier configuration. See the linked native reference for semantics and
+	// availability.
+	ServiceTier *DeepSeekAPIOptionsServiceTier `json:"service_tier,omitempty,omitzero"`
 
 	// One or more text sequences that stop token generation.
-	Stop *json.RawMessage `json:"stop,omitempty,omitzero"`
+	Stop *DeepseekAPIChatCompletionNewParamsStopUnion `json:"stop,omitempty,omitzero"`
+
+	// Store configuration. See the linked native reference for semantics and
+	// availability.
+	Store *bool `json:"store,omitempty,omitzero"`
 
 	// Whether the completion is returned as server-sent streaming events.
 	Stream *bool `json:"stream,omitempty,omitzero"`
 
 	// Additional behavior such as including a final usage chunk in the stream.
-	StreamOptions *json.RawMessage `json:"stream_options,omitempty,omitzero"`
+	StreamOptions *DeepseekAPIChatCompletionStreamOptionsParam `json:"stream_options,omitempty,omitzero"`
 
 	// Sampling temperature between zero and two.
 	Temperature *float64 `json:"temperature,omitempty,omitzero"`
@@ -47,10 +107,10 @@ type DeepSeekAPIOptions struct {
 	Thinking *json.RawMessage `json:"thinking,omitempty,omitzero"`
 
 	// Policy selecting whether and which function tool the model may call.
-	ToolChoice *json.RawMessage `json:"tool_choice,omitempty,omitzero"`
+	ToolChoice *DeepseekAPIChatCompletionToolChoiceOptionUnionParam `json:"tool_choice,omitempty,omitzero"`
 
 	// Function tool definitions derived from Captain caller tools.
-	Tools *json.RawMessage `json:"tools,omitempty,omitzero"`
+	Tools []DeepseekAPIChatCompletionToolParam `json:"tools,omitempty,omitzero"`
 
 	// Number of likely tokens returned with log probabilities at each position.
 	TopLogprobs *int `json:"top_logprobs,omitempty,omitzero"`
@@ -58,9 +118,25 @@ type DeepSeekAPIOptions struct {
 	// Cumulative probability mass retained during nucleus sampling.
 	TopP *float64 `json:"top_p,omitempty,omitzero"`
 
+	// User configuration. See the linked native reference for semantics and
+	// availability.
+	User *string `json:"user,omitempty,omitzero"`
+
 	// Stable end-user identifier used by DeepSeek for abuse detection.
 	UserId *string `json:"user_id,omitempty,omitzero"`
+
+	// Web search options configuration. See the linked native reference for semantics
+	// and availability.
+	WebSearchOptions *DeepseekAPIChatCompletionNewParamsWebSearchOptions `json:"web_search_options,omitempty,omitzero"`
 }
+
+// Logit bias configuration. See the linked native reference for semantics and
+// availability.
+type DeepSeekAPIOptionsLogitBias map[string]int
+
+// Metadata configuration. See the linked native reference for semantics and
+// availability.
+type DeepSeekAPIOptionsMetadata map[string]string
 
 type DeepSeekAPIOptionsModel string
 
@@ -71,6 +147,707 @@ type DeepSeekAPIOptionsReasoningEffort string
 
 const DeepSeekAPIOptionsReasoningEffortHigh DeepSeekAPIOptionsReasoningEffort = "high"
 const DeepSeekAPIOptionsReasoningEffortLow DeepSeekAPIOptionsReasoningEffort = "low"
-const DeepSeekAPIOptionsReasoningEffortMax DeepSeekAPIOptionsReasoningEffort = "max"
 const DeepSeekAPIOptionsReasoningEffortMedium DeepSeekAPIOptionsReasoningEffort = "medium"
-const DeepSeekAPIOptionsReasoningEffortXhigh DeepSeekAPIOptionsReasoningEffort = "xhigh"
+
+type DeepSeekAPIOptionsServiceTier string
+
+const DeepSeekAPIOptionsServiceTierAuto DeepSeekAPIOptionsServiceTier = "auto"
+const DeepSeekAPIOptionsServiceTierDefault DeepSeekAPIOptionsServiceTier = "default"
+const DeepSeekAPIOptionsServiceTierFlex DeepSeekAPIOptionsServiceTier = "flex"
+const DeepSeekAPIOptionsServiceTierPriority DeepSeekAPIOptionsServiceTier = "priority"
+const DeepSeekAPIOptionsServiceTierScale DeepSeekAPIOptionsServiceTier = "scale"
+
+// Messages sent by the model in response to user messages.
+//
+// The property Role is required.
+type DeepseekAPIChatCompletionAssistantMessageParam struct {
+	// Data about a previous audio response from the model.
+	// [Learn more](https://platform.openai.com/docs/guides/audio).
+	//
+	Audio *DeepseekAPIChatCompletionAssistantMessageParamAudio `json:"audio,omitempty,omitzero"`
+
+	// The contents of the assistant message. Required unless `tool_calls` or
+	// `function_call` is specified.
+	//
+	Content *DeepseekAPIChatCompletionAssistantMessageParamContentUnion `json:"content,omitempty,omitzero"`
+
+	// Deprecated and replaced by `tool_calls`. The name and arguments of a function
+	// that should be called, as generated by the model.
+	//
+	// Deprecated: deprecated
+	//
+	FunctionCall *DeepseekAPIChatCompletionAssistantMessageParamFunctionCall `json:"function_call,omitempty,omitzero"`
+
+	// An optional name for the participant. Provides the model information to
+	// differentiate between participants of the same role.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// The refusal message by the assistant.
+	//
+	Refusal *string `json:"refusal,omitempty,omitzero"`
+
+	// The role of the messages author, in this case `assistant`.
+	//
+	// This field can be elided, and will marshal its zero value as "assistant".
+	//
+	Role interface{} `json:"role"`
+
+	// The tool calls generated by the model, such as function calls.
+	//
+	ToolCalls []DeepseekAPIChatCompletionMessageToolCallParam `json:"tool_calls,omitempty,omitzero"`
+}
+
+// Data about a previous audio response from the model.
+// [Learn more](https://platform.openai.com/docs/guides/audio).
+//
+// The property ID is required.
+type DeepseekAPIChatCompletionAssistantMessageParamAudio struct {
+	// Unique identifier for a previous audio response from the model.
+	//
+	Id string `json:"id"`
+}
+
+// DeepSeek APIChat Completion Assistant Message Param Content Array Of Content
+// Part Union configuration. See the linked native reference for semantics and
+// availability.
+type DeepseekAPIChatCompletionAssistantMessageParamContentArrayOfContentPartUnion = json.RawMessage
+
+// DeepSeek APIChat Completion Assistant Message Param Content Union configuration.
+// See the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionAssistantMessageParamContentUnion = json.RawMessage
+
+// Deprecated and replaced by `tool_calls`. The name and arguments of a function
+// that should be called, as generated by the model.
+//
+// Deprecated: deprecated
+//
+// The properties Arguments, Name are required.
+type DeepseekAPIChatCompletionAssistantMessageParamFunctionCall struct {
+	// The arguments to call the function with, as generated by the model in JSON
+	// format. Note that the model does not always generate valid JSON, and may
+	// hallucinate parameters not defined by your function schema. Validate the
+	// arguments in your code before calling your function.
+	//
+	Arguments string `json:"arguments"`
+
+	// The name of the function to call.
+	//
+	Name string `json:"name"`
+}
+
+// Parameters for audio output. Required when audio output is requested with
+// `modalities: ["audio"]`.
+// [Learn more](https://platform.openai.com/docs/guides/audio).
+//
+// The properties Format, Voice are required.
+type DeepseekAPIChatCompletionAudioParam struct {
+	// Specifies the output audio format. Must be one of `wav`, `mp3`, `flac`, `opus`,
+	// or `pcm16`.
+	//
+	// Any of "wav", "aac", "mp3", "flac", "opus", "pcm16".
+	//
+	Format DeepseekAPIChatCompletionAudioParamFormat `json:"format"`
+
+	// The voice the model uses to respond. Supported voices are `alloy`, `ash`,
+	// `ballad`, `coral`, `echo`, `fable`, `nova`, `onyx`, `sage`, and `shimmer`.
+	//
+	Voice DeepseekAPIChatCompletionAudioParamVoice `json:"voice"`
+}
+
+type DeepseekAPIChatCompletionAudioParamFormat string
+
+const DeepseekAPIChatCompletionAudioParamFormatAac DeepseekAPIChatCompletionAudioParamFormat = "aac"
+const DeepseekAPIChatCompletionAudioParamFormatFlac DeepseekAPIChatCompletionAudioParamFormat = "flac"
+const DeepseekAPIChatCompletionAudioParamFormatMp3 DeepseekAPIChatCompletionAudioParamFormat = "mp3"
+const DeepseekAPIChatCompletionAudioParamFormatOpus DeepseekAPIChatCompletionAudioParamFormat = "opus"
+const DeepseekAPIChatCompletionAudioParamFormatPcm16 DeepseekAPIChatCompletionAudioParamFormat = "pcm16"
+const DeepseekAPIChatCompletionAudioParamFormatWav DeepseekAPIChatCompletionAudioParamFormat = "wav"
+
+type DeepseekAPIChatCompletionAudioParamVoice string
+
+const DeepseekAPIChatCompletionAudioParamVoiceAlloy DeepseekAPIChatCompletionAudioParamVoice = "alloy"
+const DeepseekAPIChatCompletionAudioParamVoiceAsh DeepseekAPIChatCompletionAudioParamVoice = "ash"
+const DeepseekAPIChatCompletionAudioParamVoiceBallad DeepseekAPIChatCompletionAudioParamVoice = "ballad"
+const DeepseekAPIChatCompletionAudioParamVoiceCoral DeepseekAPIChatCompletionAudioParamVoice = "coral"
+const DeepseekAPIChatCompletionAudioParamVoiceEcho DeepseekAPIChatCompletionAudioParamVoice = "echo"
+const DeepseekAPIChatCompletionAudioParamVoiceSage DeepseekAPIChatCompletionAudioParamVoice = "sage"
+const DeepseekAPIChatCompletionAudioParamVoiceShimmer DeepseekAPIChatCompletionAudioParamVoice = "shimmer"
+const DeepseekAPIChatCompletionAudioParamVoiceVerse DeepseekAPIChatCompletionAudioParamVoice = "verse"
+
+// DeepSeek APIChat Completion Content Part File File Param configuration. See the
+// linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionContentPartFileFileParam struct {
+	// The base64 encoded file data, used when passing the file to the model as a
+	// string.
+	//
+	FileData *string `json:"file_data,omitempty,omitzero"`
+
+	// The ID of an uploaded file to use as input.
+	//
+	FileId *string `json:"file_id,omitempty,omitzero"`
+
+	// The name of the file, used when passing the file to the model as a string.
+	//
+	Filename *string `json:"filename,omitempty,omitzero"`
+}
+
+// Learn about [file inputs](https://platform.openai.com/docs/guides/text) for text
+// generation.
+//
+// The properties File, Type are required.
+type DeepseekAPIChatCompletionContentPartFileParam struct {
+	// File configuration. See the linked native reference for semantics and
+	// availability.
+	File DeepseekAPIChatCompletionContentPartFileFileParam `json:"file"`
+
+	// The type of the content part. Always `file`.
+	//
+	// This field can be elided, and will marshal its zero value as "file".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The property URL is required.
+type DeepseekAPIChatCompletionContentPartImageImageURLParam struct {
+	// Specifies the detail level of the image. Learn more in the
+	// [Vision
+	// guide](https://platform.openai.com/docs/guides/vision#low-or-high-fidelity-image-understanding).
+	//
+	// Any of "auto", "low", "high".
+	//
+	Detail *string `json:"detail,omitempty,omitzero"`
+
+	// Either a URL of the image or the base64 encoded image data.
+	//
+	Url string `json:"url"`
+}
+
+// Learn about [image inputs](https://platform.openai.com/docs/guides/vision).
+//
+// The properties ImageURL, Type are required.
+type DeepseekAPIChatCompletionContentPartImageParam struct {
+	// Image url configuration. See the linked native reference for semantics and
+	// availability.
+	ImageUrl DeepseekAPIChatCompletionContentPartImageImageURLParam `json:"image_url"`
+
+	// The type of the content part.
+	//
+	// This field can be elided, and will marshal its zero value as "image_url".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Data, Format are required.
+type DeepseekAPIChatCompletionContentPartInputAudioInputAudioParam struct {
+	// Base64 encoded audio data.
+	//
+	Data string `json:"data"`
+
+	// The format of the encoded audio data. Currently supports "wav" and "mp3".
+	//
+	// Any of "wav", "mp3".
+	//
+	Format string `json:"format"`
+}
+
+// Learn about [audio inputs](https://platform.openai.com/docs/guides/audio).
+//
+// The properties InputAudio, Type are required.
+type DeepseekAPIChatCompletionContentPartInputAudioParam struct {
+	// Input audio configuration. See the linked native reference for semantics and
+	// availability.
+	InputAudio DeepseekAPIChatCompletionContentPartInputAudioInputAudioParam `json:"input_audio"`
+
+	// The type of the content part. Always `input_audio`.
+	//
+	// This field can be elided, and will marshal its zero value as "input_audio".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Refusal, Type are required.
+type DeepseekAPIChatCompletionContentPartRefusalParam struct {
+	// The refusal message generated by the model.
+	//
+	Refusal string `json:"refusal"`
+
+	// The type of the content part.
+	//
+	// This field can be elided, and will marshal its zero value as "refusal".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Learn about
+// [text inputs](https://platform.openai.com/docs/guides/text-generation).
+//
+// The properties Text, Type are required.
+type DeepseekAPIChatCompletionContentPartTextParam struct {
+	// The text content.
+	//
+	Text string `json:"text"`
+
+	// The type of the content part.
+	//
+	// This field can be elided, and will marshal its zero value as "text".
+	//
+	Type interface{} `json:"type"`
+}
+
+// DeepSeek APIChat Completion Content Part Union Param configuration. See the
+// linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionContentPartUnionParam = json.RawMessage
+
+// Developer-provided instructions that the model should follow, regardless of
+// messages sent by the user. With o1 models and newer, `developer` messages
+// replace the previous `system` messages.
+//
+// The properties Content, Role are required.
+type DeepseekAPIChatCompletionDeveloperMessageParam struct {
+	// The contents of the developer message.
+	//
+	Content DeepseekAPIChatCompletionDeveloperMessageParamContentUnion `json:"content"`
+
+	// An optional name for the participant. Provides the model information to
+	// differentiate between participants of the same role.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// The role of the messages author, in this case `developer`.
+	//
+	// This field can be elided, and will marshal its zero value as "developer".
+	//
+	Role interface{} `json:"role"`
+}
+
+// DeepSeek APIChat Completion Developer Message Param Content Union configuration.
+// See the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionDeveloperMessageParamContentUnion = json.RawMessage
+
+// Specifying a particular function via `{"name": "my_function"}` forces the model
+// to call that function.
+//
+// The property Name is required.
+type DeepseekAPIChatCompletionFunctionCallOptionParam struct {
+	// The name of the function to call.
+	//
+	Name string `json:"name"`
+}
+
+// Deprecated: deprecated
+//
+// The properties Content, Name, Role are required.
+type DeepseekAPIChatCompletionFunctionMessageParam struct {
+	// The contents of the function message.
+	//
+	Content string `json:"content"`
+
+	// The name of the function to call.
+	//
+	Name string `json:"name"`
+
+	// The role of the messages author, in this case `function`.
+	//
+	// This field can be elided, and will marshal its zero value as "function".
+	//
+	Role interface{} `json:"role"`
+}
+
+// DeepSeek APIChat Completion Message Param Union configuration. See the linked
+// native reference for semantics and availability.
+type DeepseekAPIChatCompletionMessageParamUnion = json.RawMessage
+
+// The function that the model called.
+//
+// The properties Arguments, Name are required.
+type DeepseekAPIChatCompletionMessageToolCallFunctionParam struct {
+	// The arguments to call the function with, as generated by the model in JSON
+	// format. Note that the model does not always generate valid JSON, and may
+	// hallucinate parameters not defined by your function schema. Validate the
+	// arguments in your code before calling your function.
+	//
+	Arguments string `json:"arguments"`
+
+	// The name of the function to call.
+	//
+	Name string `json:"name"`
+}
+
+// The properties ID, Function, Type are required.
+type DeepseekAPIChatCompletionMessageToolCallParam struct {
+	// The function that the model called.
+	//
+	Function DeepseekAPIChatCompletionMessageToolCallFunctionParam `json:"function"`
+
+	// The ID of the tool call.
+	//
+	Id string `json:"id"`
+
+	// The type of the tool. Currently, only `function` is supported.
+	//
+	// This field can be elided, and will marshal its zero value as "function".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The property Name is required.
+type DeepseekAPIChatCompletionNamedToolChoiceFunctionParam struct {
+	// The name of the function to call.
+	//
+	Name string `json:"name"`
+}
+
+// Specifies a tool the model should use. Use to force the model to call a specific
+// function.
+//
+// The properties Function, Type are required.
+type DeepseekAPIChatCompletionNamedToolChoiceParam struct {
+	// Function configuration. See the linked native reference for semantics and
+	// availability.
+	Function DeepseekAPIChatCompletionNamedToolChoiceFunctionParam `json:"function"`
+
+	// The type of the tool. Currently, only `function` is supported.
+	//
+	// This field can be elided, and will marshal its zero value as "function".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Deprecated: deprecated
+//
+// The property Name is required.
+type DeepseekAPIChatCompletionNewParamsFunction struct {
+	// A description of what the function does, used by the model to choose when and
+	// how to call the function.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// The name of the function to be called. Must be a-z, A-Z, 0-9, or contain
+	// underscores and dashes, with a maximum length of 64.
+	//
+	Name string `json:"name"`
+
+	// The parameters the functions accepts, described as a JSON Schema object. See
+	// the
+	// [guide](https://platform.openai.com/docs/guides/function-calling) for examples,
+	// and the
+	// [JSON Schema reference](https://json-schema.org/understanding-json-schema/) for
+	// documentation about the format.
+	//
+	// Omitting `parameters` defines a function with an empty parameter list.
+	//
+	Parameters DeepseekAPIChatCompletionNewParamsFunctionParameters `json:"parameters,omitempty,omitzero"`
+}
+
+// DeepSeek APIChat Completion New Params Function Call Union configuration. See
+// the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionNewParamsFunctionCallUnion = json.RawMessage
+
+// The parameters the functions accepts, described as a JSON Schema object. See the
+// [guide](https://platform.openai.com/docs/guides/function-calling) for examples,
+// and the
+// [JSON Schema reference](https://json-schema.org/understanding-json-schema/) for
+// documentation about the format.
+//
+// Omitting `parameters` defines a function with an empty parameter list.
+type DeepseekAPIChatCompletionNewParamsFunctionParameters map[string]interface{}
+
+// DeepSeek APIChat Completion New Params Response Format Union configuration. See
+// the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionNewParamsResponseFormatUnion = json.RawMessage
+
+// DeepSeek APIChat Completion New Params Stop Union configuration. See the linked
+// native reference for semantics and availability.
+type DeepseekAPIChatCompletionNewParamsStopUnion = json.RawMessage
+
+// This tool searches the web for relevant results to use in a response. Learn more
+// about the
+// [web search
+// tool](https://platform.openai.com/docs/guides/tools-web-search?api-mode=chat).
+type DeepseekAPIChatCompletionNewParamsWebSearchOptions struct {
+	// High level guidance for the amount of context window space to use for the
+	// search. One of `low`, `medium`, or `high`. `medium` is the default.
+	//
+	// Any of "low", "medium", "high".
+	//
+	SearchContextSize *string `json:"search_context_size,omitempty,omitzero"`
+
+	// Approximate location parameters for the search.
+	//
+	UserLocation *DeepseekAPIChatCompletionNewParamsWebSearchOptionsUserLocation `json:"user_location,omitempty,omitzero"`
+}
+
+// Approximate location parameters for the search.
+//
+// The properties Approximate, Type are required.
+type DeepseekAPIChatCompletionNewParamsWebSearchOptionsUserLocation struct {
+	// Approximate location parameters for the search.
+	//
+	Approximate DeepseekAPIChatCompletionNewParamsWebSearchOptionsUserLocationApproximate `json:"approximate"`
+
+	// The type of location approximation. Always `approximate`.
+	//
+	// This field can be elided, and will marshal its zero value as "approximate".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Approximate location parameters for the search.
+type DeepseekAPIChatCompletionNewParamsWebSearchOptionsUserLocationApproximate struct {
+	// Free text input for the city of the user, e.g. `San Francisco`.
+	//
+	City *string `json:"city,omitempty,omitzero"`
+
+	// The two-letter [ISO country code](https://en.wikipedia.org/wiki/ISO_3166-1) of
+	// the user, e.g. `US`.
+	//
+	Country *string `json:"country,omitempty,omitzero"`
+
+	// Free text input for the region of the user, e.g. `California`.
+	//
+	Region *string `json:"region,omitempty,omitzero"`
+
+	// The [IANA timezone](https://timeapi.io/documentation/iana-timezones) of the
+	// user, e.g. `America/Los_Angeles`.
+	//
+	Timezone *string `json:"timezone,omitempty,omitzero"`
+}
+
+// DeepSeek APIChat Completion Prediction Content Content Union Param
+// configuration. See the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionPredictionContentContentUnionParam = json.RawMessage
+
+// Static predicted output content, such as the content of a text file that is
+// being regenerated.
+//
+// The properties Content, Type are required.
+type DeepseekAPIChatCompletionPredictionContentParam struct {
+	// The content that should be matched when generating a model response. If
+	// generated tokens would match this content, the entire model response can be
+	// returned much more quickly.
+	//
+	Content DeepseekAPIChatCompletionPredictionContentContentUnionParam `json:"content"`
+
+	// The type of the predicted content you want to provide. This type is currently
+	// always `content`.
+	//
+	// This field can be elided, and will marshal its zero value as "content".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Options for streaming response. Only set this when you set `stream: true`.
+type DeepseekAPIChatCompletionStreamOptionsParam struct {
+	// If set, an additional chunk will be streamed before the `data: [DONE]` message.
+	// The `usage` field on this chunk shows the token usage statistics for the entire
+	// request, and the `choices` field will always be an empty array.
+	//
+	// All other chunks will also include a `usage` field, but with a null value.
+	// **NOTE:** If the stream is interrupted, you may not receive the final usage
+	// chunk which contains the total token usage for the request.
+	//
+	IncludeUsage *bool `json:"include_usage,omitempty,omitzero"`
+}
+
+// Developer-provided instructions that the model should follow, regardless of
+// messages sent by the user. With o1 models and newer, use `developer` messages
+// for this purpose instead.
+//
+// The properties Content, Role are required.
+type DeepseekAPIChatCompletionSystemMessageParam struct {
+	// The contents of the system message.
+	//
+	Content DeepseekAPIChatCompletionSystemMessageParamContentUnion `json:"content"`
+
+	// An optional name for the participant. Provides the model information to
+	// differentiate between participants of the same role.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// The role of the messages author, in this case `system`.
+	//
+	// This field can be elided, and will marshal its zero value as "system".
+	//
+	Role interface{} `json:"role"`
+}
+
+// DeepSeek APIChat Completion System Message Param Content Union configuration.
+// See the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionSystemMessageParamContentUnion = json.RawMessage
+
+// DeepSeek APIChat Completion Tool Choice Option Union Param configuration. See
+// the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionToolChoiceOptionUnionParam = json.RawMessage
+
+// The properties Content, Role, ToolCallID are required.
+type DeepseekAPIChatCompletionToolMessageParam struct {
+	// The contents of the tool message.
+	//
+	Content DeepseekAPIChatCompletionToolMessageParamContentUnion `json:"content"`
+
+	// The role of the messages author, in this case `tool`.
+	//
+	// This field can be elided, and will marshal its zero value as "tool".
+	//
+	Role interface{} `json:"role"`
+
+	// Tool call that this message is responding to.
+	//
+	ToolCallId string `json:"tool_call_id"`
+}
+
+// DeepSeek APIChat Completion Tool Message Param Content Union configuration. See
+// the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionToolMessageParamContentUnion = json.RawMessage
+
+// The properties Function, Type are required.
+type DeepseekAPIChatCompletionToolParam struct {
+	// Function configuration. See the linked native reference for semantics and
+	// availability.
+	Function DeepseekAPIFunctionDefinitionParam `json:"function"`
+
+	// The type of the tool. Currently, only `function` is supported.
+	//
+	// This field can be elided, and will marshal its zero value as "function".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Messages sent by an end user, containing prompts or additional context
+// information.
+//
+// The properties Content, Role are required.
+type DeepseekAPIChatCompletionUserMessageParam struct {
+	// The contents of the user message.
+	//
+	Content DeepseekAPIChatCompletionUserMessageParamContentUnion `json:"content"`
+
+	// An optional name for the participant. Provides the model information to
+	// differentiate between participants of the same role.
+	//
+	Name *string `json:"name,omitempty,omitzero"`
+
+	// The role of the messages author, in this case `user`.
+	//
+	// This field can be elided, and will marshal its zero value as "user".
+	//
+	Role interface{} `json:"role"`
+}
+
+// DeepSeek APIChat Completion User Message Param Content Union configuration. See
+// the linked native reference for semantics and availability.
+type DeepseekAPIChatCompletionUserMessageParamContentUnion = json.RawMessage
+
+// The property Name is required.
+type DeepseekAPIFunctionDefinitionParam struct {
+	// A description of what the function does, used by the model to choose when and
+	// how to call the function.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// The name of the function to be called. Must be a-z, A-Z, 0-9, or contain
+	// underscores and dashes, with a maximum length of 64.
+	//
+	Name string `json:"name"`
+
+	// The parameters the functions accepts, described as a JSON Schema object. See
+	// the
+	// [guide](https://platform.openai.com/docs/guides/function-calling) for examples,
+	// and the
+	// [JSON Schema reference](https://json-schema.org/understanding-json-schema/) for
+	// documentation about the format.
+	//
+	// Omitting `parameters` defines a function with an empty parameter list.
+	//
+	Parameters DeepseekAPIFunctionDefinitionParamParameters `json:"parameters,omitempty,omitzero"`
+
+	// Whether to enable strict schema adherence when generating the function call. If
+	// set to true, the model will follow the exact schema defined in the `parameters`
+	// field. Only a subset of JSON Schema is supported when `strict` is `true`. Learn
+	// more about Structured Outputs in the
+	// [function calling
+	// guide](https://platform.openai.com/docs/guides/function-calling).
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+}
+
+// The parameters the functions accepts, described as a JSON Schema object. See the
+// [guide](https://platform.openai.com/docs/guides/function-calling) for examples,
+// and the
+// [JSON Schema reference](https://json-schema.org/understanding-json-schema/) for
+// documentation about the format.
+//
+// Omitting `parameters` defines a function with an empty parameter list.
+type DeepseekAPIFunctionDefinitionParamParameters map[string]interface{}
+
+// JSON object response format. An older method of generating JSON responses. Using
+// `json_schema` is recommended for models that support it. Note that the model
+// will not generate JSON without a system or user message instructing it to do so.
+//
+// This struct has a constant value, construct it with
+// [NewResponseFormatJSONObjectParam].
+type DeepseekAPIResponseFormatJSONObjectParam struct {
+	// The type of response format being defined. Always `json_object`.
+	//
+	Type interface{} `json:"type"`
+}
+
+// Structured Outputs configuration options, including a JSON Schema.
+//
+// The property Name is required.
+type DeepseekAPIResponseFormatJSONSchemaJSONSchemaParam struct {
+	// A description of what the response format is for, used by the model to
+	// determine
+	// how to respond in the format.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// The name of the response format. Must be a-z, A-Z, 0-9, or contain underscores
+	// and dashes, with a maximum length of 64.
+	//
+	Name string `json:"name"`
+
+	// The schema for the response format, described as a JSON Schema object. Learn
+	// how
+	// to build JSON schemas [here](https://json-schema.org/).
+	//
+	Schema interface{} `json:"schema,omitempty,omitzero"`
+
+	// Whether to enable strict schema adherence when generating the output. If set to
+	// true, the model will always follow the exact schema defined in the `schema`
+	// field. Only a subset of JSON Schema is supported when `strict` is `true`. To
+	// learn more, read the
+	// [Structured Outputs
+	// guide](https://platform.openai.com/docs/guides/structured-outputs).
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+}
+
+// JSON Schema response format. Used to generate structured JSON responses. Learn
+// more about
+// [Structured
+// Outputs](https://platform.openai.com/docs/guides/structured-outputs).
+//
+// The properties JSONSchema, Type are required.
+type DeepseekAPIResponseFormatJSONSchemaParam struct {
+	// Structured Outputs configuration options, including a JSON Schema.
+	//
+	JsonSchema DeepseekAPIResponseFormatJSONSchemaJSONSchemaParam `json:"json_schema"`
+
+	// The type of response format being defined. Always `json_schema`.
+	//
+	// This field can be elided, and will marshal its zero value as "json_schema".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Default response format. Used to generate text responses.
+//
+// This struct has a constant value, construct it with
+// [NewResponseFormatTextParam].
+type DeepseekAPIResponseFormatTextParam struct {
+	// The type of response format being defined. Always `text`.
+	//
+	Type interface{} `json:"type"`
+}

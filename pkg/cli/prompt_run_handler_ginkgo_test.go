@@ -97,6 +97,6 @@ var _ = Describe("a live run's session id", func() {
 
 var _ = Describe("workflowConfigured", func() {
 	It("routes a workflow that declares only after steps through the runner", func() {
-		Expect(workflowConfigured(&api.Workflow{After: []api.AfterStep{{Commands: []string{"true"}}}})).To(BeTrue())
+		Expect(workflowConfigured(&api.Workflow{After: []api.AfterStep{{HookAction: api.HookAction{Commands: []string{"true"}}}}})).To(BeTrue())
 	})
 })

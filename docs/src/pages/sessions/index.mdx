@@ -2,12 +2,23 @@
 layout: ../../layouts/DocsLayout.astro
 title: Sessions
 description: Inspect Claude and Codex session history and estimated tool costs.
-section: Next Sections
+section: Reference
 ---
 
 # Sessions
 
-This section is scaffolded for Claude and Codex history, live prompt run entries, session browser behavior, cost analysis, and change tracking.
+Captain folds Claude and Codex history and recorded prompt runs into a unified session view. Use the CLI for filtering and machine-readable detail or `/sessions` in `captain serve` for live transcripts, approvals, plans and cost inspection.
+
+```sh
+captain history --summary
+captain history --tool Bash --since now-7d
+captain info
+captain cost --group-by model
+captain changes --session-id SESSION_ID
+captain sessions get SESSION_ID --json --limit 0
+```
+
+`history` filters tool use by category, file/path, time range and session. `cost` groups usage by session, project, model, day, directory, file, tool or category. `changes` defaults to the most recent session in the current directory and can include nested agents; `--agents=false` excludes them. A session with metadata but no transcript remains inspectable.
 
 ## Transcript availability
 
@@ -55,3 +66,20 @@ captain sessions tokens SESSION_ID --row-id MESSAGE_ID-0 --method provider --jso
 The Go entry point is `ai.SizeTokens(ctx, ai.TokenSizeOptions{Request: spec, Config: cfg, Method: "estimate"})`. Use `Direction: "output"` or `"reasoning"` when pricing isolated output; a complete preflight request uses the default input direction. Optional `api.TokenCountingProvider` implementations expose counting through provider wrappers.
 
 The session HTTP endpoint is `POST /api/captain/sessions/{id}/tokens` with `{"method":"estimate","rowIds":["MESSAGE_ID-0"],"revision":3}`. Omit `rowIds` for the complete canonical transcript; an optional `revision` rejects stale requests. Results contain `sessionId`, `revision` and `rows`, each with either a `size` footprint or an explicit `error`. The server reads the canonical row content; clients cannot submit replacement text. The generated command HTTP endpoint also exposes `ai tokens` under `/api/v1`.
+
+## Browser sessions
+
+```sh
+captain browser ls
+captain browser ls --all
+captain browser ls -q SESSION_PREFIX
+captain browser install --global --dry-run
+```
+
+Browser rows sum CPU/memory over the agent-browser daemon's process tree; age comes from daemon startup. Attribution first checks inherited agent-session environment variables, then Captain's launch-plugin sidecar, then the nearest agent ancestor process. The row's link source identifies the evidence used. Browser sessions also appear on `captain sessions get` under `browsers`.
+
+`captain browser install --global` merges the `launch.mutate` plugin into `agent-browser.json` and creates Captain's sidecar directory. It registers that directory as writable in Claude's `sandbox.filesystem.allowWrite` and Codex's workspace writable roots unless `--sandbox=false` is supplied. Preview with `--dry-run` before changing those settings. The plugin does not change launch arguments or the browser configuration hash, preserving existing daemon state. `agent-browser doctor` owns agent-browser sidecar cleanup.
+
+## Monitoring and client estimates
+
+`captain hook monitor install` configures lifecycle monitoring. `--capture-cost` also composes with Claude's custom status line to capture its client-side session estimate. That value is recorded separately from provider-reported billing and token-based list-price estimates. Installation refuses a project status line that would override the user-level integration; without the flag, the status line remains unchanged.

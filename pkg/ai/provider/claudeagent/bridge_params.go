@@ -12,8 +12,9 @@ import (
 // changes. Version 2 added can_use_tool interrupt and the elicit request.
 // Version 3 added session/state, which ends a turn, and parent_tool_use_id on
 // subagent tool notifications. Version 4 made the git add/commit guard
-// conditional on initialize's guardGitCommits.
-const bridgeProtocolVersion = 4
+// conditional on initialize's guardGitCommits. Version 5 stamps each prompt's
+// uuid and reports the prompts a result consumed (user_message_uuids).
+const bridgeProtocolVersion = 5
 
 // initializeReply is agent.ts's answer to initialize.
 type initializeReply struct {

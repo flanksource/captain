@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { ContextCell } from "./SessionTable";
+import { ContextCell, SessionIdentity } from "./SessionTable";
 import type { SessionRecord } from "./sessionData";
 
 const SESSION: SessionRecord = {
@@ -47,5 +47,21 @@ describe("ContextCell", () => {
 
     expect(screen.getByText("--")).toBeInTheDocument();
     expect(screen.queryByLabelText(/Context .* used/)).not.toBeInTheDocument();
+  });
+});
+
+describe("SessionIdentity", () => {
+  const PROMPT = "Fix the session name detection\n  in the session listing";
+  const NAME = "captain-background";
+  const AI_TITLE = "Investigate session listing titles";
+
+  it.each([
+    ["the user-assigned name", { name: NAME, title: NAME, initialPrompt: PROMPT }, NAME],
+    ["the collapsed prompt over a derived title", { title: AI_TITLE, initialPrompt: PROMPT }, "Fix the session name detection in the session listing"],
+    ["the derived title without a prompt", { title: AI_TITLE }, AI_TITLE],
+  ])("titles the row with %s", (_, fields, expected) => {
+    render(<SessionIdentity session={{ ...SESSION, ...fields }} />);
+
+    expect(screen.getByTitle(expected)).toHaveTextContent(expected);
   });
 });

@@ -97,15 +97,20 @@ Review the screenshot.
 		Entry("with the extension", "compare.prompt"),
 	)
 
-	It("rejects an ambiguous bare filename", func() {
+	It("uses the first local source for a duplicate bare filename", func() {
 		otherDir := GinkgoT().TempDir()
 		otherPath := filepath.Join(otherDir, filepath.Base(path))
 		Expect(os.WriteFile(otherPath, []byte("Review this screenshot."), 0o600)).To(Succeed())
 		ctx := ContextWithPromptSources(context.Background(), PromptSources{Dirs: []string{filepath.Dir(path), otherDir}})
 
-		_, err := resolvePromptRecord(ctx, promptRecordOptions{ID: "compare"})
+		record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: "compare"})
 
-		Expect(err).To(MatchError(ContainSubstring("prompt name \"compare\" is ambiguous")))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(record.Path).To(Equal(path))
+		otherID := encodePromptID("local", hashPromptDir(otherDir), filepath.Base(path))
+		other, err := getPrompt(ctx, otherID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(other.Content).To(Equal("Review this screenshot."))
 	})
 
 	It("does not require a singular base model", func() {

@@ -148,6 +148,7 @@ func recordFromOverview(overview database.SessionOverview) SessionRecord {
 		Project:         stringOr(overview.Project, ""),
 		Slug:            stringOr(overview.Slug, ""),
 		Title:           stringOr(overview.Title, ""),
+		Name:            metadata.Name,
 		InitialPrompt:   stringOr(overview.InitialPrompt, ""),
 		StartedAt:       overview.StartedAt,
 		EndedAt:         overview.LastActivityAt,

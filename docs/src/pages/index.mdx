@@ -7,7 +7,15 @@ section: Start
 
 # Captain documentation
 
-This site is the documentation home for Captain. Authored sections cover the prompts engine — how `.prompt` files are loaded, rendered, merged into `api.Spec`, and executed from the CLI and web UI — and todo execution, where gavel drives Captain's agent runtime to implement, check, and verify TODOs.
+Captain runs prompts across API and local agent runtimes, records sessions, brokers approvals, and verifies generated work. Start with configuration, preview a prompt, then execute it through the CLI or workbench. Gavel embeds the same runtime for its TODO lifecycle.
+
+```sh
+captain configure
+captain prompt list
+captain prompt render proposal-review -V 'files:=["proposal.md"]' --json
+captain prompt run proposal-review -V 'files:=["proposal.md"]'
+captain serve --open
+```
 
 <div className="docs-card-grid">
   <a className="docs-card no-underline" href="/prompts/">
@@ -20,19 +28,22 @@ This site is the documentation home for Captain. Authored sections cover the pro
   </a>
   <a className="docs-card no-underline" href="/serve/">
     <h2>Serve</h2>
-    <p>Placeholder for the embedded API and React web UI docs.</p>
+    <p>Embedded API, prompt workbench, development proxy, TLS and remote access.</p>
   </a>
   <a className="docs-card no-underline" href="/agents/">
     <h2>AI Agents</h2>
-    <p>Placeholder for agent loop, verifier, worktree, commit, and judge docs.</p>
+    <p>Generate and verify loops, embedding contracts, durable approvals and questions.</p>
   </a>
   <a className="docs-card no-underline" href="/sessions/">
     <h2>Sessions</h2>
-    <p>Placeholder for session history, live runs, cost, and change tracking docs.</p>
+    <p>History, live transcripts, change tracking, token footprints and estimated costs.</p>
   </a>
 </div>
 
-## Current focus
+## Reference
 
-The prompts section is grounded in the implementation under `pkg/ai/prompt`, `pkg/cli/ai_prompt_file.go`, and `pkg/cli/prompt_entity.go`. The docs intentionally describe the existing runtime behavior instead of creating a second prompt workbench.
+- [Prompt CLI](/prompts/cli/) covers every prompt subcommand, terminal color, agent Markdown help and schemas.
+- [Configuration](/configuration/) covers saved runtime defaults, credentials, sources and database contexts.
+- [Fixtures](/fixtures/) covers benchmarks, structured observations and external verification runners.
+- [Sandboxes](/sandboxes/) covers isolation, agent images, deployment and credential publishing.
 

@@ -1,0 +1,13 @@
+<svg fill="#ffffff" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 888 256" role="img" aria-labelledby="title">
+  <title id="title">Captain Formation horizontal logo for dark backgrounds</title>
+  <path id="symbol" fill="#ffffff" d="M64 34 H156 L208 86 H116 Z M36 110 H200 L218 128 L200 146 H36 Z M116 170 H208 L156 222 H64 Z"/>
+  <g id="wordmark" fill="#ffffff" transform="translate(288 -6)">
+    <path d="M80 104 L68 116 L60 108 H36 Q20 108 20 124 V148 Q20 164 36 164 H60 L68 156 L80 168 L68 180 H34 Q2 180 2 148 V124 Q2 92 34 92 H68 Z"/>
+    <path transform="translate(96 0)" fill-rule="evenodd" d="M34 90 Q50 90 62 102 V92 H80 V180 H62 V170 Q50 182 34 182 Q2 182 2 150 V122 Q2 90 34 90 Z M36 108 Q20 108 20 124 V148 Q20 164 36 164 Q62 164 62 144 V128 Q62 108 36 108 Z"/>
+    <path transform="translate(192 0)" fill-rule="evenodd" d="M2 92 H20 V102 Q32 90 48 90 Q80 90 80 122 V150 Q80 182 48 182 Q32 182 20 170 V212 H2 Z M20 128 V144 Q20 164 46 164 Q62 164 62 148 V124 Q62 108 46 108 Q20 108 20 128 Z"/>
+    <path transform="translate(284 0)" d="M16 56 H34 V92 H58 V108 H34 V152 Q34 164 46 164 H58 V180 H44 Q16 180 16 152 V108 H0 V92 H16 Z"/>
+    <path transform="translate(356 0)" fill-rule="evenodd" d="M34 90 Q50 90 62 102 V92 H80 V180 H62 V170 Q50 182 34 182 Q2 182 2 150 V122 Q2 90 34 90 Z M36 108 Q20 108 20 124 V148 Q20 164 36 164 Q62 164 62 144 V128 Q62 108 36 108 Z"/>
+    <path transform="translate(450 0)" d="M4 58 H22 V76 H4 Z M4 92 H22 V180 H4 Z"/>
+    <path transform="translate(488 0)" d="M2 92 H20 V104 Q30 90 48 90 Q80 90 80 122 V180 H62 V124 Q62 108 46 108 Q20 108 20 132 V180 H2 Z"/>
+  </g>
+</svg>

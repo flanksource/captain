@@ -44,9 +44,6 @@ type codexPreparation struct {
 type ingestor struct {
 	monitor *Monitor
 	db      *database.DB
-	// watchSubagents arms the watcher on a root transcript's subagents
-	// directory; nil outside watched (one-shot) runs.
-	watchSubagents func(rootTranscriptPath string)
 	// requeue schedules another pass when a descriptor-bounded parse observes
 	// that the path changed again before its database write completed.
 	requeue func(ctx context.Context, source, path string)
@@ -209,23 +206,18 @@ func (ing *ingestor) needsIngest(path string, info os.FileInfo) bool {
 }
 
 // ingestFile parses one transcript and persists it. Claude sub-agent files are
-// child sessions of the root transcript's session; root ingests also arm the
-// watcher on the session's subagents directory.
+// child sessions of the root transcript's session.
 func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error {
-	root, err := hookTranscriptRoot(source)
-	if err != nil {
-		return err
-	}
-	root, err = filepath.Abs(root)
-	if err != nil {
-		return fmt.Errorf("resolve %s transcript root: %w", source, err)
-	}
-	path, err = filepath.Abs(path)
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve %s transcript path: %w", source, err)
 	}
-	if !strings.HasPrefix(path, root+string(filepath.Separator)) {
-		return fmt.Errorf("transcript path %s is outside the %s session root", path, source)
+	root, err := hookTranscriptRootOf(source, path)
+	if err != nil {
+		return err
+	}
+	if root == "" {
+		return fmt.Errorf("transcript path %s is outside every %s session root", path, source)
 	}
 	rootFS, err := os.OpenRoot(root)
 	if err != nil {
@@ -328,9 +320,6 @@ func (ing *ingestor) ingestFile(ctx context.Context, source, path string) error 
 			ing.dropCodexCheckpoint(path)
 		}
 		return err
-	}
-	if source == "claude" && input.Session.ParentSessionID == nil && ing.watchSubagents != nil {
-		ing.watchSubagents(path)
 	}
 	modTime := input.Source.ObservedModTime
 	ing.recordSourceState(database.SessionSourceState{
@@ -659,6 +648,7 @@ func sessionMetadata(s *session.Session) map[string]any {
 	return session.Metadata{
 		Model: s.Model, Provider: s.Provider, Files: s.Files,
 		Todos: s.Todos, Approvals: s.Approvals, Plan: s.Plan, PermissionMode: s.PermissionMode,
+		Name: s.Name,
 	}.Encode()
 }
 

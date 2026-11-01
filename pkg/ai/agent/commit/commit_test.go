@@ -7,6 +7,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // turn simulates one loop iteration: the agent edits a file, then the runner
@@ -186,10 +187,10 @@ func TestFailedTurnCommitIsReportedOnce(t *testing.T) {
 	hc := isolated(dir)
 	h := New(api.Commit{On: api.CommitOnTurn, Message: "fix: attempt"})
 	attempts := 0
-	h.Do = func(*agent.HookContext, Plan) (string, error) {
+	h.HostGates = []workspace.Gate{testGate(func(workspace.Check) error {
 		attempts++
-		return "", fmt.Errorf("pre-commit gate rejected the change set")
-	}
+		return fmt.Errorf("pre-commit gate rejected the change set")
+	})}
 
 	write(t, dir, "fix.go", "package main\n")
 	changed(hc, "fix.go")
