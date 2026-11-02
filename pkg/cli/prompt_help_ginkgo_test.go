@@ -25,6 +25,10 @@ var _ = Describe("prompt help", func() {
 	}
 
 	It("renders colored terminal help for a human session", func() {
+		GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "1")
+		GinkgoT().Setenv("NO_COLOR", "")
+		GinkgoT().Setenv("COLOR", "")
+		GinkgoT().Setenv("TERM", "xterm-256color")
 		output, err := renderPromptHelp(promptCommand(), promptHelpRenderOptions{})
 
 		Expect(err).NotTo(HaveOccurred())
