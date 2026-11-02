@@ -234,12 +234,19 @@ chmod +x "$sidecar/hooks/pre-receive"
 g -C "$client14" push -q "$sidecar" HEAD:refs/heads/main 2>"$out14/push_err"
 assert $? "1.4 push driving the relay probe succeeds"
 
-test "$(cat "$out14/naive_rc")" != "0" &&
+naive_rc="$(cat "$out14/naive_rc" 2>/dev/null)"
+if [ "$naive_rc" != "0" ]; then
 	grep -qi quarantine "$out14/naive_err"
-assert $? "1.4 naive relay is refused by the upstream quarantine guard"
-
-! g -C "$upstream" rev-parse -q --verify refs/heads/relay-quarantined >/dev/null
-assert $? "1.4 refused relay left no ref upstream"
+	assert $? "1.4 naive relay is refused by the upstream quarantine guard"
+	! g -C "$upstream" rev-parse -q --verify refs/heads/relay-quarantined >/dev/null
+	assert $? "1.4 refused relay left no ref upstream"
+else
+	# Newer git (observed on 2.56) no longer refuses a push carrying an inherited
+	# GIT_QUARANTINE_PATH. Not a failure for the protocol, whose relay always
+	# unsets it (RelayEnv), but flag the substrate change.
+	test "$(g -C "$upstream" rev-parse refs/heads/relay-quarantined 2>/dev/null)" = "$(g -C "$client14" rev-parse HEAD)"
+	assert $? "1.4 naive relay succeeded on this git # quarantine guard absent; unsetting GIT_QUARANTINE_PATH remains correct"
+fi
 
 pushed="$(g -C "$client14" rev-parse HEAD)"
 test "$(cat "$out14/scrubbed_rc")" = "0" &&

@@ -10,6 +10,8 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/connection"
+	"github.com/flanksource/commons-db/types"
 	"github.com/flanksource/commons/merge"
 )
 
@@ -133,11 +135,51 @@ func redactedRequest(req ai.Request) *ai.Request {
 			copy.Setup.Env[i] = key + "=[REDACTED]"
 		}
 		for i := range copy.Setup.EnvVars {
-			copy.Setup.EnvVars[i].ValueStatic = "[REDACTED]"
-			copy.Setup.EnvVars[i].ValueFrom = nil
+			redactEnvVar(&copy.Setup.EnvVars[i])
 		}
+		redactConnections(&copy.Setup.Connections)
 	}
 	return &copy
+}
+
+func redactEnvVar(env *types.EnvVar) {
+	if env == nil {
+		return
+	}
+	env.ValueStatic = "[REDACTED]"
+	env.ValueFrom = nil
+}
+
+func redactConnections(conns *connection.ExecConnections) {
+	redactAWS := func(aws *connection.AWSConnection) {
+		for _, env := range []*types.EnvVar{&aws.AccessKey, &aws.SecretKey, &aws.SessionToken} {
+			if env.ValueStatic != "" || env.ValueFrom != nil {
+				redactEnvVar(env)
+			}
+		}
+	}
+	if conns.AWS != nil {
+		redactAWS(conns.AWS)
+	}
+	if conns.GCP != nil {
+		redactEnvVar(conns.GCP.Credentials)
+	}
+	if conns.Azure != nil {
+		redactEnvVar(conns.Azure.ClientID)
+		redactEnvVar(conns.Azure.ClientSecret)
+	}
+	if k8s := conns.Kubernetes; k8s != nil {
+		redactEnvVar(k8s.Kubeconfig)
+		if k8s.EKS != nil {
+			redactAWS(&k8s.EKS.AWSConnection)
+		}
+		if k8s.GKE != nil {
+			redactEnvVar(k8s.GKE.Credentials)
+		}
+		if k8s.CNRM != nil {
+			redactEnvVar(k8s.CNRM.GKE.Credentials)
+		}
+	}
 }
 
 type observingProvider struct{ provider ai.Provider }

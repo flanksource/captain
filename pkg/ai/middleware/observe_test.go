@@ -2,13 +2,16 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/connection"
 	"github.com/flanksource/commons-db/shell"
 	"github.com/flanksource/commons-db/types"
 	. "github.com/onsi/ginkgo/v2"
@@ -132,6 +135,36 @@ var _ = Describe("provider observers", func() {
 		Expect(req.Setup.Env[0]).To(Equal("TOKEN=secret"))
 		Expect(req.Setup.EnvVars[0].ValueStatic).To(Equal("hidden"))
 		Expect(req.Labels["key"]).To(Equal("original"))
+	})
+	It("redacts connection credentials without mutating the original request", func() {
+		const secret = "connection-secret"
+		secretRef := func() *types.EnvVar {
+			return &types.EnvVar{ValueStatic: secret, ValueFrom: &types.EnvVarSource{SecretKeyRef: &types.SecretKeySelector{Key: "k"}}}
+		}
+		aws := connection.AWSConnection{AccessKey: *secretRef(), SecretKey: *secretRef(), SessionToken: *secretRef(), Region: "us-east-1"}
+		gcp := connection.GCPConnection{Credentials: secretRef(), Project: "project-x"}
+		req := ai.Request{Setup: &shell.Setup{Connections: connection.ExecConnections{
+			AWS:   &aws,
+			GCP:   &gcp,
+			Azure: &connection.AzureConnection{ClientID: secretRef(), ClientSecret: secretRef(), TenantID: "tenant-x"},
+			Kubernetes: &connection.KubernetesConnection{
+				KubeconfigConnection: connection.KubeconfigConnection{Kubeconfig: secretRef()},
+				EKS:                  &connection.EKSConnection{AWSConnection: aws},
+				GKE:                  &connection.GKEConnection{GCPConnection: gcp},
+				CNRM:                 &connection.CNRMConnection{GKE: connection.GKEConnection{GCPConnection: gcp}},
+			},
+		}}}
+		redacted := redactedRequest(req)
+		Expect(redacted.Setup.Connections.AWS.Region).To(Equal("us-east-1"))
+		Expect(redacted.Setup.Connections.Azure.TenantID).To(Equal("tenant-x"))
+		Expect(fmt.Sprintf("%+v", redacted.Setup.Connections)).NotTo(ContainSubstring(secret))
+		raw, err := json.Marshal(redacted.Setup.Connections)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).NotTo(ContainSubstring(secret))
+		Expect(string(raw)).NotTo(ContainSubstring("valueFrom"))
+		Expect(req.Setup.Connections.Azure.ClientSecret.ValueStatic).To(Equal(secret))
+		Expect(req.Setup.Connections.Kubernetes.CNRM.GKE.Credentials.ValueStatic).To(Equal(secret))
+		Expect(req.Setup.Connections.AWS.SecretKey.ValueFrom).NotTo(BeNil())
 	})
 	It("drains a cancelled stream and forwards a waiting terminal result", func() {
 		input := make(chan ai.Event)
