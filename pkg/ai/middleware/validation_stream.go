@@ -191,6 +191,7 @@ func (v *validatingProvider) streamRepair(ctx context.Context, parent ai.Request
 		if c, ok := provider.(io.Closer); ok {
 			defer func() { _ = c.Close() }()
 		}
+		provider = &observingProvider{provider: provider}
 	}
 	streamer, ok := provider.(ai.StreamingProvider)
 	if !ok {
