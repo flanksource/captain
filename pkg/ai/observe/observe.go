@@ -18,8 +18,17 @@ import (
 
 var log = logger.GetLogger("ai")
 
+type ProviderPhase string
+
+const (
+	PhaseRequest   ProviderPhase = "request"
+	PhaseResponse  ProviderPhase = "response"
+	PhaseIteration ProviderPhase = "iteration"
+	PhaseTool      ProviderPhase = "tool"
+)
+
 type ProviderEvent struct {
-	Phase          string
+	Phase          ProviderPhase
 	Model, Backend string
 	Iter           int
 	Request        *ai.Request
@@ -44,7 +53,9 @@ func ObservingProvider() bool { return providerObservers.count.Load() != 0 }
 
 // ObserveProvider registers a process-wide observer. Delivery is synchronous;
 // the callback must not block. Provider calls are observed when a listener is
-// registered at their start.
+// registered at their start. Observed requests and responses are copies, but
+// interface-typed payloads (Response.StructuredData, Response.Raw) are shared
+// with the caller and must be treated as read-only.
 // Release is idempotent; a delivery already in progress may complete after it returns.
 func ObserveProvider(deliver func(ProviderEvent)) (release func()) {
 	if deliver == nil {
@@ -205,12 +216,13 @@ func (p *observingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Re
 func (p *observingProvider) executeObserved(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	start := time.Now()
 	observers := providerObserverSnapshot()
-	publishObserved(observers, ProviderEvent{Phase: "request", Model: p.GetModel(), Backend: p.GetRuntime().String(), Request: redactedRequest(req), StartedAt: start})
+	publishObserved(observers, ProviderEvent{Phase: PhaseRequest, Model: p.GetModel(), Backend: p.GetRuntime().String(), Request: redactedRequest(req), StartedAt: start})
 	resp, err := p.provider.Execute(ctx, req)
 	if providerObservers.count.Load() != 0 {
-		event := ProviderEvent{Phase: "response", Model: p.GetModel(), Backend: p.GetRuntime().String(), Response: resp, StartedAt: start, Duration: time.Since(start), Err: err}
+		event := ProviderEvent{Phase: PhaseResponse, Model: p.GetModel(), Backend: p.GetRuntime().String(), StartedAt: start, Duration: time.Since(start), Err: err}
 		if resp != nil {
-			event.Usage, event.Cost = resp.Usage, resp.CostUSD
+			observed := merge.Clone(*resp, api.MergePolicy())
+			event.Response, event.Usage, event.Cost = &observed, resp.Usage, resp.CostUSD
 		}
 		publishObserved(observers, event)
 	}
@@ -231,7 +243,7 @@ func (p *observingProvider) ExecuteStream(ctx context.Context, req ai.Request) (
 func (p *observingProvider) executeStreamObserved(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
 	start := time.Now()
 	observers := providerObserverSnapshot()
-	publishObserved(observers, ProviderEvent{Phase: "request", Model: p.GetModel(), Backend: p.GetRuntime().String(), Request: redactedRequest(req), StartedAt: start})
+	publishObserved(observers, ProviderEvent{Phase: PhaseRequest, Model: p.GetModel(), Backend: p.GetRuntime().String(), Request: redactedRequest(req), StartedAt: start})
 	streamer, ok := p.provider.(ai.StreamingProvider)
 	var stream <-chan ai.Event
 	var err error
@@ -241,7 +253,7 @@ func (p *observingProvider) executeStreamObserved(ctx context.Context, req ai.Re
 		err = fmt.Errorf("provider %s/%s does not support streaming", p.GetRuntime(), p.GetModel())
 	}
 	if err != nil {
-		publishObserved(observers, ProviderEvent{Phase: "response", Model: p.GetModel(), Backend: p.GetRuntime().String(), StartedAt: start, Duration: time.Since(start), Err: err})
+		publishObserved(observers, ProviderEvent{Phase: PhaseResponse, Model: p.GetModel(), Backend: p.GetRuntime().String(), StartedAt: start, Duration: time.Since(start), Err: err})
 		return nil, err
 	}
 	out := make(chan ai.Event, 1)
@@ -256,7 +268,7 @@ func (p *observingProvider) forwardStream(ctx context.Context, stream <-chan ai.
 	defer func() {
 		response.Text, response.Duration = text.String(), time.Since(start)
 		close(out)
-		publishObserved(observers, ProviderEvent{Phase: "response", Model: p.GetModel(), Backend: p.GetRuntime().String(), Response: response, Usage: response.Usage, Cost: response.CostUSD, StartedAt: start, Duration: response.Duration, Err: streamErr})
+		publishObserved(observers, ProviderEvent{Phase: PhaseResponse, Model: p.GetModel(), Backend: p.GetRuntime().String(), Response: response, Usage: response.Usage, Cost: response.CostUSD, StartedAt: start, Duration: response.Duration, Err: streamErr})
 	}()
 	for ev := range stream {
 		outcome, err := ai.TerminalOutcomeFromEvent(ev)

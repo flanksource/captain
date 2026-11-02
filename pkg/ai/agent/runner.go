@@ -401,12 +401,12 @@ func (r *Runner[T]) updateResponse(hc *HookContext, prev *ai.LoopIteration) erro
 // set of files the agent changed (repo-relative).
 func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
 	hc.trace.Observe(ev)
-	phase := ""
+	var phase observe.ProviderPhase
 	switch ev.Kind {
 	case ai.EventTurnStart:
-		phase = "iteration"
+		phase = observe.PhaseIteration
 	case ai.EventToolUse, ai.EventToolResult, ai.EventToolProgress:
-		phase = "tool"
+		phase = observe.PhaseTool
 	}
 	if phase != "" && observe.ObservingProvider() {
 		observe.PublishProvider(observe.ProviderEvent{Phase: phase, Iter: hc.Iteration, Model: r.Provider.GetModel(), Backend: r.Provider.GetRuntime().String(), Event: &ev})
