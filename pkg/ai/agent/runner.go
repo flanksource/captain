@@ -402,9 +402,9 @@ func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
 	phase := ""
 	switch ev.Kind {
 	case ai.EventTurnStart:
-		phase = "iteration"
+		phase = observe.PhaseIteration
 	case ai.EventToolUse, ai.EventToolResult, ai.EventToolProgress:
-		phase = "tool"
+		phase = observe.PhaseTool
 	}
 	if phase != "" && middleware.ObservingProvider() {
 		published := ev

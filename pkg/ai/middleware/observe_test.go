@@ -43,8 +43,8 @@ var _ = Describe("provider observers", func() {
 		_, err = p.Execute(context.Background(), ai.Request{})
 		Expect(err).To(MatchError(failure))
 		Expect(events).To(HaveLen(2))
-		Expect(events[0].Phase).To(Equal("request"))
-		Expect(events[1].Phase).To(Equal("response"))
+		Expect(events[0].Phase).To(Equal(observe.PhaseRequest))
+		Expect(events[1].Phase).To(Equal(observe.PhaseResponse))
 		Expect(events[1].Model).To(Equal("test-model"))
 		Expect(events[1].Backend).NotTo(BeEmpty())
 		Expect(events[1].Usage).To(Equal(response.Usage))
@@ -64,7 +64,7 @@ var _ = Describe("provider observers", func() {
 		defer release()
 		stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), ai.Request{})
 		Expect(err).NotTo(HaveOccurred())
-		Expect((<-observed).Phase).To(Equal("request"))
+		Expect((<-observed).Phase).To(Equal(observe.PhaseRequest))
 		go func() { input <- ai.Event{Kind: ai.EventText, Text: "hello"} }()
 		Expect((<-stream).Text).To(Equal("hello"))
 		go func() {
@@ -124,7 +124,7 @@ var _ = Describe("provider observers", func() {
 		}
 		for i := 0; i < 4; i++ {
 			ev := <-observed
-			if ev.Phase != "request" {
+			if ev.Phase != observe.PhaseRequest {
 				continue
 			}
 			Expect(ev.Request.Setup.Env).To(Equal([]string{"TOKEN=[REDACTED]"}))
@@ -135,6 +135,27 @@ var _ = Describe("provider observers", func() {
 		Expect(req.Setup.Env[0]).To(Equal("TOKEN=secret"))
 		Expect(req.Setup.EnvVars[0].ValueStatic).To(Equal("hidden"))
 		Expect(req.Labels["key"]).To(Equal("original"))
+	})
+	It("isolates the observed buffered response from the caller's response", func() {
+		response := &ai.Response{Text: "original", Context: &api.ContextUsage{UsedTokens: 5}, Usage: ai.Usage{InputTokens: 7}, CostUSD: 0.1}
+		p, err := Wrap(&observedStub{stubProvider: stubProvider{resp: response}}, WithObservers())
+		Expect(err).NotTo(HaveOccurred())
+		var observed observe.ProviderEvent
+		release := observe.ObserveProvider(func(ev observe.ProviderEvent) {
+			if ev.Phase == observe.PhaseResponse {
+				observed = ev
+				ev.Response.Text = "changed"
+				ev.Response.Context.UsedTokens = 9
+			}
+		})
+		defer release()
+		got, err := p.Execute(context.Background(), ai.Request{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeIdenticalTo(response))
+		Expect(got.Text).To(Equal("original"))
+		Expect(got.Context.UsedTokens).To(Equal(5))
+		Expect(observed.Usage.InputTokens).To(Equal(7))
+		Expect(observed.Cost).To(Equal(0.1))
 	})
 	It("redacts connection credentials in observed requests without mutating the original request", func() {
 		const secret = "connection-secret"
@@ -158,7 +179,7 @@ var _ = Describe("provider observers", func() {
 		Expect(err).NotTo(HaveOccurred())
 		var redacted *ai.Request
 		release := observe.ObserveProvider(func(ev observe.ProviderEvent) {
-			if ev.Phase == "request" {
+			if ev.Phase == observe.PhaseRequest {
 				redacted = ev.Request
 			}
 		})
@@ -314,10 +335,10 @@ var _ = Describe("provider observers", func() {
 		for i := 0; i < 4; i++ {
 			var ev ProviderEvent
 			Eventually(observed, time.Second).Should(Receive(&ev))
-			if ev.Phase == "request" {
+			if ev.Phase == observe.PhaseRequest {
 				requests++
 			}
-			if ev.Phase == "response" {
+			if ev.Phase == observe.PhaseResponse {
 				responses++
 			}
 		}
