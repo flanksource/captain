@@ -189,6 +189,10 @@ func (p *Provider) runTool(
 	}
 
 	out, err := def.Handler(ctx, args)
+	var parts api.ToolOutputParts
+	if err == nil {
+		parts, err = api.ToolOutput(out)
+	}
 	if err != nil {
 		if emitErr := p.emitToolResult(ai.Event{Kind: ai.EventToolResult, Tool: def.Name, ToolCallID: callID, Success: false, Text: err.Error(), Model: p.cfg.Model.Name}, emit, correlation); emitErr != nil {
 			return nil, emitErr
@@ -197,10 +201,10 @@ func (p *Provider) runTool(
 		return map[string]any{"error": err.Error()}, nil
 	}
 
-	if err := p.emitToolResult(ai.Event{Kind: ai.EventToolResult, Tool: def.Name, ToolCallID: callID, Success: true, Text: toolOutputText(out), Model: p.cfg.Model.Name}, emit, correlation); err != nil {
+	if err := p.emitToolResult(ai.Event{Kind: ai.EventToolResult, Tool: def.Name, ToolCallID: callID, Success: true, Text: parts.Text, Output: parts.Display, Model: p.cfg.Model.Name}, emit, correlation); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return api.ModelValue(out), nil
 }
 
 // toolDenied emits a failed EventToolResult and returns the deny reason to the
@@ -240,21 +244,6 @@ func toArgsMap(input any) map[string]any {
 		return map[string]any{}
 	}
 	return m
-}
-
-// toolOutputText renders a handler's return value as the EventToolResult text.
-func toolOutputText(out any) string {
-	if out == nil {
-		return ""
-	}
-	if s, ok := out.(string); ok {
-		return s
-	}
-	data, err := json.Marshal(out)
-	if err != nil {
-		return fmt.Sprintf("%v", out)
-	}
-	return string(data)
 }
 
 // static assertion: the genkit provider advertises caller-tool support.

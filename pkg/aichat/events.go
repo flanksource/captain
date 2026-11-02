@@ -255,7 +255,7 @@ func (s *eventStream) toolResult(event api.Event) error {
 	}
 	part := Part{ToolCallID: event.ToolCallID}
 	if event.Success {
-		output, err := jsonValue(event.Text)
+		output, err := toolOutputValue(event)
 		if err != nil {
 			return fmt.Errorf("decode tool %q output: %w", event.Tool, err)
 		}

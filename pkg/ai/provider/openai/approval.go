@@ -243,14 +243,14 @@ func (p *Provider) resumeCalls(ctx context.Context, resume *api.ToolApprovalResu
 			if out != nil {
 				emit(ctx, out, ai.Event{Kind: ai.EventToolUse, Tool: call.Request.Tool, Input: args, ToolCallID: call.Request.ToolCallID, Model: p.model})
 			}
-			value, err := definition.Handler(ctx, args)
+			value, parts, err := runTool(ctx, definition, args)
 			if err != nil {
 				if out != nil {
 					emit(ctx, out, ai.Event{Kind: ai.EventToolResult, Tool: call.Request.Tool, ToolCallID: call.Request.ToolCallID, Success: false, Text: err.Error(), Model: p.model})
 				}
 				value = map[string]any{"error": err.Error()}
 			} else if out != nil {
-				emit(ctx, out, ai.Event{Kind: ai.EventToolResult, Tool: call.Request.Tool, ToolCallID: call.Request.ToolCallID, Success: true, Text: toolOutputText(value), Model: p.model})
+				emit(ctx, out, ai.Event{Kind: ai.EventToolResult, Tool: call.Request.Tool, ToolCallID: call.Request.ToolCallID, Success: true, Text: parts.Text, Output: parts.Display, Model: p.model})
 			}
 			resolved = append(resolved, callResult(call.Request.ToolCallID, value))
 		}

@@ -505,7 +505,64 @@ var _ = DescribeTable("caller-tool result shaping",
 	Entry("array is JSON text only", []any{map[string]any{"id": "a"}},
 		toolOutputOf{Text: `[{"id":"a"}]`}),
 	Entry("nil is JSON null text only", nil, toolOutputOf{Text: "null"}),
+	Entry("structured tool result is content for the model and structured data for clients",
+		api.StructuredToolResult{Content: "| id |\n| a |", Structured: map[string]any{"data": []any{map[string]any{"id": "a"}}}},
+		toolOutputOf{Structured: map[string]any{"data": []any{map[string]any{"id": "a"}}}, Text: "| id |\n| a |"}),
 )
+
+var _ = Describe("caller-tool display results", func() {
+	preview := api.StructuredToolResult{Content: "| id |\n| a |", Structured: map[string]any{"data": []any{map[string]any{"id": "a"}}}}
+
+	call := func(ctx SpecContext, output any, meta *mcp.Meta) (*mcp.CallToolResult, []callertools.CallResult) {
+		var reported []callertools.CallResult
+		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
+			Definitions: []api.ToolDefinition{{
+				Name: "journals", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(context.Context, map[string]any) (any, error) { return output, nil },
+			}},
+			OnResult: func(result callertools.CallResult) { reported = append(reported, result) },
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		request := mcp.CallToolRequest{}
+		request.Params.Name = "journals"
+		request.Params.Arguments = map[string]any{"limit": "25"}
+		request.Params.Meta = meta
+		result, err := client.CallTool(ctx, request)
+		Expect(err).NotTo(HaveOccurred())
+		return result, reported
+	}
+
+	It("reports the display value under the provider's tool-use ID", func(ctx SpecContext) {
+		_, reported := call(ctx, preview, &mcp.Meta{AdditionalFields: map[string]any{"toolUseId": "toolu_1"}})
+		Expect(reported).To(HaveLen(1))
+		Expect(reported[0].ToolUseID).To(Equal("toolu_1"))
+		Expect(reported[0].ToolUseIDGenerated).To(BeFalse())
+		Expect(reported[0].Tool).To(Equal("journals"))
+		Expect(reported[0].Output).To(MatchJSON(`{"data":[{"id":"a"}]}`))
+	})
+
+	It("reports the input the provider sent when it gave no tool-use ID", func(ctx SpecContext) {
+		_, reported := call(ctx, preview, nil)
+		Expect(reported).To(HaveLen(1))
+		Expect(reported[0].ToolUseIDGenerated).To(BeTrue())
+		Expect(reported[0].Input).To(Equal(map[string]any{"limit": "25"}))
+	})
+
+	It("reports nothing when the model text is also the display", func(ctx SpecContext) {
+		_, reported := call(ctx, map[string]any{"status": "approved"}, nil)
+		Expect(reported).To(BeEmpty())
+	})
+
+	It("fails the call when structured data is not a JSON object, which MCP clients would reject", func(ctx SpecContext) {
+		result, reported := call(ctx, api.StructuredToolResult{Content: "rows", Structured: []any{"a"}}, nil)
+		Expect(result.IsError).To(BeTrue())
+		Expect(reported).To(BeEmpty())
+	})
+})
 
 type toolOutputOf struct {
 	Structured any

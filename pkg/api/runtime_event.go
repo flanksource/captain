@@ -104,6 +104,10 @@ type TurnStart struct {
 type Event struct {
 	Kind EventKind
 	Text string // text content; tool output when Kind == EventToolResult
+	// Output is the display value of an EventToolResult when it differs from the
+	// model-facing Text (a StructuredToolResult's Structured, as JSON). Nil means
+	// Text is also what a UI renders.
+	Output json.RawMessage
 
 	Tool  string         // when Kind == EventToolUse
 	Input map[string]any // when Kind == EventToolUse

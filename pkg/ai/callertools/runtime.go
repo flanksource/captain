@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
@@ -60,6 +61,23 @@ type Options struct {
 	ValidateCredential func(context.Context) error
 
 	ApprovalTimeout time.Duration
+
+	// OnResult receives the display value of every call whose handler returned
+	// an api.StructuredToolResult, before the result is sent back. An agent CLI
+	// reports only the content it read, so this is how its host attaches the
+	// structured data to that call's EventToolResult.
+	OnResult func(CallResult)
+}
+
+// CallResult is one completed call's display value with the facts needed to
+// match it to the provider's tool call: ToolUseID when the provider supplied
+// one, otherwise the tool and the input exactly as the provider sent it.
+type CallResult struct {
+	Tool               string
+	Input              map[string]any
+	ToolUseID          string
+	ToolUseIDGenerated bool
+	Output             json.RawMessage
 }
 
 // Runtime owns one loopback-only MCP server and its in-memory bearer
@@ -75,6 +93,7 @@ type Runtime struct {
 	expiresAt   time.Time
 
 	approvalTimeout time.Duration
+	onResult        func(CallResult)
 	ctx             context.Context
 	contextForCall  func() context.Context
 	cancel          context.CancelFunc
@@ -135,6 +154,7 @@ func New(options Options) (*Runtime, error) {
 		tokenHash:       sha256.Sum256([]byte(token)),
 		expiresAt:       options.ExpiresAt,
 		approvalTimeout: options.ApprovalTimeout,
+		onResult:        options.OnResult,
 		ctx:             ctx,
 		contextForCall:  options.ContextForCall,
 		cancel:          cancel,
@@ -255,6 +275,7 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		sentInput := maps.Clone(input)
 		if definition.NeedsApproval() {
 			if r.onApproval == nil {
 				return mcp.NewToolResultError("tool approval is required but no approval broker is configured"), nil
@@ -290,28 +311,50 @@ func (r *Runtime) handler(definition api.ToolDefinition) server.ToolHandlerFunc 
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		result, err := toolResult(output)
+		result, display, err := toolResult(output)
 		if err != nil {
 			return mcp.NewToolResultErrorf("marshal caller tool %q result: %v", definition.Name, err), nil
+		}
+		if display != nil && r.onResult != nil {
+			r.onResult(CallResult{
+				Tool: definition.Name, Input: sentInput, ToolUseID: toolUseID,
+				ToolUseIDGenerated: generatedToolUseID, Output: display,
+			})
 		}
 		return result, nil
 	}
 }
 
 // toolResult only sets structuredContent for JSON objects: MCP requires it to
-// be an object, and clients reject the whole result otherwise.
-func toolResult(output any) (*mcp.CallToolResult, error) {
+// be an object, and clients reject the whole result otherwise. A
+// StructuredToolResult also returns its display value, which the model text
+// does not carry.
+func toolResult(output any) (*mcp.CallToolResult, json.RawMessage, error) {
+	if structured, ok := output.(api.StructuredToolResult); ok {
+		parts, err := api.ToolOutput(structured)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !isJSONObject(parts.Display) {
+			return nil, nil, fmt.Errorf("structured content must be a JSON object, got %.40s", parts.Display)
+		}
+		return mcp.NewToolResultStructured(structured.Structured, parts.Text), parts.Display, nil
+	}
 	if text, ok := output.(string); ok {
-		return mcp.NewToolResultText(text), nil
+		return mcp.NewToolResultText(text), nil, nil
 	}
 	encoded, err := json.Marshal(output)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if bytes.HasPrefix(bytes.TrimSpace(encoded), []byte("{")) {
-		return mcp.NewToolResultStructured(output, string(encoded)), nil
+	if isJSONObject(encoded) {
+		return mcp.NewToolResultStructured(output, string(encoded)), nil, nil
 	}
-	return mcp.NewToolResultText(string(encoded)), nil
+	return mcp.NewToolResultText(string(encoded)), nil, nil
+}
+
+func isJSONObject(encoded []byte) bool {
+	return bytes.HasPrefix(bytes.TrimSpace(encoded), []byte("{"))
 }
 
 func (r *Runtime) authorize(next http.Handler) http.Handler {
