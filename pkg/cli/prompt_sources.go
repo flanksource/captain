@@ -88,8 +88,8 @@ func buildPromptSources(ctx context.Context, options promptSourceOptions) ([]pro
 		}
 		sources = append(sources, source)
 	}
-	if _, ok := firstWritableSource(sources); !ok {
-		dir := filepath.Join(cwd, ".captain", "prompts")
+	if dir := filepath.Join(cwd, ".captain", "prompts"); !seen[dir] {
+		seen[dir] = true
 		sources = append(sources, promptSource{
 			Kind:     "local",
 			ID:       hashPromptDir(dir),
