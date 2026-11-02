@@ -3,7 +3,7 @@
 # the same contents or a rollback lands on something other than what it rolled
 # back to. Bump the digest deliberately (docker buildx imagetools inspect
 # flanksource/base-image:latest) rather than letting the tag drift underneath.
-FROM flanksource/base-image:latest@sha256:f5f0945741678d7702eb13da393102dbdd10a19fb20b6e06a7efe241d5395173
+FROM flanksource/base-image:0.9.0@sha256:17339ffc61a37baf58dd0dd85d8b5e46357c3dcb451f1bbc2fc2bd99576eb70f
 
 ARG TZ
 ENV TZ="$TZ"

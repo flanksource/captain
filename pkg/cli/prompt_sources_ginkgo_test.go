@@ -77,4 +77,17 @@ var _ = Describe("Prompt source discovery", func() {
 		Expect(writable.Root).To(HaveSuffix(filepath.Join(".captain", "prompts")))
 		Expect(sources).To(ContainElement(SatisfyAll(HaveField("Root", promptsDir), HaveField("Implicit", true), HaveField("Writable", true))))
 	})
+
+	It("discovers workspace overrides even when another writable source is configured", func() {
+		workspace := GinkgoT().TempDir()
+		root := filepath.Join(workspace, ".captain", "prompts")
+		Expect(os.MkdirAll(root, 0o755)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(root, "workspace-review.prompt"), []byte("Workspace review."), 0o600)).To(Succeed())
+		ctx, err := PromptContext(context.Background(), workspace)
+		Expect(err).NotTo(HaveOccurred())
+		ctx = ContextWithPromptSources(ctx, PromptSources{Dirs: []string{GinkgoT().TempDir()}})
+		detail, err := InspectPrompt(ctx, workspace, "workspace-review")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(detail.Content).To(Equal("Workspace review."))
+	})
 })
