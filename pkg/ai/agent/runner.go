@@ -374,7 +374,8 @@ func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
 		phase = "tool"
 	}
 	if phase != "" && middleware.ObservingProvider() {
-		middleware.PublishProvider(middleware.ProviderEvent{Phase: phase, Iter: hc.Iteration, Model: r.Provider.GetModel(), Backend: r.Provider.GetRuntime().String(), Event: &ev})
+		published := ev
+		middleware.PublishProvider(middleware.ProviderEvent{Phase: phase, Iter: hc.Iteration, Model: r.Provider.GetModel(), Backend: r.Provider.GetRuntime().String(), Event: &published})
 	}
 	ws := hc.Workspace()
 	switch ev.Kind {
