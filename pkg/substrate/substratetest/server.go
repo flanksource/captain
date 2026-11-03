@@ -41,6 +41,9 @@ import (
 type Server struct {
 	// RefusePolicy, when set, is the error CreateActorEgressPolicy answers with.
 	RefusePolicy error
+	// RefuseDelete, when set, is the error DeleteEnvironment answers with, as Substrate does when
+	// it can't upload an environment's snapshot.
+	RefuseDelete error
 	// StreamLimit, when positive, ends every StreamProcessOutput stream after that many output
 	// messages, as Substrate's router ends a long stream, so a client has to reconnect.
 	StreamLimit int
@@ -173,6 +176,9 @@ func (e environments) DeleteEnvironment(_ context.Context, req *ateenvv1alpha.De
 	s := e.s
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.RefuseDelete != nil {
+		return nil, s.RefuseDelete
+	}
 	key := req.GetAtespace() + "/" + req.GetId()
 	env, ok := s.envs[key]
 	if !ok {
