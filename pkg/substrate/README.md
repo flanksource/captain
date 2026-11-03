@@ -41,6 +41,12 @@ processes are real processes run in it, so the client's tests run real commands 
 uses a kind cluster with Substrate and env installed, as gavel's `docs/sandbox.md` sets one up,
 with ate-env-api port-forwarded to `localhost:7777` and ate-api-server to `localhost:8443`. Set
 `CAPTAIN_SUBSTRATE_TOKEN_FILE` to a token for the control plane, and `CAPTAIN_SUBSTRATE_IMAGE` to an
-image the cluster pulls, pinned by digest, that has `sh`, `cat` and `tr`.
+image the cluster pulls, pinned by digest, that has `sh` and coreutils.
 `CAPTAIN_SUBSTRATE_ENV_API`, `CAPTAIN_SUBSTRATE_CONTROL` and `CAPTAIN_SUBSTRATE_TEMPLATE` (default
-`default-template`) override the rest.
+`default-template`) override the rest. For a Substrate behind a client-certificate ingress, set
+`CAPTAIN_SUBSTRATE_CLIENT_CERT` and `CAPTAIN_SUBSTRATE_CLIENT_KEY`, and `CAPTAIN_SUBSTRATE_CA_FILE`
+when its certificate isn't signed by a system root. `CAPTAIN_SUBSTRATE_ATESPACE` overrides
+`ate-env`.
+
+`TestLargeFilesRoundTripAgainstACluster` moves a 50 MiB file in and back out, comparing checksums
+on both sides, so a proxy that buffers or cuts gRPC streams shows.
