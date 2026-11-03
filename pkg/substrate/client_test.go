@@ -187,6 +187,18 @@ func TestDeleteRemovesTheEnvironment(t *testing.T) {
 	assert.Contains(t, err.Error(), "delete substrate environment ate-env/run-1")
 }
 
+func TestDeleteSaysWhySubstrateRefusedIt(t *testing.T) {
+	server := substratetest.Start(t)
+	ctx := testContext(t)
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	require.NoError(t, err)
+
+	server.RefuseDelete = status.Error(codes.Internal, "object-store plugin upload failed")
+	require.EqualError(t, env.Delete(ctx), "delete substrate environment ate-env/run-1: rpc error: code = Internal desc = object-store plugin upload failed")
+	_, live := server.Environment("ate-env", "run-1")
+	assert.True(t, live, "a refused delete leaves the environment")
+}
+
 func TestDialNeedsBothAPIs(t *testing.T) {
 	_, err := substrate.Dial(substrate.Options{EnvAPI: "env:7777"})
 	require.EqualError(t, err, "substrate needs the ate-env-api and ate-api-server addresses")
