@@ -118,6 +118,14 @@ var sandboxCapabilityChecks = map[SandboxCapability]func(Sandbox) bool{
 	},
 }
 
+// RegisterSandboxCapabilityCheck adds the construction-time verifier of a
+// capability whose interface pkg/api can't name: promptrun's RemoteRunner takes
+// promptrun's own Input. The package that defines the interface calls it from
+// init(), so the table is complete before any sandbox is constructed.
+func RegisterSandboxCapabilityCheck(capability SandboxCapability, check func(Sandbox) bool) {
+	sandboxCapabilityChecks[capability] = check
+}
+
 func verifySandboxCapabilities(descriptor *SandboxDescriptor, sandbox Sandbox) error {
 	for _, capability := range descriptor.Capabilities {
 		check, ok := sandboxCapabilityChecks[capability]

@@ -137,7 +137,7 @@ func TestPromptSchemaDocumentSandboxEnumIncludesConfiguredBackends(t *testing.T)
 	scalar := forms[0].(map[string]any)
 	object := forms[1].(map[string]any)
 	backend := object["properties"].(map[string]any)["backend"].(map[string]any)
-	want := []any{"off", "native", "docker", "git-agent", "local-docker", "prod-pool"}
+	want := []any{"off", "native", "docker", "git-agent", "substrate", "local-docker", "prod-pool"}
 	if !reflect.DeepEqual(scalar["enum"], want) {
 		t.Errorf("scalar sandbox enum = %v, want %v", scalar["enum"], want)
 	}
