@@ -56,7 +56,8 @@ type Input struct {
 	// remote-executing sandbox that materialises the checkout on its own side,
 	// or a test double. Run then adds no setup hook. Nil means Run constructs
 	// the provider from Config and prepares Request.Setup through the setup
-	// plugin, in-process.
+	// plugin, in-process — unless Config.SandboxSelection executes remotely, in
+	// which case Run takes RemoteProvider as if the caller had passed it.
 	Provider ai.Provider
 	// Hooks are the caller's own agent hooks — a host's commit pipeline, an
 	// environment stamp. They sit after the workflow's checks and before setup,
@@ -155,6 +156,11 @@ func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error)
 	if err := bindToolApprovals(&in); err != nil {
 		return Result{}, false, err
 	}
+	releaseRemote, err := relocate(&in)
+	if err != nil {
+		return Result{}, false, err
+	}
+	defer releaseRemote()
 	provider, release, err := buildProvider(in)
 	if err != nil {
 		return Result{}, false, err
