@@ -207,6 +207,8 @@ type process struct {
 	id      string
 	command []string
 	cmd     *exec.Cmd
+	// stdin is the process's stdin, nil unless it was started with stdin.
+	stdin io.WriteCloser
 
 	mu       sync.Mutex
 	stdout   []byte
@@ -291,9 +293,6 @@ func (ps processes) StartProcess(ctx context.Context, req *ateenvv1alpha.StartPr
 	if len(req.GetCommand()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "the process has no command")
 	}
-	if req.GetStdin() {
-		return nil, status.Error(codes.Unimplemented, "stdin")
-	}
 	env.mu.Lock()
 	env.next++
 	id := "process-" + strconv.Itoa(env.next)
@@ -308,6 +307,11 @@ func (ps processes) StartProcess(ctx context.Context, req *ateenvv1alpha.StartPr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	p := &process{id: id, command: req.GetCommand(), cmd: cmd, started: time.Now()}
 	cmd.Stdout, cmd.Stderr = spool{p: p}, spool{p: p, stderr: true}
+	if req.GetStdin() {
+		if p.stdin, err = cmd.StdinPipe(); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "start %v: %v", req.GetCommand(), err)
 	}
@@ -398,6 +402,42 @@ func tail(spooled []byte, offset int64) []byte {
 		return nil
 	}
 	return append([]byte(nil), spooled[offset:]...)
+}
+
+func (ps processes) WriteProcessInput(stream grpc.ClientStreamingServer[ateenvv1alpha.WriteProcessInputRequest, ateenvv1alpha.WriteProcessInputResponse]) error {
+	env, err := ps.s.guest(stream.Context())
+	if err != nil {
+		return err
+	}
+	var p *process
+	var written int64
+	for {
+		req, err := stream.Recv()
+		if err == io.EOF {
+			return stream.SendAndClose(&ateenvv1alpha.WriteProcessInputResponse{BytesWritten: written})
+		}
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			if p, err = env.process(req.GetProcessId()); err != nil {
+				return err
+			}
+			if p.stdin == nil {
+				return status.Errorf(codes.FailedPrecondition, "process %s was started without stdin", p.id)
+			}
+		}
+		n, err := p.stdin.Write(req.GetData())
+		written += int64(n)
+		if err != nil {
+			return status.Errorf(codes.FailedPrecondition, "process %s: %v", p.id, err)
+		}
+		if req.GetClose() {
+			if err := p.stdin.Close(); err != nil {
+				return status.Errorf(codes.FailedPrecondition, "process %s: %v", p.id, err)
+			}
+		}
+	}
 }
 
 func (ps processes) SignalProcess(ctx context.Context, req *ateenvv1alpha.SignalProcessRequest) (*ateenvv1alpha.Process, error) {

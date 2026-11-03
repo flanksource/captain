@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -308,6 +309,8 @@ type Process struct {
 	Env map[string]string
 	// Timeout kills the process when it runs longer; zero is the guest's default.
 	Timeout time.Duration
+	// Stdin keeps the process's stdin open for Proc.Input; without it, stdin reads as empty.
+	Stdin bool
 }
 
 // Proc is a started process.
@@ -334,7 +337,7 @@ func (e *Env) Start(ctx context.Context, process Process) (*Proc, error) {
 	if e.client.options.TrustBundle != "" && len(e.credentials) > 0 {
 		env["NODE_EXTRA_CA_CERTS"] = e.client.options.TrustBundle
 	}
-	request := &ateenvv1alpha.StartProcessRequest{Command: process.Command, Cwd: process.Cwd, Env: env}
+	request := &ateenvv1alpha.StartProcessRequest{Command: process.Command, Cwd: process.Cwd, Env: env, Stdin: process.Stdin}
 	if process.Timeout > 0 {
 		request.Timeout = durationpb.New(process.Timeout)
 	}
@@ -348,14 +351,32 @@ func (e *Env) Start(ctx context.Context, process Process) (*Proc, error) {
 // ID is the process's ID in its environment.
 func (p *Proc) ID() string { return p.id }
 
-// Output follows the process's stdout and stderr until it exits. Substrate's router ends a long
-// stream, so it reconnects from the offsets it has read.
-func (p *Proc) Output(ctx context.Context) io.ReadCloser {
+// Output follows the process's stdout and stderr, interleaved, until it exits.
+func (p *Proc) Output(ctx context.Context) io.ReadCloser { return p.follow(ctx, true, true) }
+
+// Stdout follows the process's stdout until it exits.
+func (p *Proc) Stdout(ctx context.Context) io.ReadCloser { return p.follow(ctx, true, false) }
+
+// Stderr follows the process's stderr until it exits.
+func (p *Proc) Stderr(ctx context.Context) io.ReadCloser { return p.follow(ctx, false, true) }
+
+// skipped is an offset past the end of any spool, which suppresses that stream.
+const skipped = math.MaxInt64
+
+// follow follows the process's stdout, stderr or both until it exits. Substrate's router ends a
+// long stream, so it reconnects from the offsets it has read.
+func (p *Proc) follow(ctx context.Context, withStdout, withStderr bool) io.ReadCloser {
 	ctx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
 	go func() {
 		defer cancel()
 		var stdout, stderr int64
+		if !withStdout {
+			stdout = skipped
+		}
+		if !withStderr {
+			stderr = skipped
+		}
 		for {
 			stream, err := p.env.client.processes.StreamProcessOutput(p.env.guest(ctx), &ateenvv1alpha.StreamProcessOutputRequest{
 				ProcessId: p.id, Follow: true, StdoutOffset: stdout, StderrOffset: stderr,
@@ -402,6 +423,41 @@ type output struct {
 func (o *output) Close() error {
 	o.cancel()
 	return o.PipeReader.Close()
+}
+
+// Input writes to the stdin of a process started with Stdin. Each write is its own call, so a
+// stream Substrate's router ends never loses input; Close closes stdin.
+func (p *Proc) Input(ctx context.Context) io.WriteCloser { return input{proc: p, ctx: ctx} }
+
+type input struct {
+	proc *Proc
+	ctx  context.Context
+}
+
+func (in input) Write(data []byte) (int, error) {
+	if err := in.send(&ateenvv1alpha.WriteProcessInputRequest{ProcessId: in.proc.id, Data: data}); err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func (in input) Close() error {
+	return in.send(&ateenvv1alpha.WriteProcessInputRequest{ProcessId: in.proc.id, Close: true})
+}
+
+func (in input) send(request *ateenvv1alpha.WriteProcessInputRequest) error {
+	p := in.proc
+	stream, err := p.env.client.processes.WriteProcessInput(p.env.guest(in.ctx))
+	if err == nil {
+		err = stream.Send(request)
+	}
+	if err == nil || err == io.EOF {
+		_, err = stream.CloseAndRecv()
+	}
+	if err != nil {
+		return fmt.Errorf("write to the stdin of %s in substrate environment %s: %w", p.id, p.env.name(), err)
+	}
+	return nil
 }
 
 // waitInterval is how often Wait asks whether the process exited; a single stream doesn't
