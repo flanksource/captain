@@ -191,3 +191,48 @@ func TestDialNeedsBothAPIs(t *testing.T) {
 	_, err := substrate.Dial(substrate.Options{EnvAPI: "env:7777"})
 	require.EqualError(t, err, "substrate needs the ate-env-api and ate-api-server addresses")
 }
+
+func TestInputReachesAProcessStartedWithStdin(t *testing.T) {
+	server := substratetest.Start(t)
+	ctx := testContext(t)
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	require.NoError(t, err)
+
+	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", "while read line; do echo got $line; done; echo closed"}, Stdin: true})
+	require.NoError(t, err)
+	input := proc.Input(ctx)
+	_, err = io.WriteString(input, "first\n")
+	require.NoError(t, err)
+	_, err = io.WriteString(input, "second\n")
+	require.NoError(t, err)
+	require.NoError(t, input.Close())
+	assert.Equal(t, "got first\ngot second\nclosed\n", readAll(t, proc.Stdout(ctx)))
+}
+
+func TestInputIsRefusedForAProcessWithoutStdin(t *testing.T) {
+	server := substratetest.Start(t)
+	ctx := testContext(t)
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	require.NoError(t, err)
+
+	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sleep", "60"}})
+	require.NoError(t, err)
+	_, err = io.WriteString(proc.Input(ctx), "ignored\n")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "write to the stdin of "+proc.ID()+" in substrate environment ate-env/run-1")
+	require.NoError(t, proc.Kill(ctx))
+}
+
+func TestStdoutAndStderrAreFollowedApart(t *testing.T) {
+	server := substratetest.Start(t)
+	server.StreamLimit = 1
+	ctx := testContext(t)
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	require.NoError(t, err)
+
+	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", "for i in 1 2 3; do echo out $i; echo err $i >&2; sleep 0.05; done"}})
+	require.NoError(t, err)
+	stderr := proc.Stderr(ctx)
+	assert.Equal(t, "out 1\nout 2\nout 3\n", readAll(t, proc.Stdout(ctx)))
+	assert.Equal(t, "err 1\nerr 2\nerr 3\n", readAll(t, stderr))
+}

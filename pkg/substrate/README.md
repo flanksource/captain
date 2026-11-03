@@ -22,9 +22,10 @@ is deleted. Everything the policy doesn't name is denied:
   the host, header and variable of the keys captain knows.
 
 An `Env` moves files in and out (`WriteFile`, `ReadFile`, both streamed) and starts processes
-(`Start`). A `Proc` follows its output (`Output`), reconnecting from its offsets when Substrate's
-router ends the stream; it waits for its exit code (`Wait`); and it kills its process group
-(`Kill`). `Delete` deletes the environment.
+(`Start`). A `Proc` follows its output, interleaved (`Output`) or one stream at a time (`Stdout`,
+`Stderr`), reconnecting from its offsets when Substrate's router ends the stream. It writes to the
+stdin of a process started with `Stdin` (`Input`, one call per write, so an ended stream loses
+nothing). It waits for its exit code (`Wait`) and kills its process group (`Kill`). `Delete` deletes the environment.
 
 ## Generated API
 
