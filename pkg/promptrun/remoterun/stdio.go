@@ -92,11 +92,12 @@ func (s *stdio) read(in *json.Decoder) {
 }
 
 // Relay is the caller's side of the channel. It reads the run's messages from out, its process's
-// stdout; hands events and verification progress to in's OnEvent and Verify.Progress; answers tool
-// calls and approvals with in's tools and OnApproval on input, its stdin; and returns the run's
-// result and error. Handlers get ctx. Relay returns when the run sends its result or out ends, so
-// a caller cancels a run by ending its process.
-func Relay(ctx context.Context, in promptrun.Input, out io.Reader, input io.Writer) (promptrun.Result, error) {
+// stdout; calls started with the spec the run starts with; hands events and verification progress
+// to in's OnEvent and Verify.Progress; answers tool calls and approvals with in's tools and
+// OnApproval on input, its stdin; and returns the run's result and error. Handlers get ctx. Relay
+// returns when the run sends its result, out ends, or started fails, so a caller cancels a run by
+// ending its process.
+func Relay(ctx context.Context, in promptrun.Input, started func(api.Spec) error, out io.Reader, input io.Writer) (promptrun.Result, error) {
 	messages := json.NewDecoder(out)
 	replies := &replier{out: json.NewEncoder(input)}
 	var calls sync.WaitGroup
@@ -111,6 +112,13 @@ func Relay(ctx context.Context, in promptrun.Input, out io.Reader, input io.Writ
 		}
 		switch message.Kind {
 		case KindStarted:
+			var spec api.Spec
+			if message.Spec != nil {
+				spec = *message.Spec
+			}
+			if err := started(spec); err != nil {
+				return promptrun.Result{}, fmt.Errorf("the relocated run started, but its start couldn't be recorded: %w", err)
+			}
 		case KindEvent:
 			if in.OnEvent != nil {
 				in.OnEvent(message.Iteration, message.DecodedEvent())

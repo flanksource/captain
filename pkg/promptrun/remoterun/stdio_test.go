@@ -44,9 +44,13 @@ func (c *channel) environment(fn func(Serve)) {
 }
 
 func (c *channel) relay(t *testing.T, in promptrun.Input) (promptrun.Result, error) {
+	return c.relayStarted(t, in, func(api.Spec) error { return nil })
+}
+
+func (c *channel) relayStarted(t *testing.T, in promptrun.Input, started func(api.Spec) error) (promptrun.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
-	return Relay(ctx, in, c.stdoutR, c.stdinW)
+	return Relay(ctx, in, started, c.stdoutR, c.stdinW)
 }
 
 func TestTheCallerSeesTheRunAndAnswersItsCalls(t *testing.T) {
@@ -67,7 +71,7 @@ func TestTheCallerSeesTheRunAndAnswersItsCalls(t *testing.T) {
 	var tool, approval Reply
 	var toolErr, approvalErr error
 	c.environment(func(serve Serve) {
-		_ = serve.Send(StartedMessage(api.Spec{}))
+		_ = serve.Send(StartedMessage(api.Spec{Prompt: api.Prompt{User: "fix the build"}}))
 		_ = serve.Send(EventMessage(1, api.Event{Kind: api.EventText, Text: "looking"}))
 		_ = serve.Send(ProgressMessage(api.VerifyReport{Iteration: 1}))
 		tool, toolErr = serve.Call(ToolCallMessage("todo_search", map[string]any{"query": "bug"}))
@@ -75,8 +79,13 @@ func TestTheCallerSeesTheRunAndAnswersItsCalls(t *testing.T) {
 		_ = serve.Send(ResultMessage(promptrun.Result{Response: &api.Response{Text: "done"}, CostUSD: 0.5}, nil))
 	})
 
-	result, err := c.relay(t, in)
+	var started []api.Spec
+	result, err := c.relayStarted(t, in, func(spec api.Spec) error {
+		started = append(started, spec)
+		return nil
+	})
 	require.NoError(t, err)
+	assert.Equal(t, []api.Spec{{Prompt: api.Prompt{User: "fix the build"}}}, started)
 	assert.Equal(t, "done", result.Response.Text)
 	assert.Equal(t, 0.5, result.CostUSD)
 	assert.Equal(t, []api.Event{{Kind: api.EventText, Text: "looking"}}, events)
@@ -97,6 +106,16 @@ func TestARunsErrorReachesTheCaller(t *testing.T) {
 	result, err := c.relay(t, promptrun.Input{})
 	require.EqualError(t, err, "verification failed")
 	assert.Equal(t, 0.1, result.CostUSD, "the result comes with the run's error")
+}
+
+func TestARunWhoseStartCannotBeRecordedEndsTheRelay(t *testing.T) {
+	c := newChannel(t)
+	c.environment(func(serve Serve) {
+		_ = serve.Send(StartedMessage(api.Spec{}))
+		_ = serve.Send(ResultMessage(promptrun.Result{}, nil))
+	})
+	_, err := c.relayStarted(t, promptrun.Input{}, func(api.Spec) error { return errBoom })
+	require.EqualError(t, err, "the relocated run started, but its start couldn't be recorded: boom")
 }
 
 func TestARunThatEndsWithoutAResultIsAnError(t *testing.T) {
