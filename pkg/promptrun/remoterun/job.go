@@ -28,7 +28,8 @@ type Job struct {
 	// Tools are the run's caller tools, without their handlers: the environment calls the caller
 	// to run them.
 	Tools []api.ToolDefinition `json:"tools,omitempty"`
-	// Approvals is set when the run asks a person to approve its tool uses, through the caller.
+	// Approvals is set when the run asks the caller to approve its tool uses: the caller answers
+	// them with its Config.OnApproval.
 	Approvals bool `json:"approvals,omitempty"`
 	// Host is the host's own data, which the host's program in the environment rebuilds its hooks
 	// from.
@@ -55,7 +56,7 @@ func JobFor(in promptrun.Input, host json.RawMessage) Job {
 		VerifyTimeout:     in.Verify.Timeout,
 		Timeout:           in.Timeout,
 		Root:              in.Repo,
-		Approvals:         in.Approvals != nil,
+		Approvals:         in.Config.OnApproval != nil,
 		Host:              host,
 	}
 	for _, tool := range in.Config.Tools {

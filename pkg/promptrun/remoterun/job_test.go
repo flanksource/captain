@@ -41,7 +41,9 @@ func TestAJobRebuildsThePromptRunInTheEnvironmentsCheckout(t *testing.T) {
 		Repo:              "/home/dev/repo",
 	}
 	in.Config.Tools = []api.ToolDefinition{{Name: "todo_search", Description: "Search the backlog.", Handler: func(context.Context, map[string]any) (any, error) { return nil, nil }}}
-	in.Approvals = &promptrun.ApprovalOptions{}
+	in.Config.OnApproval = func(context.Context, api.ApprovalRequest) (api.ApprovalDecision, error) {
+		return api.ApprovalDecision{}, nil
+	}
 
 	job := roundTrip(t, JobFor(in, json.RawMessage(`{"issue":"todo-1"}`)))
 	encoded, err := json.Marshal(JobFor(in, nil))
@@ -65,6 +67,11 @@ func TestAJobRebuildsThePromptRunInTheEnvironmentsCheckout(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, relocated.Timeout)
 	assert.Nil(t, relocated.Record, "the environment records nothing")
 	assert.Empty(t, relocated.Config.Tools, "Execute gives the run its tools, which call the caller")
+}
+
+func TestAJobAsksApprovalsOnlyWhenTheCallerAnswersThem(t *testing.T) {
+	in := promptrun.Input{Approvals: &promptrun.ApprovalOptions{}}
+	assert.False(t, JobFor(in, nil).Approvals, "a run is handed over once its approvals are bound to Config.OnApproval")
 }
 
 func TestAPathOutsideTheJobsRootMovesToTheCheckout(t *testing.T) {
