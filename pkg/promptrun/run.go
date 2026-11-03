@@ -57,7 +57,8 @@ type Input struct {
 	// or a test double. Run then adds no setup hook. Nil means Run constructs
 	// the provider from Config and prepares Request.Setup through the setup
 	// plugin, in-process — unless Config.SandboxSelection executes remotely, in
-	// which case Run takes RemoteProvider as if the caller had passed it.
+	// which case Run takes RemoteProvider as if the caller had passed it, or runs
+	// whole runs, in which case Run hands the run to its RemoteRunner.
 	Provider ai.Provider
 	// Hooks are the caller's own agent hooks — a host's commit pipeline, an
 	// environment stamp. They sit after the workflow's checks and before setup,
@@ -156,6 +157,13 @@ func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error)
 	if err := bindToolApprovals(&in); err != nil {
 		return Result{}, false, err
 	}
+	if runner, closeRunner, err := remoteRunner(in); err != nil {
+		return Result{}, false, err
+	} else if runner != nil {
+		defer closeRunner()
+		result, err := runRemotely(ctx, in, runner, admission.model, rec)
+		return ended(ctx, result, err)
+	}
 	releaseRemote, err := relocate(&in)
 	if err != nil {
 		return Result{}, false, err
@@ -192,18 +200,24 @@ func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error)
 	}
 	out, runErr := runner.Run(ctx)
 	result, resultErr := newResult(out, identity, time.Since(start))
-	if ctx.Err() != nil {
-		// A stream the stop closed can end the turn before the loop sees the
-		// context: the run still did not complete, and must not read as done.
-		if runErr == nil {
-			runErr = fmt.Errorf("promptrun: run stopped: %w", context.Cause(ctx))
-		}
-		return result, true, runErr
+	if ctx.Err() == nil && runErr == nil {
+		runErr = resultErr
 	}
-	if runErr != nil {
-		return result, false, runErr
+	return ended(ctx, result, runErr)
+}
+
+// ended is how a run that returned result and err ended, and whether it was
+// stopped: it was when its context ended.
+func ended(ctx context.Context, result Result, err error) (Result, bool, error) {
+	if ctx.Err() == nil {
+		return result, false, err
 	}
-	return result, false, resultErr
+	// A stream the stop closed can end the turn before the loop sees the
+	// context: the run still did not complete, and must not read as done.
+	if err == nil {
+		err = fmt.Errorf("promptrun: run stopped: %w", context.Cause(ctx))
+	}
+	return result, true, err
 }
 
 // runHooks is Hooks plus, for a recorded run, the recorder: its progress tap
@@ -213,9 +227,23 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 	if rec == nil {
 		return Hooks(ctx, *in, provider)
 	}
-	rec.prepare(executingRuntime(provider, model), model, in.Resolved.Spec, in.Config.SessionID)
-	if err := rec.offerTools(in.Config.Tools, in.Resolved.Spec); err != nil {
+	if err := recordOn(in, rec, executingRuntime(provider, model), model); err != nil {
 		return nil, err
+	}
+	hooks, err := Hooks(ctx, *in, provider)
+	if err != nil {
+		return nil, err
+	}
+	return append(hooks, rec.hook()), nil
+}
+
+// recordOn readies rec to file the run in describes, served by runtime: the
+// caller tools it offers, its transcript, and its verification progress, which
+// rec files ahead of the caller's tap.
+func recordOn(in *Input, rec *Recorder, runtime api.Runtime, model api.Model) error {
+	rec.prepare(runtime, model, in.Resolved.Spec, in.Config.SessionID)
+	if err := rec.offerTools(in.Config.Tools, in.Resolved.Spec); err != nil {
+		return err
 	}
 	rec.transcribeAPIRun()
 	callerProgress := in.Verify.Progress
@@ -225,11 +253,7 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 			callerProgress(report)
 		}
 	}
-	hooks, err := Hooks(ctx, *in, provider)
-	if err != nil {
-		return nil, err
-	}
-	return append(hooks, rec.hook()), nil
+	return nil
 }
 
 // executingRuntime is the runtime that actually serves the run: the provider's

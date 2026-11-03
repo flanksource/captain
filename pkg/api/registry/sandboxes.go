@@ -44,6 +44,19 @@ var (
 		Modes: []RuntimeMode{ModeCLI, ModeAgent, ModeCmux},
 	}
 
+	SubstrateSandbox = &Sandbox{
+		Kind:        SandboxSubstrate,
+		Description: "Run the whole run in an agent-substrate environment of its own",
+		Capabilities: []SandboxCapability{
+			CapabilityRemoteRun,
+			CapabilityIsolateWorkspace,
+			CapabilityEgressProxy,
+		},
+		// No ModeAPI, as for git-agent: the run's work comes back as commits. No
+		// ModeCmux: the environment has no terminal multiplexer to drive.
+		Modes: []RuntimeMode{ModeCLI, ModeAgent},
+	}
+
 	internalSRTSandbox = &Sandbox{
 		Kind:         SandboxSRTInternal,
 		Description:  "Confine Git Agent receive hooks with sandbox-runtime",
@@ -56,5 +69,5 @@ var (
 // source of truth behind SandboxFor, ParseSandboxKind, and the help/error
 // strings. "none" is first because it is the default.
 func AllSandboxes() []*Sandbox {
-	return []*Sandbox{OffSandbox, NativeSandbox, DockerSandbox, GitAgentSandbox}
+	return []*Sandbox{OffSandbox, NativeSandbox, DockerSandbox, GitAgentSandbox, SubstrateSandbox}
 }

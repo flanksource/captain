@@ -24,6 +24,9 @@ const (
 	// SandboxGitAgent relocates the whole run onto another machine over git.
 	// See specs/SPEC-git-agent-protocol.md.
 	SandboxGitAgent SandboxKind = "git-agent"
+	// SandboxSubstrate runs the whole run in an agent-substrate environment of
+	// its own.
+	SandboxSubstrate SandboxKind = "substrate"
 	// SandboxSRTInternal confines Git Agent receive hooks. It is deliberately not
 	// present in AllSandboxes or ParseSandboxKind and cannot be selected by a run.
 	SandboxSRTInternal SandboxKind = "srt-internal"
@@ -40,6 +43,10 @@ const (
 	CapabilityWrapCommand SandboxCapability = "wrap-command"
 	// CapabilityRemoteExec replaces local execution entirely.
 	CapabilityRemoteExec SandboxCapability = "remote-exec"
+	// CapabilityRemoteRun runs the whole run — setup, every turn, verification
+	// and commits — in an environment of its own, and relays its events, calls
+	// and result back.
+	CapabilityRemoteRun SandboxCapability = "remote-run"
 	// CapabilityIsolateWorkspace materializes its own working tree, and so
 	// conflicts with --worktree and with a setup checkout.
 	CapabilityIsolateWorkspace SandboxCapability = "isolate-workspace"

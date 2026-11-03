@@ -24,7 +24,7 @@ var _ = Describe("Runtime argument mappings", func() {
 		codexMode := runtimeSchemaProperty(api.RuntimeSchemaFor(api.OpenAI, api.ModeCLI), "sandbox", "mode")
 		Expect(codexMode["x-icon"]).To(Equal("shield"))
 		Expect(codexMode["enum"]).To(Equal(apiEnumValues([]api.SandboxKind{
-			api.SandboxOff, api.SandboxNative, api.SandboxDocker, api.SandboxGitAgent,
+			api.SandboxOff, api.SandboxNative, api.SandboxDocker, api.SandboxGitAgent, api.SandboxSubstrate,
 		})))
 		Expect(codexMode["x-clicky-arguments"]).To(ContainElement(map[string]any{
 			"name": "--sandbox", "implementation": "mapped",
