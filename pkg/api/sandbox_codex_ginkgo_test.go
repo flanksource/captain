@@ -24,6 +24,12 @@ var _ = Describe("Codex sandbox translation", func() {
 		Entry("bypass writes its workspace without asking, still sandboxed", api.PermissionBypass, api.CodexSandboxWorkspaceWrite, api.CodexApprovalNever),
 	)
 
+	It("gives codex its whole environment on substrate, which is the run's boundary", func() {
+		translation, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), &api.SandboxRef{Mode: api.SandboxSubstrate}, api.PermissionAcceptEdits)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(translation.Sandbox).To(Equal(api.CodexSandboxDangerFull))
+	})
+
 	It("rejects plan mode with an explicit disabled sandbox", func() {
 		_, err := api.TranslateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), &api.SandboxRef{Mode: api.SandboxOff}, api.PermissionPlan)
 		Expect(err).To(MatchError(ContainSubstring("plan")))

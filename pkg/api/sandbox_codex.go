@@ -71,7 +71,7 @@ func TranslateCodexSandbox(runtime Runtime, ref *SandboxRef, mode PermissionMode
 		}
 		posture.Sandbox = CodexSandboxDangerFull
 		return posture, nil
-	case SandboxDocker, SandboxGitAgent:
+	case SandboxDocker, SandboxGitAgent, SandboxSubstrate:
 		if mode == PermissionPlan {
 			return CodexSandboxTranslation{}, fmt.Errorf("permissions.mode plan is not supported by %s with %s sandbox mode", runtime, ref.Mode)
 		}

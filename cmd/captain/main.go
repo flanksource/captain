@@ -8,6 +8,8 @@ import (
 	"github.com/flanksource/captain/cmd/captain/internal/rootcmd"
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/captain/pkg/gitagent"
+	// Registers the substrate sandbox kind, which promptrun can't import.
+	_ "github.com/flanksource/captain/pkg/sandbox/substraterun"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/flags"
 	"github.com/flanksource/clicky/mcp"

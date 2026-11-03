@@ -91,6 +91,10 @@ func (s *stdio) read(in *json.Decoder) {
 	}
 }
 
+// ErrNoResult is Relay's error when the run's output ends before its result: the run's process
+// exited, or was ended, without finishing the run.
+var ErrNoResult = errors.New("the relocated run ended without a result")
+
 // Relay is the caller's side of the channel. It reads the run's messages from out, its process's
 // stdout; calls started with the spec the run starts with; hands events and verification progress
 // to in's OnEvent and Verify.Progress; answers tool calls and approvals with in's tools and
@@ -106,7 +110,7 @@ func Relay(ctx context.Context, in promptrun.Input, started func(api.Spec) error
 		var message Message
 		if err := messages.Decode(&message); err != nil {
 			if errors.Is(err, io.EOF) {
-				return promptrun.Result{}, errors.New("the relocated run ended without a result")
+				return promptrun.Result{}, ErrNoResult
 			}
 			return promptrun.Result{}, fmt.Errorf("read the relocated run's messages: %w", err)
 		}
