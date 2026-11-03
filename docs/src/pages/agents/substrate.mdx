@@ -1,0 +1,79 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Runs on Agent Substrate
+description: The substrate sandbox — a whole run in an agent-substrate environment of its own, its backend options, and what a cluster needs.
+section: AI Agents
+---
+
+# Runs on Agent Substrate
+
+The `substrate` sandbox runs a whole prompt run in an [agent-substrate](https://github.com/agent-substrate/substrate) environment created for it: setup, every turn, verification and commits happen there. The caller keeps the run's events, tool calls and approvals, and gets its commits back as a branch. Model keys never enter the environment: substrate's egress gateway puts them into the run's requests on the way out.
+
+```bash
+captain prompt run fix.prompt --sandbox beta-substrate
+```
+
+## A run, step by step
+
+1. Captain snapshots your checkout, uncommitted work included, and bundles it.
+2. It creates environment `captain-run-<run>` from the backend's `image`, with egress denied except to the backend's `egress` hosts and the model hosts of its `credentials`.
+3. It writes the run's task and the bundle to `/tmp/captain-run` and starts the backend's `command` there, by default `captain sandbox substrate run-task`.
+4. The run's events, verification progress, tool calls and approvals come back over the process's stdout, and the caller's answers go in on its stdin. Its stderr goes to `~/.captain/sandbox/substrate/<run>/agent.log`.
+5. What the run committed, plus anything it left uncommitted, comes back as branch `captain/substrate/<run>`. The result's `Workspace.Worktree` names it: `Base` is your `HEAD`, `Setup` the snapshot of your uncommitted work, `Head` the branch's tip. Your checkout is left as it was.
+6. The environment is deleted however the run ends. If substrate can't delete it, captain warns and the run's outcome stands.
+
+Stopping a run kills its process. A run whose process exits without a result fails with `substrate run <run> exited <code> without a result; its output is in <log>`.
+
+Inside the environment the run is unsandboxed: the environment is its boundary. Codex runs there with full access.
+
+## Backend options
+
+```yaml
+# ~/.captain.yaml
+sandbox:
+  backends:
+    beta-substrate:
+      kind: substrate
+      envAPI: substrate-env.example.com:443
+      control: substrate-api.example.com:443
+      clientCert: /home/me/.captain/substrate/client.crt
+      clientKey: /home/me/.captain/substrate/client.key
+      tokenFile: /home/me/.captain/substrate/token
+      atespace: ate-env
+      template: captain-runner
+      image: ghcr.io/flanksource/captain-runner@sha256:…
+      trustBundle: /run/ate/egress-trust-bundle/trust-bundle.pem
+      egress: [proxy.golang.org, registry.npmjs.org]
+      credentials:
+        - {provider: anthropic, auth: api-key, uri: ate-secret://k8s.io/captain/anthropic/key}
+```
+
+| Key | |
+| --- | --- |
+| `envAPI` | Required. ate-env-api's gRPC address. |
+| `control` | Required. ate-api-server's gRPC address, which egress policies are set through. |
+| `image` | Required. The image the environment runs, pinned by digest. |
+| `tokenFile` | The bearer token the control plane accepts, read on every call. |
+| `caFile` | The CA substrate's certificates chain to. Without it or a client certificate, the control plane's certificate isn't verified, as a port-forwarded one needs. |
+| `clientCert`, `clientKey` | The client certificate an ingress in front of substrate requires. Both or neither. |
+| `atespace` | Where environments are created; `ate-env` when empty. |
+| `template` | The ActorTemplate environments derive from. |
+| `trustBundle` | The path, in the environment, of the egress gateway's CA, which the run's clients trust (`NODE_EXTRA_CA_CERTS`) when there are credentials. |
+| `egress` | Hosts the run may reach over HTTPS, passed through untouched. |
+| `credentials` | Model keys the egress gateway injects: `provider` and `auth` (`anthropic api-key`, `anthropic oauth-token`, `openai api-key`), and the `uri` the cluster's credential provider resolves the key from. The run's process holds a placeholder in the key's variable. |
+| `command` | The program the environment runs, from the run's directory. It must speak captain's run protocol; `captain sandbox substrate run-task` does. |
+
+Paths are taken as written. Keys must match exactly; an unknown key, a missing required one, an image tag instead of a digest, or a credential without a `uri` fails with the backend's name and the key.
+
+The substrate sandbox serves the `cli` and `agent` modes. A spec can select a backend by name, `sandbox: beta-substrate`, or with `sandbox: {mode: substrate, backend: beta-substrate}`.
+
+## What a cluster needs
+
+- An ActorTemplate for the environments (the backend's `template`) whose image has `captain`, `git` and the agent CLIs the runs use.
+- The egress gateway's trust bundle mounted where `trustBundle` says.
+- A credential provider that resolves the `credentials` URIs, such as substrate's Kubernetes Secrets provider for `ate-secret://` URIs.
+- An access policy letting the caller's identity create environments in the atespace and set their egress policies.
+
+## Embedding
+
+A host offers the kind by importing `github.com/flanksource/captain/pkg/sandbox/substraterun`, which registers it; `captain` does. `promptrun.Run` hands a run whose selection is a substrate backend to the sandbox's `RunRemote`. The caller's `Input.Hooks` can't run in the environment and are refused, and approvals go through `Config.OnApproval`; the deprecated `CanUseTool` is refused.
