@@ -124,6 +124,7 @@ func TestARunThatEndsWithoutAResultIsAnError(t *testing.T) {
 		_ = serve.Send(EventMessage(1, api.Event{Kind: api.EventText, Text: "working"}))
 	})
 	_, err := c.relay(t, promptrun.Input{})
+	require.ErrorIs(t, err, ErrNoResult)
 	require.EqualError(t, err, "the relocated run ended without a result")
 }
 

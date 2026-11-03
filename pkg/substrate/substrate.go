@@ -151,7 +151,7 @@ type Env struct {
 // Create creates environment and sets its actor's egress policy. An environment whose policy
 // can't be set is deleted, since without it the environment reaches nothing it needs.
 func (c *Client) Create(ctx context.Context, environment Environment) (*Env, error) {
-	if err := pinnedImage(environment.Image); err != nil {
+	if err := PinnedImage(environment.Image); err != nil {
 		return nil, err
 	}
 	policy, err := egressPolicy(c.options.Atespace, environment.Egress)
@@ -177,8 +177,8 @@ func (c *Client) Create(ctx context.Context, environment Environment) (*Env, err
 	return env, nil
 }
 
-// pinnedImage refuses an image that isn't pinned by digest, which Substrate requires.
-func pinnedImage(image string) error {
+// PinnedImage refuses an image that isn't pinned by digest, which Substrate requires.
+func PinnedImage(image string) error {
 	if !regexp.MustCompile(`@sha256:[0-9a-f]{64}$`).MatchString(image) {
 		return fmt.Errorf("substrate runs images pinned by digest: %q must be repo@sha256:<digest>", image)
 	}
