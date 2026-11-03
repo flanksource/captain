@@ -15,6 +15,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/promptrun"
 )
 
 const (
@@ -101,7 +102,7 @@ func startObservationCapture(
 		session.mcpCapture.Status = api.ObservationCaptureUnsupported
 		session.mcpCapture.ReasonCode = "runtime_mcp_config_unsupported"
 		session.blockingCode = "mcp_config_unsupported"
-	} else if len(mcpConfigs) > 0 && (!localProcessCapture(cfg) || relocatesRun(cfg)) {
+	} else if len(mcpConfigs) > 0 && (!localProcessCapture(cfg) || promptrun.Relocates(cfg)) {
 		session.mcpCapture.ReasonCode = "runtime_mcp_proxy_unreachable"
 		session.blockingCode = "mcp_capture_unavailable"
 	} else if len(mcpConfigs) > 0 {
@@ -131,7 +132,7 @@ func startObservationCapture(
 	if !kubernetesProcessRuntime(runtime.Provider, runtime.Mode) {
 		return session, nil
 	}
-	if !localProcessCapture(cfg) || relocatesRun(cfg) {
+	if !localProcessCapture(cfg) || promptrun.Relocates(cfg) {
 		session.kubeCapture.Status = api.ObservationCaptureUnavailable
 		session.kubeCapture.ReasonCode = "runtime_kubernetes_proxy_unreachable"
 		return session, nil
