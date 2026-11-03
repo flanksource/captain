@@ -8,8 +8,6 @@ import (
 	"github.com/flanksource/captain/cmd/captain/internal/rootcmd"
 	"github.com/flanksource/captain/pkg/cli"
 	"github.com/flanksource/captain/pkg/gitagent"
-	// Registers the substrate sandbox kind, which promptrun can't import.
-	_ "github.com/flanksource/captain/pkg/sandbox/substraterun"
 	"github.com/flanksource/clicky"
 	"github.com/flanksource/clicky/flags"
 	"github.com/flanksource/clicky/mcp"
@@ -235,6 +233,19 @@ func newRootCommand() *cobra.Command {
 			return nil
 		},
 	})
+
+	substrateCmd := &cobra.Command{
+		Use:    "substrate",
+		Short:  "Internal: the environment's side of whole runs on agent substrate",
+		Hidden: true,
+	}
+	sandboxCmd.AddCommand(substrateCmd)
+	// run-task runs a task from its directory and talks to its caller on stdout; served as REST it
+	// would run an agent on a caller-chosen directory.
+	clicky.MarkLocalOnly(substrateCmd)
+	substrateRunTask := clicky.AddNamedCommandWithContext("run-task", substrateCmd, cli.SubstrateRunTaskOptions{}, cli.RunSubstrateRunTask)
+	substrateRunTask.Short = "Internal: run a substrate run's task in its environment and relay it on stdout"
+	substrateRunTask.Hidden = true
 
 	tokenCmd := &cobra.Command{
 		Use:   "token",
