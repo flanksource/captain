@@ -1,9 +1,13 @@
-// The substrate client against a live cluster: an environment is created, a file goes in, a
-// process turns it into another that comes out, and the environment is deleted.
+// The substrate client against a live cluster: files go in and come out of an environment intact,
+// whatever their size, and a process in it works on them.
 package substrate_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -39,4 +43,43 @@ func TestAnEnvironmentAgainstACluster(t *testing.T) {
 	out, err := env.ReadFile(ctx, "/tmp/captain-e2e/out.txt")
 	require.NoError(t, err)
 	assert.Equal(t, "FROM THE CALLER\n", readAll(t, out))
+}
+
+// fiftyMB is the size of the file TestLargeFilesRoundTripAgainstACluster moves each way: larger
+// than any buffer between the client and the guest, so a proxy that buffers or cuts a stream
+// shows.
+const fiftyMB = 50 << 20
+
+func TestLargeFilesRoundTripAgainstACluster(t *testing.T) {
+	cluster := substratetest.FromEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	client, err := substrate.Dial(cluster.Options)
+	require.NoError(t, err)
+	defer client.Close()
+
+	env, err := client.Create(ctx, substrate.Environment{ID: "captain-e2e-" + uuid.NewString()[:8], Image: cluster.Image})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, env.Delete(context.WithoutCancel(ctx))) }()
+
+	sent := sha256.New()
+	start := time.Now()
+	require.NoError(t, env.WriteFile(ctx, "/tmp/captain-e2e/large.bin", 0o644, io.TeeReader(io.LimitReader(rand.Reader, fiftyMB), sent)))
+	t.Logf("wrote %d MiB in %s", fiftyMB>>20, time.Since(start))
+	want := hex.EncodeToString(sent.Sum(nil))
+
+	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", "sha256sum large.bin | cut -d' ' -f1"}, Cwd: "/tmp/captain-e2e"})
+	require.NoError(t, err)
+	assert.Equal(t, want+"\n", readAll(t, proc.Output(ctx)), "the file arrived intact")
+
+	start = time.Now()
+	file, err := env.ReadFile(ctx, "/tmp/captain-e2e/large.bin")
+	require.NoError(t, err)
+	received := sha256.New()
+	n, err := io.Copy(received, file)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	t.Logf("read %d MiB in %s", n>>20, time.Since(start))
+	assert.Equal(t, int64(fiftyMB), n)
+	assert.Equal(t, want, hex.EncodeToString(received.Sum(nil)), "the file came back intact")
 }
