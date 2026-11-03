@@ -1,0 +1,46 @@
+# pkg/substrate
+
+A client for [agent-substrate](https://github.com/agent-substrate/substrate) environments, served
+by [agent-substrate/env](https://github.com/agent-substrate/env)'s ate-env-api.
+
+`Dial(Options)` connects to ate-env-api and to ate-api-server (the control plane, which egress
+policies are set through). From another cluster, both sit behind an ingress that requires a client
+certificate (`ClientCertFile`/`ClientKeyFile`). The certificate is read on every handshake and
+`ControlTokenFile` on every call, so renewed ones are used without reconnecting.
+
+`Client.Create(Environment)` creates an environment from an image pinned by digest, deriving from
+`Options.Template`, and sets its actor's egress policy. An environment whose policy can't be set
+is deleted. Everything the policy doesn't name is denied:
+
+- `Egress.Passthrough`: hosts reached over TLS, passed through undecrypted;
+- `Egress.HTTP`: hosts reached in cleartext;
+- `Egress.Credentials`: hosts reached over HTTPS, where the egress gateway replaces a header with
+  the credential a URI names (`ate-secret://…`), which the cluster's credential provider
+  resolves. The key never enters the environment. A process gets `Placeholder` in the
+  credential's `Env` variable instead, and the gateway's CA in `NODE_EXTRA_CA_CERTS` when
+  `Options.TrustBundle` names where the template mounts it. `CredentialFor(provider, auth)` gives
+  the host, header and variable of the keys captain knows.
+
+An `Env` moves files in and out (`WriteFile`, `ReadFile`, both streamed) and starts processes
+(`Start`). A `Proc` follows its output (`Output`), reconnecting from its offsets when Substrate's
+router ends the stream; it waits for its exit code (`Wait`); and it kills its process group
+(`Kill`). `Delete` deletes the environment.
+
+## Generated API
+
+`internal/ateapipb` and `internal/ateenvv1alpha` are copies of Substrate's and env's generated gRPC
+packages, at the pins in `internal/sync.sh`. Run that script to refresh them; it avoids depending
+on their Go modules and the Kubernetes version they bring.
+
+## Tests
+
+`substratetest.Start` serves both APIs in-process. Each environment is a temp directory, and its
+processes are real processes run in it, so the client's tests run real commands on real files.
+
+`TestAnEnvironmentAgainstACluster` runs against a live cluster when `CAPTAIN_SUBSTRATE_TEST=1`. It
+uses a kind cluster with Substrate and env installed, as gavel's `docs/sandbox.md` sets one up,
+with ate-env-api port-forwarded to `localhost:7777` and ate-api-server to `localhost:8443`. Set
+`CAPTAIN_SUBSTRATE_TOKEN_FILE` to a token for the control plane, and `CAPTAIN_SUBSTRATE_IMAGE` to an
+image the cluster pulls, pinned by digest, that has `sh`, `cat` and `tr`.
+`CAPTAIN_SUBSTRATE_ENV_API`, `CAPTAIN_SUBSTRATE_CONTROL` and `CAPTAIN_SUBSTRATE_TEMPLATE` (default
+`default-template`) override the rest.
