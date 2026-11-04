@@ -49,10 +49,11 @@ func TestABackendsOptionsReachTheSubstrateClient(t *testing.T) {
 }
 
 func TestARunsSelectionNamesItsEnvironmentAndCommit(t *testing.T) {
-	options, err := decodeOptions(backend(map[string]any{"environment": "gavel-run-1", "ref": "main"}))
+	options, err := decodeOptions(backend(map[string]any{"environment": "gavel-run-1", "ref": "main", "env": map[string]any{"GAVEL_RUN_ID": "run-1"}}))
 	require.NoError(t, err)
 	assert.Equal(t, "gavel-run-1", options.environment)
 	assert.Equal(t, "main", options.ref)
+	assert.Equal(t, map[string]string{"GAVEL_RUN_ID": "run-1"}, options.env)
 }
 
 func TestABackendRunsCaptainInItsEnvironmentByDefault(t *testing.T) {
