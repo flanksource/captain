@@ -48,6 +48,16 @@ func TestABackendsOptionsReachTheSubstrateClient(t *testing.T) {
 	}, options.egress)
 }
 
+func TestACredentialCanBeGivenInFull(t *testing.T) {
+	options, err := decodeOptions(backend(map[string]any{"credentials": []any{map[string]any{
+		"host": "api.anthropic.com", "header": "Authorization", "prefix": "Bearer ", "env": "CLAUDE_CODE_OAUTH_TOKEN", "uri": "ate-secret://gavel/run-1/anthropic",
+	}}}))
+	require.NoError(t, err)
+	assert.Equal(t, []substrate.Credential{{
+		Host: "api.anthropic.com", Header: "Authorization", Prefix: "Bearer ", Env: "CLAUDE_CODE_OAUTH_TOKEN", URI: "ate-secret://gavel/run-1/anthropic",
+	}}, options.egress.Credentials)
+}
+
 func TestEgressReachesHostsOverTLSOrInCleartextOnTheirPorts(t *testing.T) {
 	options, err := decodeOptions(backend(map[string]any{"egress": []any{"proxy.golang.org", "git.example:8443", "http://gavel.gavel.svc:8080"}}))
 	require.NoError(t, err)
@@ -78,21 +88,23 @@ func TestABackendsMistakesNameTheirKey(t *testing.T) {
 		options map[string]any
 		want    string
 	}{
-		"unknown key":               {map[string]any{"envApi": "typo"}, `sandbox backend "beta-substrate": unknown option "envApi"`},
-		"an unknown credential key": {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key", "URI": "ate-secret://x"}}}, `sandbox backend "beta-substrate": unknown option "credentials[0].URI"`},
-		"no env API":                {map[string]any{"envAPI": ""}, `sandbox backend "beta-substrate": envAPI is required`},
-		"no control plane":          {map[string]any{"control": ""}, `sandbox backend "beta-substrate": control is required`},
-		"no image":                  {map[string]any{"image": ""}, `sandbox backend "beta-substrate": image is required`},
-		"an image tag":              {map[string]any{"image": "ghcr.io/flanksource/captain-runner:v1"}, `sandbox backend "beta-substrate": image: substrate runs images pinned by digest: "ghcr.io/flanksource/captain-runner:v1" must be repo@sha256:<digest>`},
-		"a lone cert":               {map[string]any{"clientCert": "/etc/captain/client.crt"}, `sandbox backend "beta-substrate": clientCert and clientKey go together`},
-		"a credential URI":          {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key"}}}, `sandbox backend "beta-substrate": credentials[0] (anthropic api-key) needs the uri the egress gateway resolves its key from`},
-		"a credential kind":         {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "password", "uri": "ate-secret://x"}}}, `sandbox backend "beta-substrate": credentials[0]: `},
-		"an empty command":          {map[string]any{"command": []any{}}, `sandbox backend "beta-substrate": command, when set, names the program the environment runs`},
-		"a lifetime":                {map[string]any{"maxLifetime": "soon"}, `sandbox backend "beta-substrate": maxLifetime "soon": time: invalid duration "soon"`},
-		"a negative lifetime":       {map[string]any{"maxLifetime": "-1h"}, `sandbox backend "beta-substrate": maxLifetime must be positive, got "-1h"`},
-		"an egress port":            {map[string]any{"egress": []any{"git.example:http"}}, `sandbox backend "beta-substrate": egress "git.example:http": the port must be a number`},
-		"an egress scheme":          {map[string]any{"egress": []any{"ftp://files.example"}}, `sandbox backend "beta-substrate": egress "ftp://files.example": a host, host:port, or http://host[:port]`},
-		"an environment ID":         {map[string]any{"environment": "Gavel Run"}, `sandbox backend "beta-substrate": environment "Gavel Run" must be lowercase letters, digits and '-', starting with a letter`},
+		"unknown key":                  {map[string]any{"envApi": "typo"}, `sandbox backend "beta-substrate": unknown option "envApi"`},
+		"an unknown credential key":    {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key", "URI": "ate-secret://x"}}}, `sandbox backend "beta-substrate": unknown option "credentials[0].URI"`},
+		"no env API":                   {map[string]any{"envAPI": ""}, `sandbox backend "beta-substrate": envAPI is required`},
+		"no control plane":             {map[string]any{"control": ""}, `sandbox backend "beta-substrate": control is required`},
+		"no image":                     {map[string]any{"image": ""}, `sandbox backend "beta-substrate": image is required`},
+		"an image tag":                 {map[string]any{"image": "ghcr.io/flanksource/captain-runner:v1"}, `sandbox backend "beta-substrate": image: substrate runs images pinned by digest: "ghcr.io/flanksource/captain-runner:v1" must be repo@sha256:<digest>`},
+		"a lone cert":                  {map[string]any{"clientCert": "/etc/captain/client.crt"}, `sandbox backend "beta-substrate": clientCert and clientKey go together`},
+		"a credential URI":             {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key"}}}, `sandbox backend "beta-substrate": credentials[0] (anthropic api-key) needs the uri the egress gateway resolves its key from`},
+		"a credential kind":            {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "password", "uri": "ate-secret://x"}}}, `sandbox backend "beta-substrate": credentials[0]: `},
+		"an empty command":             {map[string]any{"command": []any{}}, `sandbox backend "beta-substrate": command, when set, names the program the environment runs`},
+		"a lifetime":                   {map[string]any{"maxLifetime": "soon"}, `sandbox backend "beta-substrate": maxLifetime "soon": time: invalid duration "soon"`},
+		"a negative lifetime":          {map[string]any{"maxLifetime": "-1h"}, `sandbox backend "beta-substrate": maxLifetime must be positive, got "-1h"`},
+		"an egress port":               {map[string]any{"egress": []any{"git.example:http"}}, `sandbox backend "beta-substrate": egress "git.example:http": the port must be a number`},
+		"an egress scheme":             {map[string]any{"egress": []any{"ftp://files.example"}}, `sandbox backend "beta-substrate": egress "ftp://files.example": a host, host:port, or http://host[:port]`},
+		"a credential half given":      {map[string]any{"credentials": []any{map[string]any{"host": "api.anthropic.com", "uri": "ate-secret://x"}}}, `sandbox backend "beta-substrate": credentials[0] names the host, header and env the gateway injects into, or a provider and auth, not some of them`},
+		"a credential given both ways": {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key", "host": "api.anthropic.com", "header": "x-api-key", "env": "ANTHROPIC_API_KEY", "uri": "ate-secret://x"}}}, `sandbox backend "beta-substrate": credentials[0] names the host, header and env the gateway injects into, or a provider and auth, not some of them`},
+		"an environment ID":            {map[string]any{"environment": "Gavel Run"}, `sandbox backend "beta-substrate": environment "Gavel Run" must be lowercase letters, digits and '-', starting with a letter`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := decodeOptions(backend(tc.options))

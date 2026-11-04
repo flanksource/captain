@@ -47,12 +47,33 @@ type backendOptions struct {
 	Env map[string]string `json:"env"`
 }
 
-// credentialOptions names a model key the egress gateway injects: whose it is, what kind, and the
-// URI the cluster's credential provider resolves it from.
+// credentialOptions names a model key the egress gateway injects, and the URI the cluster's
+// credential provider resolves it from: by whose it is and what kind (provider, auth), or in full
+// (host, header, prefix, env), for a host whose keys aren't one of substrate's kinds.
 type credentialOptions struct {
 	Provider string `json:"provider"`
 	Auth     string `json:"auth"`
+	Host     string `json:"host"`
+	Header   string `json:"header"`
+	Prefix   string `json:"prefix"`
+	Env      string `json:"env"`
 	URI      string `json:"uri"`
+}
+
+// errCredentialHalfNamed is a credential named neither by kind nor in full.
+var errCredentialHalfNamed = errors.New("names the host, header and env the gateway injects into, or a provider and auth, not some of them")
+
+// credential is the credential named, without its URI.
+func (c credentialOptions) credential() (substrate.Credential, error) {
+	byKind := c.Provider != "" || c.Auth != ""
+	inFull := c.Host != "" || c.Header != "" || c.Prefix != "" || c.Env != ""
+	if byKind == inFull || (inFull && (c.Host == "" || c.Header == "" || c.Env == "")) {
+		return substrate.Credential{}, errCredentialHalfNamed
+	}
+	if inFull {
+		return substrate.Credential{Host: c.Host, Header: c.Header, Prefix: c.Prefix, Env: c.Env}, nil
+	}
+	return substrate.CredentialFor(c.Provider, c.Auth)
 }
 
 // options is a decoded substrate backend.
@@ -157,7 +178,10 @@ func decode(raw map[string]any) (options, error) {
 		}
 	}
 	for i, named := range in.Credentials {
-		credential, err := substrate.CredentialFor(named.Provider, named.Auth)
+		credential, err := named.credential()
+		if errors.Is(err, errCredentialHalfNamed) {
+			return options{}, fmt.Errorf("credentials[%d] %w", i, err)
+		}
 		if err != nil {
 			return options{}, fmt.Errorf("credentials[%d]: %w", i, err)
 		}
