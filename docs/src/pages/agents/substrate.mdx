@@ -68,6 +68,7 @@ sandbox:
 | `command` | The program the environment runs, from the run's directory. It must speak captain's run protocol; `captain sandbox substrate run-task` does. |
 | `maxLifetime` | The longest a run may last, `24h` when empty. A run whose timeout is longer is refused, and an environment of the backend's older than this is swept as left behind. |
 | `environment` | A run's own: the environment's ID, for a caller that builds each run's selection; `captain-run-<run>` when empty. Lowercase letters, digits and `-`. |
+| `branch` | A run's own: the branch its commits come back on, in the run's repository; `captain/substrate/<run>` when empty. |
 | `env` | A run's own: variables for the environment's program, such as a host's run token. They are set on the process alone and never written into the environment's files; a model key's variable is refused, since its key would enter the environment. |
 | `ref` | A run's own: the commit the run starts from, in the run's repository, which may be bare. The run gets that commit and none of a checkout's uncommitted work, and its branch comes back to that repository. |
 

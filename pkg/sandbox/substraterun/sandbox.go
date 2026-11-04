@@ -184,7 +184,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 		}
 		return result, fmt.Errorf("substrate run %s exited %d without a result; its output %s", run, code, output.where())
 	}
-	if fetchErr := fetchCommits(ctx, env, repo, run, start, &result); fetchErr != nil {
+	if fetchErr := fetchCommits(ctx, env, repo, run, firstNonEmpty(s.options.branch, branch(run)), start, &result); fetchErr != nil {
 		return result, errors.Join(err, fetchErr)
 	}
 	return result, err
@@ -365,12 +365,12 @@ func writeBundle(ctx context.Context, env *substrate.Env, bundle string) error {
 	return writeFile(ctx, env, WorkspaceBundle, file)
 }
 
-// fetchCommits fetches what the run committed into repo as branch(run), and points the result's
+// fetchCommits fetches what the run committed into repo as branch into, and points the result's
 // workspace at that branch. A run that committed nothing leaves no branch.
-func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, start start, result *promptrun.Result) error {
+func fetchCommits(ctx context.Context, env *substrate.Env, repo, run, into string, start start, result *promptrun.Result) error {
 	file, err := env.ReadFile(ctx, path.Join(RunDir, CommitsBundle))
 	if err == nil {
-		err = saveBundle(ctx, file, repo, run)
+		err = saveBundle(ctx, file, repo, run, into)
 	}
 	if status.Code(err) == codes.NotFound {
 		return nil
@@ -378,7 +378,7 @@ func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, sta
 	if err != nil {
 		return fmt.Errorf("bring back the commits of substrate run %s: %w", run, err)
 	}
-	head, err := gitOutput(ctx, repo, "rev-parse", branch(run))
+	head, err := gitOutput(ctx, repo, "rev-parse", "refs/heads/"+into)
 	if err != nil {
 		return err
 	}
@@ -389,7 +389,7 @@ func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, sta
 	if result.Response.Workspace != nil {
 		workspace = *result.Response.Workspace
 	}
-	worktree := api.WorktreeState{Repo: repo, Branch: branch(run), Base: start.base, Setup: start.setup, Head: head}
+	worktree := api.WorktreeState{Repo: repo, Branch: into, Base: start.base, Setup: start.setup, Head: head}
 	if workspace.Worktree != nil {
 		// The run's setup made a worktree in the environment: the branch is where it branched
 		// from and what setup put on it, which the run's commits came back with.
@@ -400,8 +400,8 @@ func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, sta
 	return nil
 }
 
-// saveBundle fetches the commits bundle file holds into repo as branch(run).
-func saveBundle(ctx context.Context, file io.ReadCloser, repo, run string) error {
+// saveBundle fetches the commits bundle file holds into repo as branch into.
+func saveBundle(ctx context.Context, file io.ReadCloser, repo, run, into string) error {
 	defer func() { _ = file.Close() }()
 	local, err := os.CreateTemp("", "captain-substrate-"+run+"-commits-*.bundle")
 	if err != nil {
@@ -415,7 +415,7 @@ func saveBundle(ctx context.Context, file io.ReadCloser, repo, run string) error
 	if err != nil {
 		return err
 	}
-	_, err = gitOutput(ctx, repo, "fetch", "-q", local.Name(), "HEAD:refs/heads/"+branch(run))
+	_, err = gitOutput(ctx, repo, "fetch", "-q", local.Name(), "HEAD:refs/heads/"+into)
 	return err
 }
 
