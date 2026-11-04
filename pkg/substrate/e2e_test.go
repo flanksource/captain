@@ -1,5 +1,5 @@
 // The substrate client against a live cluster: files go in and come out of an environment intact,
-// whatever their size, and a process in it works on them.
+// whatever their size, a process in it works on them, and the caller may list what a sweep needs.
 package substrate_test
 
 import (
@@ -82,4 +82,19 @@ func TestLargeFilesRoundTripAgainstACluster(t *testing.T) {
 	t.Logf("read %d MiB in %s", n>>20, time.Since(start))
 	assert.Equal(t, int64(fiftyMB), n)
 	assert.Equal(t, want, hex.EncodeToString(received.Sum(nil)), "the file came back intact")
+}
+
+// A caller's identity may list the atespace's actors, as a sweep must. The prefix matches no
+// environment, so nothing is deleted.
+func TestSweepListsTheActorsOfACluster(t *testing.T) {
+	cluster := substratetest.FromEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	client, err := substrate.Dial(cluster.Options)
+	require.NoError(t, err)
+	defer client.Close()
+
+	swept, err := client.Sweep(ctx, "captain-e2e-no-such-prefix-", time.Now())
+	require.NoError(t, err)
+	assert.Empty(t, swept)
 }
