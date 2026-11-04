@@ -17,7 +17,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -47,6 +49,8 @@ type Server struct {
 	// StreamLimit, when positive, ends every StreamProcessOutput stream after that many output
 	// messages, as Substrate's router ends a long stream, so a client has to reconnect.
 	StreamLimit int
+	// ListPageSize, when positive, caps every ListActors page, so a client has to page.
+	ListPageSize int
 
 	envAddr, controlAddr string
 	root                 string
@@ -62,6 +66,8 @@ type Environment struct {
 	ID, Atespace, Image, Template string
 	// Dir is the directory the environment's files live in and its processes run in.
 	Dir string
+	// Created is when the environment was created, its actor's create time.
+	Created time.Time
 
 	mu        sync.Mutex
 	processes map[string]*process
@@ -167,7 +173,7 @@ func (e environments) CreateEnvironment(_ context.Context, req *ateenvv1alpha.Cr
 	}
 	s.envs[key] = &Environment{
 		ID: req.GetId(), Atespace: req.GetAtespace(), Image: req.GetRootfsImage(), Template: req.GetTemplate().GetName(),
-		Dir: dir, processes: map[string]*process{},
+		Dir: dir, Created: time.Now(), processes: map[string]*process{},
 	}
 	return &ateenvv1alpha.CreateEnvironmentResponse{}, nil
 }
@@ -206,6 +212,45 @@ func (c control) CreateActorEgressPolicy(_ context.Context, req *ateapipb.Create
 	actor := req.GetActor()
 	s.policies[actor.GetAtespace()+"/"+actor.GetName()] = proto.Clone(req.GetEgressPolicy()).(*ateapipb.EgressPolicy)
 	return req.GetEgressPolicy(), nil
+}
+
+// ListActors lists the actors of the atespace's environments, in name order, a page at a time:
+// the page token is the index of the page's first actor.
+func (c control) ListActors(_ context.Context, req *ateapipb.ListActorsRequest) (*ateapipb.ListActorsResponse, error) {
+	s := c.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var envs []*Environment
+	for _, env := range s.envs {
+		if env.Atespace == req.GetAtespace() {
+			envs = append(envs, env)
+		}
+	}
+	slices.SortFunc(envs, func(a, b *Environment) int { return strings.Compare(a.ID, b.ID) })
+	start := 0
+	if token := req.GetOptions().GetPageToken(); token != "" {
+		var err error
+		if start, err = strconv.Atoi(token); err != nil || start < 0 || start > len(envs) {
+			return nil, status.Errorf(codes.InvalidArgument, "page token %q", token)
+		}
+	}
+	end := len(envs)
+	if size := int(req.GetOptions().GetPageSize()); size > 0 && start+size < end {
+		end = start + size
+	}
+	if s.ListPageSize > 0 && start+s.ListPageSize < end {
+		end = start + s.ListPageSize
+	}
+	response := &ateapipb.ListActorsResponse{}
+	for _, env := range envs[start:end] {
+		response.Actors = append(response.Actors, &ateapipb.Actor{Metadata: &ateapipb.ResourceMetadata{
+			Atespace: env.Atespace, Name: env.ID, CreateTime: timestamppb.New(env.Created),
+		}})
+	}
+	if end < len(envs) {
+		response.NextPageToken = strconv.Itoa(end)
+	}
+	return response, nil
 }
 
 // process is one process started in an environment, with its output spooled.
