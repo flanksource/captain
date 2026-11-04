@@ -17,6 +17,7 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/captain/pkg/promptrun/remoterun"
+	"github.com/flanksource/commons-db/shell"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,4 +101,56 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 	assert.FileExists(t, filepath.Join(dir, CommitsBundle))
 	assert.Equal(t, map[string]string{"claude/-tmp-captain-run-src/session-1.jsonl": "from the host's hook\n"}, transcripts,
 		"the agent's transcript came to the caller before the result")
+}
+
+func TestARunInASetupWorktreeBringsBackItsBranch(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repo := t.TempDir()
+	git := func(dir string, args ...string) string {
+		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=caller", "-c", "user.email=caller@example.com"}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+		return string(out)
+	}
+	git(repo, "init", "-q")
+	git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	const ref = "refs/captain/substrate/0123456789ab"
+	git(repo, "update-ref", ref, "HEAD")
+	dir := t.TempDir()
+	git(repo, "bundle", "create", "-q", filepath.Join(dir, WorkspaceBundle), ref)
+
+	spec := api.Spec{Model: api.Model{Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent}, Prompt: api.Prompt{User: "fix the build"}}
+	spec.SetCwd(repo)
+	spec.Setup.Checkout = &shell.Checkout{Mode: shell.CheckoutLocal, Worktree: &shell.Worktree{Mode: shell.WorktreeNew}}
+	// The verify command stands in for the agent's edit, which it leaves uncommitted in the worktree.
+	spec.Workflow = &api.Workflow{Verify: &api.Verify{Commands: []string{"echo Paris > answer.txt"}}}
+	job := remoterun.JobFor(promptrun.Input{Resolved: api.ResolvedSpec{Spec: spec}, Timeout: time.Minute}, nil)
+	job.Root = repo
+	task, err := json.Marshal(Task{Job: job, Ref: ref})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, TaskFile), task, 0o644))
+
+	hostFor := func(remoterun.Job, string) (remoterun.Host, error) {
+		return remoterun.Host{Provider: answering{text: "fixed"}}, nil
+	}
+	stdoutR, stdoutW := io.Pipe()
+	stdinR, stdinW := io.Pipe()
+	ran := make(chan error, 1)
+	go func() {
+		ran <- RunTask(t.Context(), dir, stdoutW, stdinR, hostFor)
+		_ = stdoutW.Close()
+	}()
+	result, err := remoterun.Relay(t.Context(), promptrun.Input{}, func(api.Spec) error { return nil }, stdoutR, stdinW)
+	_ = stdinW.Close()
+	require.NoError(t, err)
+	require.NoError(t, <-ran)
+	require.NotNil(t, result.Response.Workspace)
+	require.NotNil(t, result.Response.Workspace.Worktree, "the run worked in a worktree")
+
+	bundle := filepath.Join(dir, CommitsBundle)
+	require.FileExists(t, bundle)
+	fetched := t.TempDir()
+	git(fetched, "init", "-q")
+	git(fetched, "fetch", "-q", filepath.Join(dir, WorkspaceBundle), ref+":"+ref)
+	git(fetched, "fetch", "-q", bundle, "HEAD:refs/heads/back")
+	assert.Equal(t, "Paris\n", git(fetched, "show", "back:answer.txt"), "the worktree's work came back")
 }
