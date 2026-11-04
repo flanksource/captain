@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -149,8 +151,10 @@ func decode(raw map[string]any) (options, error) {
 	if in.Command != nil {
 		out.command = *in.Command
 	}
-	for _, host := range in.Egress {
-		out.egress.Passthrough = append(out.egress.Passthrough, substrate.HostPort{Host: host, Port: 443})
+	for _, entry := range in.Egress {
+		if err := addEgress(&out.egress, entry); err != nil {
+			return options{}, fmt.Errorf("egress %q: %w", entry, err)
+		}
 	}
 	for i, named := range in.Credentials {
 		credential, err := substrate.CredentialFor(named.Provider, named.Auth)
@@ -164,6 +168,34 @@ func decode(raw map[string]any) (options, error) {
 		out.egress.Credentials = append(out.egress.Credentials, credential)
 	}
 	return out, nil
+}
+
+// addEgress adds what entry lets the environment reach: a host over TLS on 443, host:port over
+// TLS on that port, or http://host[:port] in cleartext, on 80 unless it names a port. TLS passes
+// through the egress gateway undecrypted.
+func addEgress(egress *substrate.Egress, entry string) error {
+	rest, cleartext := strings.CutPrefix(entry, "http://")
+	if !cleartext && strings.Contains(entry, "://") {
+		return errors.New("a host, host:port, or http://host[:port]")
+	}
+	port := 443
+	if cleartext {
+		port = 80
+	}
+	host := strings.TrimSuffix(rest, "/")
+	if name, number, ok := strings.Cut(host, ":"); ok {
+		parsed, err := strconv.Atoi(number)
+		if err != nil {
+			return errors.New("the port must be a number")
+		}
+		host, port = name, parsed
+	}
+	if cleartext {
+		egress.HTTP = append(egress.HTTP, substrate.HostPort{Host: host, Port: port})
+	} else {
+		egress.Passthrough = append(egress.Passthrough, substrate.HostPort{Host: host, Port: port})
+	}
+	return nil
 }
 
 // knownKeys refuses a key the options don't have. JSON matches keys to fields regardless of
