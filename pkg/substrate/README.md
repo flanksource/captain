@@ -29,7 +29,7 @@ nothing). It waits for its exit code (`Wait`) and kills its process group (`Kill
 
 ## Generated API
 
-`internal/ateapipb` and `internal/ateenvv1alpha` are copies of Substrate's and env's generated gRPC
+`internal/ateapi` and `internal/ateenvv1alpha` are copies of Substrate's and env's generated gRPC
 packages, at the pins in `internal/sync.sh`. Run that script to refresh them; it avoids depending
 on their Go modules and the Kubernetes version they bring.
 
