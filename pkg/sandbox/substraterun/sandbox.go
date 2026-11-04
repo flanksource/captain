@@ -154,7 +154,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err := writeBundle(ctx, env, workspace); err != nil {
 		return promptrun.Result{}, err
 	}
-	process := substrate.Process{Command: s.options.command, Cwd: RunDir, Stdin: true, Timeout: lifetime}
+	process := substrate.Process{Command: s.options.command, Cwd: RunDir, Env: s.options.env, Stdin: true, Timeout: lifetime}
 	proc, err := env.Start(ctx, process)
 	if err != nil {
 		return promptrun.Result{}, err

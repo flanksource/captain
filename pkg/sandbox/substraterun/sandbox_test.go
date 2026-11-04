@@ -73,6 +73,8 @@ func environment() error {
 	case "hang":
 		_ = serve.Send(remoterun.StartedMessage(spec))
 		time.Sleep(time.Minute)
+	case "echo the run's environment":
+		return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: &api.Response{Text: os.Getenv("GAVEL_RUN_ID")}, Passed: true}, nil))
 	case "echo the host's data":
 		return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: &api.Response{Text: string(task.Job.Host)}, Passed: true}, nil))
 	}
@@ -411,4 +413,14 @@ func TestARunWithASetupCheckoutIsHandedOverForTheEnvironmentToSetUp(t *testing.T
 
 	_, err := promptrun.Run(t.Context(), in)
 	require.NoError(t, err, environmentLog(err))
+}
+
+func TestARunsOwnEnvironmentVariablesReachItsProcessOnly(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("echo the run's environment")
+	in.Config.SandboxSelection.Options["env"] = map[string]any{"GAVEL_RUN_ID": "run-1", "GAVEL_RUN_TOKEN": "a-run-token"}
+
+	result, err := promptrun.Run(t.Context(), in)
+	require.NoError(t, err, environmentLog(err))
+	assert.Equal(t, "run-1", result.Response.Text)
 }

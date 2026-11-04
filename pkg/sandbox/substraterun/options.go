@@ -40,6 +40,9 @@ type backendOptions struct {
 	// checkout.
 	Environment string `json:"environment"`
 	Ref         string `json:"ref"`
+	// Env is a run's own variables for the environment's program, such as a host's run token. It
+	// is set on the process alone, never written into the environment's files.
+	Env map[string]string `json:"env"`
 }
 
 // credentialOptions names a model key the egress gateway injects: whose it is, what kind, and the
@@ -62,6 +65,8 @@ type options struct {
 	ref string
 	// maxLifetime is the longest a run may last, after which its environment may be swept.
 	maxLifetime time.Duration
+	// env is the run's own variables for the environment's program.
+	env map[string]string
 }
 
 // defaultMaxLifetime is a backend's maxLifetime when it sets none.
@@ -136,6 +141,7 @@ func decode(raw map[string]any) (options, error) {
 		environment: in.Environment,
 		ref:         in.Ref,
 		maxLifetime: maxLifetime,
+		env:         in.Env,
 	}
 	if out.client.Atespace == "" {
 		out.client.Atespace = "ate-env"
