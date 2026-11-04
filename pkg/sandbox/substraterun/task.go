@@ -31,7 +31,7 @@ func RunTask(ctx context.Context, dir string, out io.Writer, in io.Reader, hostF
 	if err != nil {
 		return errors.Join(err, serve.Send(remoterun.ResultMessage(promptrun.Result{}, err)))
 	}
-	finished, err := remoterun.Execute(ctx, task.Job, src, host, serve)
+	finished, err := executeSendingTranscripts(ctx, task.Job, src, host, serve)
 	if err != nil {
 		return err
 	}
@@ -43,6 +43,31 @@ func RunTask(ctx context.Context, dir string, out io.Writer, in io.Reader, hostF
 		return errors.Join(runErr, fmt.Errorf("send the run's result to its caller: %w", err))
 	}
 	return runErr
+}
+
+// executeSendingTranscripts executes job, sending the transcripts its agent writes as they change
+// and once more after it ends. A transcript that can't be sent is written to stderr, the
+// environment's log: the run stands without it.
+func executeSendingTranscripts(ctx context.Context, job remoterun.Job, src string, host remoterun.Host, serve remoterun.Serve) (remoterun.Finished, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "the run's transcripts can't be sent: %v\n", err)
+		return remoterun.Execute(ctx, job, src, host, serve)
+	}
+	sender := &transcriptSender{home: home, send: serve.Send}
+	sending, stop := context.WithCancel(ctx)
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		sender.every(sending, transcriptInterval, os.Stderr)
+	}()
+	finished, err := remoterun.Execute(ctx, job, src, host, serve)
+	stop()
+	<-sent
+	if syncErr := sender.sync(); syncErr != nil {
+		fmt.Fprintln(os.Stderr, syncErr)
+	}
+	return finished, err
 }
 
 // prepareTask reads dir's task, checks its workspace out, and builds what the host adds to it.

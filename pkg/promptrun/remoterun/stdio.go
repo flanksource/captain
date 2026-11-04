@@ -96,8 +96,8 @@ func (s *stdio) read(in *json.Decoder) {
 var ErrNoResult = errors.New("the relocated run ended without a result")
 
 // Relay is the caller's side of the channel. It reads the run's messages from out, its process's
-// stdout; calls started with the spec the run starts with; hands events and verification progress
-// to in's OnEvent and Verify.Progress; answers tool calls and approvals with in's tools and
+// stdout; calls started with the spec the run starts with; hands events, verification progress
+// and transcripts to in's OnEvent, Verify.Progress and OnTranscript; answers tool calls and approvals with in's tools and
 // OnApproval on input, its stdin; and returns the run's result and error. Handlers get ctx. Relay
 // returns when the run sends its result, out ends, or started fails, so a caller cancels a run by
 // ending its process.
@@ -130,6 +130,10 @@ func Relay(ctx context.Context, in promptrun.Input, started func(api.Spec) error
 		case KindProgress:
 			if in.Verify.Progress != nil && message.Progress != nil {
 				in.Verify.Progress(*message.Progress)
+			}
+		case KindTranscript:
+			if in.OnTranscript != nil && message.Transcript != nil {
+				in.OnTranscript(message.Transcript.Source, message.Transcript.Name, message.Transcript.Data)
 			}
 		case KindTool, KindApproval:
 			calls.Add(1)

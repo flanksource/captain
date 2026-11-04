@@ -75,6 +75,12 @@ type Input struct {
 	// program's own log, for a caller that shows it; nil leaves it to the
 	// sandbox, which keeps a log of its own.
 	EnvironmentOutput io.Writer
+	// OnTranscript receives a whole run's transcript files as its agent writes
+	// them in its environment, each whole as it is now: source is the agent
+	// (claude, codex) and name the file's path under that agent's transcript
+	// directory. nil leaves them to the sandbox, which keeps them where the
+	// agent would here. A local run's transcripts are already here.
+	OnTranscript func(source, name string, data []byte)
 	// CallerOwnsCommits hands committing to Hooks: Run builds no commit hook of
 	// its own from Workflow.Commits, and leaves the declaration on the request so
 	// the recorded spec still says what the run commits and validation of that

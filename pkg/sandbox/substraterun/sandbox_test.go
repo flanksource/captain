@@ -106,6 +106,9 @@ func environment() error {
 	if err := git("src", "bundle", "create", "-q", "../"+CommitsBundle, "HEAD", "^"+task.Ref); err != nil {
 		return err
 	}
+	if err := serve.Send(remoterun.TranscriptMessage("claude", "-tmp-captain-run-src/session-1.jsonl", []byte(`{"type":"user"}`+"\n"))); err != nil {
+		return err
+	}
 	text := fmt.Sprintf("fixed after %s, with %s", reply.Output, strings.TrimSpace(string(dirty)))
 	return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: &api.Response{Text: text}, Passed: true}, nil))
 }
@@ -206,6 +209,25 @@ func TestAWholeRunOnSubstrateComesBackAsABranch(t *testing.T) {
 	assert.Equal(t, "?? dirty.txt", f.git(t, "status", "--porcelain"))
 	assert.Empty(t, f.git(t, "for-each-ref", "refs/captain"), "the ref the workspace went out on is gone")
 	assert.Len(t, f.server.Deleted(), 1, "the environment is deleted")
+	transcript, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".claude", "projects", "-tmp-captain-run-src", "session-1.jsonl"))
+	require.NoError(t, err, "the run's transcript is kept where the agent would keep it here")
+	assert.Equal(t, `{"type":"user"}`+"\n", string(transcript))
+}
+
+func TestATranscriptIsKeptOnlyUnderItsAgentsDirectory(t *testing.T) {
+	home := "/home/me"
+	path, err := transcriptPath(home, "codex", "2026/11/04/rollout-1.jsonl")
+	require.NoError(t, err)
+	assert.Equal(t, "/home/me/.codex/sessions/2026/11/04/rollout-1.jsonl", path)
+	for _, tc := range []struct{ source, name, want string }{
+		{"gemini", "a.jsonl", `transcript source "gemini" is not claude or codex`},
+		{"claude", "../../.ssh/authorized_keys.jsonl", `transcript name "../../.ssh/authorized_keys.jsonl" must be a relative .jsonl path inside claude's transcripts`},
+		{"claude", "/etc/passwd.jsonl", `transcript name "/etc/passwd.jsonl" must be a relative .jsonl path inside claude's transcripts`},
+		{"claude", "notes.txt", `transcript name "notes.txt" must be a relative .jsonl path inside claude's transcripts`},
+	} {
+		_, err := transcriptPath(home, tc.source, tc.name)
+		assert.EqualError(t, err, tc.want)
+	}
 }
 
 // environmentLog is the environment's output that err points at, for a failed run's message.
