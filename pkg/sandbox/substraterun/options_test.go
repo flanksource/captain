@@ -47,6 +47,13 @@ func TestABackendsOptionsReachTheSubstrateClient(t *testing.T) {
 	}, options.egress)
 }
 
+func TestARunsSelectionNamesItsEnvironmentAndCommit(t *testing.T) {
+	options, err := decodeOptions(backend(map[string]any{"environment": "gavel-run-1", "ref": "main"}))
+	require.NoError(t, err)
+	assert.Equal(t, "gavel-run-1", options.environment)
+	assert.Equal(t, "main", options.ref)
+}
+
 func TestABackendRunsCaptainInItsEnvironmentByDefault(t *testing.T) {
 	options, err := decodeOptions(backend(nil))
 	require.NoError(t, err)
@@ -69,6 +76,7 @@ func TestABackendsMistakesNameTheirKey(t *testing.T) {
 		"a credential URI":          {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key"}}}, `sandbox backend "beta-substrate": credentials[0] (anthropic api-key) needs the uri the egress gateway resolves its key from`},
 		"a credential kind":         {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "password", "uri": "ate-secret://x"}}}, `sandbox backend "beta-substrate": credentials[0]: `},
 		"an empty command":          {map[string]any{"command": []any{}}, `sandbox backend "beta-substrate": command, when set, names the program the environment runs`},
+		"an environment ID":         {map[string]any{"environment": "Gavel Run"}, `sandbox backend "beta-substrate": environment "Gavel Run" must be lowercase letters, digits and '-', starting with a letter`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := decodeOptions(backend(tc.options))

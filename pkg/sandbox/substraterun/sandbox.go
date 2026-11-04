@@ -99,12 +99,11 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err != nil {
 		return promptrun.Result{}, err
 	}
-	dir := firstNonEmpty(in.Repo, spec.Cwd(), ".")
-	repo, err := gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
+	repo, start, err := s.startingPoint(ctx, firstNonEmpty(in.Repo, spec.Cwd(), "."), run)
 	if err != nil {
-		return promptrun.Result{}, fmt.Errorf("sandbox substrate runs a git checkout: %w", err)
+		return promptrun.Result{}, err
 	}
-	workspace, snapshot, err := bundleWorkspace(ctx, repo, run)
+	workspace, err := bundleWorkspace(ctx, repo, run, start)
 	if err != nil {
 		return promptrun.Result{}, err
 	}
@@ -127,7 +126,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 		return promptrun.Result{}, err
 	}
 	defer func() { _ = client.Close() }()
-	env, err := client.Create(ctx, substrate.Environment{ID: "captain-run-" + run, Image: s.options.image, Egress: s.options.egress})
+	env, err := client.Create(ctx, substrate.Environment{ID: firstNonEmpty(s.options.environment, "captain-run-"+run), Image: s.options.image, Egress: s.options.egress})
 	if err != nil {
 		return promptrun.Result{}, err
 	}
@@ -170,7 +169,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 		}
 		return result, fmt.Errorf("substrate run %s exited %d without a result; its output is in %s", run, code, log)
 	}
-	if fetchErr := fetchCommits(ctx, env, repo, run, snapshot, &result); fetchErr != nil {
+	if fetchErr := fetchCommits(ctx, env, repo, run, start, &result); fetchErr != nil {
 		return result, errors.Join(err, fetchErr)
 	}
 	return result, err
@@ -201,28 +200,51 @@ func workspaceRef(run string) string { return "refs/captain/substrate/" + run }
 // branch is where the run's commits come back to.
 func branch(run string) string { return "captain/substrate/" + run }
 
-// bundleWorkspace bundles repo's checkout, uncommitted work included, as workspaceRef(run), and
-// returns the bundle's path and the snapshot it carries. The checkout is left as it is.
-func bundleWorkspace(ctx context.Context, repo, run string) (string, *gitagent.Snapshot, error) {
+// start is where a run starts: base, the caller's commit, and setup, the commit the run gets,
+// which is base with the caller's uncommitted work on top, or base itself.
+type start struct{ base, setup string }
+
+// startingPoint is the repository the run's commits come back to and the commit the run starts
+// from. A run from the backend's ref starts at that commit of dir's repository, which may be
+// bare; any other run starts from dir's checkout as it is, uncommitted work included, which is
+// left as it is.
+func (s *substrateSandbox) startingPoint(ctx context.Context, dir, run string) (string, start, error) {
+	if s.options.ref != "" {
+		sha, err := gitOutput(ctx, dir, "rev-parse", "--verify", s.options.ref+"^{commit}")
+		if err != nil {
+			return "", start{}, fmt.Errorf("substrate run %s starts from %s, which %s doesn't have: %w", run, s.options.ref, dir, err)
+		}
+		return dir, start{base: sha, setup: sha}, nil
+	}
+	repo, err := gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", start{}, fmt.Errorf("sandbox substrate runs a git checkout, or a commit named by the backend's ref: %w", err)
+	}
 	snapshot, err := gitagent.TakeSnapshot(ctx, repo, gitagent.SnapshotPolicy{})
 	if err != nil {
-		return "", nil, fmt.Errorf("snapshot the checkout for substrate run %s: %w", run, err)
+		return "", start{}, fmt.Errorf("snapshot the checkout for substrate run %s: %w", run, err)
 	}
+	return repo, start{base: snapshot.Base, setup: snapshot.Commit}, nil
+}
+
+// bundleWorkspace bundles the commit the run starts from as workspaceRef(run), and returns the
+// bundle's path.
+func bundleWorkspace(ctx context.Context, repo, run string, start start) (string, error) {
 	ref := workspaceRef(run)
-	if _, err := gitOutput(ctx, repo, "update-ref", ref, snapshot.Commit); err != nil {
-		return "", nil, err
+	if _, err := gitOutput(ctx, repo, "update-ref", ref, start.setup); err != nil {
+		return "", err
 	}
 	defer func() { _, _ = gitOutput(context.WithoutCancel(ctx), repo, "update-ref", "-d", ref) }()
 	bundle, err := os.CreateTemp("", "captain-substrate-"+run+"-*.bundle")
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	_ = bundle.Close()
 	if _, err := gitOutput(ctx, repo, "bundle", "create", "-q", bundle.Name(), ref); err != nil {
 		_ = os.Remove(bundle.Name())
-		return "", nil, err
+		return "", err
 	}
-	return bundle.Name(), snapshot, nil
+	return bundle.Name(), nil
 }
 
 func writeFile(ctx context.Context, env *substrate.Env, name string, r io.Reader) error {
@@ -240,7 +262,7 @@ func writeBundle(ctx context.Context, env *substrate.Env, bundle string) error {
 
 // fetchCommits fetches what the run committed into repo as branch(run), and points the result's
 // workspace at that branch. A run that committed nothing leaves no branch.
-func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, snapshot *gitagent.Snapshot, result *promptrun.Result) error {
+func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, start start, result *promptrun.Result) error {
 	file, err := env.ReadFile(ctx, path.Join(RunDir, CommitsBundle))
 	if err == nil {
 		err = saveBundle(ctx, file, repo, run)
@@ -263,7 +285,7 @@ func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, sna
 		workspace = *result.Response.Workspace
 	}
 	workspace.Cwd, workspace.Repo = repo, repo
-	workspace.Worktree = &api.WorktreeState{Repo: repo, Branch: branch(run), Base: snapshot.Base, Setup: snapshot.Commit, Head: head}
+	workspace.Worktree = &api.WorktreeState{Repo: repo, Branch: branch(run), Base: start.base, Setup: start.setup, Head: head}
 	result.Response.Workspace = &workspace
 	return nil
 }

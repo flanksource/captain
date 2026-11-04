@@ -5,6 +5,7 @@ package substraterun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -82,9 +83,13 @@ func environment() error {
 	if err != nil {
 		return err
 	}
-	dirty, err := os.ReadFile("src/dirty.txt")
-	if err != nil {
-		return fmt.Errorf("the caller's uncommitted work didn't come along: %w", err)
+	dirty := []byte("no work in progress")
+	if spec.Prompt.User != "fix the build without the caller's work" {
+		if dirty, err = os.ReadFile("src/dirty.txt"); err != nil {
+			return fmt.Errorf("the caller's uncommitted work didn't come along: %w", err)
+		}
+	} else if _, err := os.Stat("src/dirty.txt"); err == nil {
+		return errors.New("the caller's uncommitted work came along on a run from a commit")
 	}
 	if err := os.WriteFile("src/fixed.txt", []byte("fixed\n"), 0o644); err != nil {
 		return err
@@ -258,4 +263,36 @@ func TestTheHostsDataReachesTheEnvironmentInPlaceOfItsHooks(t *testing.T) {
 	result, err := promptrun.Run(t.Context(), in)
 	require.NoError(t, err, environmentLog(err))
 	assert.JSONEq(t, `{"todo":"todo-1"}`, result.Response.Text)
+}
+
+func TestARunNamedByItsCallerRunsInTheEnvironmentItNames(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("fix the build")
+	in.Config.SandboxSelection.Options["environment"] = "gavel-run-1"
+
+	_, err := promptrun.Run(t.Context(), in)
+	require.NoError(t, err, environmentLog(err))
+	assert.Equal(t, []string{"ate-env/gavel-run-1"}, f.server.Deleted())
+}
+
+func TestARunFromACommitStartsThereInARepositoryWithoutACheckout(t *testing.T) {
+	f := newFixture(t)
+	bare := filepath.Join(t.TempDir(), "cache.git")
+	out, err := exec.Command("git", "clone", "-q", "--bare", f.repo, bare).CombinedOutput()
+	require.NoError(t, err, string(out))
+	in := f.input("fix the build without the caller's work")
+	in.Repo = bare
+	in.Resolved.Spec.SetCwd(bare)
+	in.Config.SandboxSelection.Options["ref"] = f.head
+
+	result, err := promptrun.Run(t.Context(), in)
+	require.NoError(t, err, environmentLog(err))
+	worktree := result.Response.Workspace.Worktree
+	require.NotNil(t, worktree)
+	assert.Equal(t, bare, worktree.Repo)
+	assert.Equal(t, f.head, worktree.Base)
+	assert.Equal(t, f.head, worktree.Setup, "nothing of the caller's checkout came along")
+	show, err := exec.Command("git", "-C", bare, "show", "--name-only", "--format=", worktree.Branch).CombinedOutput()
+	require.NoError(t, err, string(show))
+	assert.Equal(t, "fixed.txt\n", string(show), "the run's commit is on the branch, in the bare repository")
 }

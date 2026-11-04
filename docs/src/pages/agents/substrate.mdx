@@ -62,6 +62,8 @@ sandbox:
 | `egress` | Hosts the run may reach over HTTPS, passed through untouched. |
 | `credentials` | Model keys the egress gateway injects: `provider` and `auth` (`anthropic api-key`, `anthropic oauth-token`, `openai api-key`), and the `uri` the cluster's credential provider resolves the key from. The run's process holds a placeholder in the key's variable. |
 | `command` | The program the environment runs, from the run's directory. It must speak captain's run protocol; `captain sandbox substrate run-task` does. |
+| `environment` | A run's own: the environment's ID, for a caller that builds each run's selection; `captain-run-<run>` when empty. Lowercase letters, digits and `-`. |
+| `ref` | A run's own: the commit the run starts from, in the run's repository, which may be bare. The run gets that commit and none of a checkout's uncommitted work, and its branch comes back to that repository. |
 
 Paths are taken as written. Keys must match exactly; an unknown key, a missing required one, an image tag instead of a digest, or a credential without a `uri` fails with the backend's name and the key.
 
