@@ -49,7 +49,7 @@ sandbox:
       trustBundle: /run/ate/egress-trust-bundle/trust-bundle.pem
       egress: [proxy.golang.org, registry.npmjs.org]
       credentials:
-        - {provider: anthropic, auth: api-key, uri: ate-secret://k8s.io/captain/anthropic/key}
+        - {provider: anthropic, auth: api-key, uri: ate-secret://k8s.io/default/captain/anthropic/key}
 ```
 
 | Key | |
@@ -80,7 +80,7 @@ The substrate sandbox serves the `api`, `cli` and `agent` modes. A spec can sele
 
 - An ActorTemplate for the environments (the backend's `template`) whose image has `captain`, `git` and the agent CLIs the runs use.
 - The egress gateway's trust bundle mounted where `trustBundle` says.
-- A credential provider that resolves the `credentials` URIs, such as substrate's Kubernetes Secrets provider for `ate-secret://` URIs.
+- A credential provider that resolves the `credentials` URIs, such as substrate's Kubernetes Secrets provider for `ate-secret://k8s.io/default/<namespace>/<secret>/<key>` URIs: `default` is the cluster the provider runs in, the only one it reads Secrets from, and the namespace must be one its namespace policy allows the backend's atespace.
 - An access policy letting the caller's identity create environments in the atespace and set their egress policies.
 
 ## Embedding

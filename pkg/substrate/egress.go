@@ -18,7 +18,7 @@ type HostPort struct {
 
 // Credential is a credential the egress gateway puts into requests to Host over HTTPS: it
 // replaces Header's value with Prefix and the credential URI names, which the cluster's
-// credential provider resolves, such as ate-secret://k8s.io/<namespace>/<secret>/<key>. Env is the
+// credential provider resolves, such as ate-secret://k8s.io/default/<namespace>/<secret>/<key>. Env is the
 // variable a process's client reads the credential from; the process gets a Placeholder in it.
 type Credential struct {
 	Host   string
