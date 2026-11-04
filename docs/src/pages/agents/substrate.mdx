@@ -18,7 +18,7 @@ captain prompt run fix.prompt --sandbox beta-substrate
 1. Captain snapshots your checkout, uncommitted work included, and bundles it.
 2. It creates environment `captain-run-<run>` from the backend's `image`, with egress denied except to the backend's `egress` hosts and the model hosts of its `credentials`.
 3. It writes the run's task and the bundle to `/tmp/captain-run` and starts the backend's `command` there, by default `captain sandbox substrate run-task`.
-4. The run's events, verification progress, tool calls and approvals come back over the process's stdout, and the caller's answers go in on its stdin. Its stderr goes to `~/.captain/sandbox/substrate/<run>/agent.log`.
+4. The run's events, verification progress, tool calls and approvals come back over the process's stdout, and the caller's answers go in on its stdin. Its stderr goes to `~/.captain/sandbox/substrate/<run>/agent.log`, or to `Input.EnvironmentOutput` when an embedding host sets it. The agent's transcripts come back every 10 seconds while they change, and are kept under your `~/.claude/projects` or `~/.codex/sessions`, as a local run's are, unless the host takes them with `Input.OnTranscript`.
 5. What the run committed, plus anything it left uncommitted, comes back as branch `captain/substrate/<run>`. The result's `Workspace.Worktree` names it: `Base` is your `HEAD`, `Setup` the snapshot of your uncommitted work, `Head` the branch's tip. Your checkout is left as it was.
 6. The environment is deleted however the run ends. If substrate can't delete it, captain warns and the run's outcome stands.
 

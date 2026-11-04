@@ -94,16 +94,17 @@ func underRoot(root, dir, path string) string {
 	return filepath.Join(dir, rel)
 }
 
-// Message kinds, in the order a run sends them: started once its setup is done, then events and
-// verification progress as they happen, and its result last. A tool call and an approval
-// request are calls: the run waits for the caller's reply.
+// Message kinds, in the order a run sends them: started once its setup is done, then events,
+// verification progress and transcripts as they happen, and its result last. A tool call and an
+// approval request are calls: the run waits for the caller's reply.
 const (
-	KindStarted  = "started"
-	KindEvent    = "event"
-	KindProgress = "progress"
-	KindResult   = "result"
-	KindTool     = "tool"
-	KindApproval = "approval"
+	KindStarted    = "started"
+	KindEvent      = "event"
+	KindProgress   = "progress"
+	KindTranscript = "transcript"
+	KindResult     = "result"
+	KindTool       = "tool"
+	KindApproval   = "approval"
 )
 
 // Message is one thing a run reports to its caller.
@@ -123,6 +124,16 @@ type Message struct {
 	Input map[string]any `json:"input,omitempty"`
 	// Approval is a tool use the run asks a person to approve.
 	Approval *api.ApprovalRequest `json:"approval,omitempty"`
+	// Transcript is one of the run's transcript files, whole, as it is now.
+	Transcript *Transcript `json:"transcript,omitempty"`
+}
+
+// Transcript is a transcript file an agent wrote in the environment: Source is the agent
+// (claude, codex), and Name the file's path under that agent's transcript directory.
+type Transcript struct {
+	Source string `json:"source"`
+	Name   string `json:"name"`
+	Data   []byte `json:"data"`
 }
 
 // Reply is the caller's answer to the call ID names: a tool's output, or the decision on an
@@ -170,6 +181,11 @@ func StartedMessage(spec api.Spec) Message {
 func EventMessage(iteration int, event api.Event) Message {
 	event.Raw = nil
 	return Message{Kind: KindEvent, Iteration: iteration, Event: &event}
+}
+
+// TranscriptMessage sends one of the run's transcript files, whole.
+func TranscriptMessage(source, name string, data []byte) Message {
+	return Message{Kind: KindTranscript, Transcript: &Transcript{Source: source, Name: name, Data: data}}
 }
 
 // ProgressMessage reports a verification snapshot.

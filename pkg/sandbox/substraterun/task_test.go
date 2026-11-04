@@ -35,10 +35,15 @@ type writesFile struct{ path string }
 
 func (h writesFile) Name() string { return "writes-file" }
 func (h writesFile) PreRun(*agent.HookContext) error {
+	if err := os.MkdirAll(filepath.Dir(h.path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(h.path, []byte("from the host's hook\n"), 0o644)
 }
 
 func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	repo := t.TempDir()
 	git := func(dir string, args ...string) string {
 		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=caller", "-c", "user.email=caller@example.com"}, args...)...).CombinedOutput()
@@ -67,7 +72,11 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 		if err := json.Unmarshal(job.Host, &data); err != nil {
 			return remoterun.Host{}, err
 		}
-		return remoterun.Host{Provider: answering{text: "fixed"}, Hooks: []any{writesFile{path: filepath.Join(src, data.File)}}}, nil
+		return remoterun.Host{Provider: answering{text: "fixed"}, Hooks: []any{
+			writesFile{path: filepath.Join(src, data.File)},
+			// Stands in for the agent's transcript.
+			writesFile{path: filepath.Join(home, ".claude", "projects", "-tmp-captain-run-src", "session-1.jsonl")},
+		}}, nil
 	}
 	stdoutR, stdoutW := io.Pipe()
 	stdinR, stdinW := io.Pipe()
@@ -76,7 +85,11 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 		ran <- RunTask(t.Context(), dir, stdoutW, stdinR, hostFor)
 		_ = stdoutW.Close()
 	}()
-	result, err := remoterun.Relay(t.Context(), promptrun.Input{}, func(api.Spec) error { return nil }, stdoutR, stdinW)
+	transcripts := map[string]string{}
+	in := promptrun.Input{OnTranscript: func(source, name string, data []byte) {
+		transcripts[source+"/"+name] = string(data)
+	}}
+	result, err := remoterun.Relay(t.Context(), in, func(api.Spec) error { return nil }, stdoutR, stdinW)
 	_ = stdinW.Close()
 	require.NoError(t, err)
 	require.NoError(t, <-ran)
@@ -85,4 +98,6 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 	assert.Equal(t, filepath.Join(dir, "src"), checkout)
 	assert.Equal(t, "hosted.txt\n", git(checkout, "show", "--name-only", "--format=", "HEAD"), "the hook's file came back in the run's commit")
 	assert.FileExists(t, filepath.Join(dir, CommitsBundle))
+	assert.Equal(t, map[string]string{"claude/-tmp-captain-run-src/session-1.jsonl": "from the host's hook\n"}, transcripts,
+		"the agent's transcript came to the caller before the result")
 }

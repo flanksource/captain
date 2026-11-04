@@ -167,3 +167,19 @@ func TestRepliesCarryTheirCallsID(t *testing.T) {
 	reply := roundTrip(t, Reply{ID: "call-7", Output: json.RawMessage(`1`)})
 	assert.Equal(t, "call-7", reply.ID)
 }
+
+func TestTheRunsTranscriptsReachTheCaller(t *testing.T) {
+	c := newChannel(t)
+	c.environment(func(serve Serve) {
+		_ = serve.Send(TranscriptMessage("claude", "-tmp-captain-run-src/session-1.jsonl", []byte(`{"type":"user"}`+"\n")))
+		_ = serve.Send(ResultMessage(promptrun.Result{}, nil))
+	})
+	type file struct{ source, name, data string }
+	var got []file
+	in := promptrun.Input{OnTranscript: func(source, name string, data []byte) {
+		got = append(got, file{source, name, string(data)})
+	}}
+	_, err := c.relay(t, in)
+	require.NoError(t, err)
+	assert.Equal(t, []file{{"claude", "-tmp-captain-run-src/session-1.jsonl", `{"type":"user"}` + "\n"}}, got)
+}

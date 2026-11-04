@@ -156,6 +156,13 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 		return promptrun.Result{}, err
 	}
 
+	if in.OnTranscript == nil {
+		if home, homeErr := os.UserHomeDir(); homeErr == nil {
+			in.OnTranscript = keepTranscripts(home, run)
+		} else {
+			logger.Warnf("substrate run %s's transcripts can't be kept here: %v", run, homeErr)
+		}
+	}
 	result, err := remoterun.Relay(ctx, in, started, proc.Stdout(ctx), proc.Input(ctx))
 	if ctx.Err() != nil {
 		if killErr := proc.Kill(context.WithoutCancel(ctx)); killErr != nil {
