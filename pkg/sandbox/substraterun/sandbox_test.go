@@ -296,3 +296,16 @@ func TestARunFromACommitStartsThereInARepositoryWithoutACheckout(t *testing.T) {
 	require.NoError(t, err, string(show))
 	assert.Equal(t, "fixed.txt\n", string(show), "the run's commit is on the branch, in the bare repository")
 }
+
+func TestARunsOutputGoesWhereItsCallerSays(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("exit without a result")
+	var output strings.Builder
+	in.EnvironmentOutput = &output
+
+	_, err := promptrun.Run(t.Context(), in)
+	require.Error(t, err)
+	assert.Regexp(t, `^substrate run [0-9a-f]{12} exited 3 without a result; its output went to the run's own log$`, err.Error())
+	assert.Contains(t, output.String(), "the agent crashed")
+	assert.NoDirExists(t, filepath.Join(os.Getenv("HOME"), ".captain", "sandbox", "substrate"), "no log file of its own")
+}

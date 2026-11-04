@@ -116,9 +116,11 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err != nil {
 		return promptrun.Result{}, fmt.Errorf("encode the task of substrate run %s: %w", run, err)
 	}
-	log, err := logPath(run)
-	if err != nil {
-		return promptrun.Result{}, err
+	output := outputLog{to: in.EnvironmentOutput}
+	if output.to == nil {
+		if output.path, err = logPath(run); err != nil {
+			return promptrun.Result{}, err
+		}
 	}
 
 	client, err := substrate.Dial(s.options.client)
@@ -130,7 +132,6 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err != nil {
 		return promptrun.Result{}, err
 	}
-	var output outputLog
 	defer output.wait()
 	defer func() {
 		if err := env.Delete(context.WithoutCancel(ctx)); err != nil {
@@ -151,7 +152,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err != nil {
 		return promptrun.Result{}, err
 	}
-	if err := output.copy(ctx, proc, log); err != nil {
+	if err := output.copy(ctx, proc); err != nil {
 		return promptrun.Result{}, err
 	}
 
@@ -165,9 +166,9 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if errors.Is(err, remoterun.ErrNoResult) {
 		code, waitErr := proc.Wait(ctx)
 		if waitErr != nil {
-			return result, fmt.Errorf("substrate run %s ended without a result, and its exit code is unknown (%v); its output is in %s", run, waitErr, log)
+			return result, fmt.Errorf("substrate run %s ended without a result, and its exit code is unknown (%v); its output %s", run, waitErr, output.where())
 		}
-		return result, fmt.Errorf("substrate run %s exited %d without a result; its output is in %s", run, code, log)
+		return result, fmt.Errorf("substrate run %s exited %d without a result; its output %s", run, code, output.where())
 	}
 	if fetchErr := fetchCommits(ctx, env, repo, run, start, &result); fetchErr != nil {
 		return result, errors.Join(err, fetchErr)
@@ -318,28 +319,43 @@ func logPath(run string) (string, error) {
 	return filepath.Join(filepath.Dir(config), ".captain", "sandbox", "substrate", run, "agent.log"), nil
 }
 
-// outputLog copies a run's stderr into its log until the process ends.
+// outputLog copies a run's stderr to where its output goes until the process ends: to, the
+// caller's, or else a log file of the run's own at path.
 type outputLog struct {
+	to   io.Writer
+	path string
 	done chan struct{}
 }
 
-func (o *outputLog) copy(ctx context.Context, proc *substrate.Proc, log string) error {
-	if err := os.MkdirAll(filepath.Dir(log), 0o755); err != nil {
-		return err
-	}
-	file, err := os.Create(log)
-	if err != nil {
-		return err
+func (o *outputLog) copy(ctx context.Context, proc *substrate.Proc) error {
+	to, closeTo := o.to, func() error { return nil }
+	if to == nil {
+		if err := os.MkdirAll(filepath.Dir(o.path), 0o755); err != nil {
+			return err
+		}
+		file, err := os.Create(o.path)
+		if err != nil {
+			return err
+		}
+		to, closeTo = file, file.Close
 	}
 	o.done = make(chan struct{})
 	stderr := proc.Stderr(context.WithoutCancel(ctx))
 	go func() {
 		defer close(o.done)
-		defer func() { _ = file.Close() }()
+		defer func() { _ = closeTo() }()
 		defer func() { _ = stderr.Close() }()
-		_, _ = io.Copy(file, stderr)
+		_, _ = io.Copy(to, stderr)
 	}()
 	return nil
+}
+
+// where says where the run's output went.
+func (o *outputLog) where() string {
+	if o.to != nil {
+		return "went to the run's own log"
+	}
+	return "is in " + o.path
 }
 
 // wait waits for the copy to finish, which it does once the process is gone.
