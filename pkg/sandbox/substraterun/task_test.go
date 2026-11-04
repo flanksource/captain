@@ -82,8 +82,10 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 	stdoutR, stdoutW := io.Pipe()
 	stdinR, stdinW := io.Pipe()
 	ran := make(chan error, 1)
+	// The run's directory is the program's working directory, as substrate starts it.
+	t.Chdir(dir)
 	go func() {
-		ran <- RunTask(t.Context(), dir, stdoutW, stdinR, hostFor)
+		ran <- RunTask(t.Context(), ".", stdoutW, stdinR, hostFor)
 		_ = stdoutW.Close()
 	}()
 	transcripts := map[string]string{}

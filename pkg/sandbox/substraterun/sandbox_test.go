@@ -52,13 +52,11 @@ func environment() error {
 		return err
 	}
 	fmt.Fprintln(os.Stderr, "checking out", task.Ref)
-	if err := git("", "init", "-q", "src"); err != nil {
+	dir, err := os.Getwd()
+	if err != nil {
 		return err
 	}
-	if err := git("src", "fetch", "-q", "../"+WorkspaceBundle, task.Ref+":"+task.Ref); err != nil {
-		return err
-	}
-	if err := git("src", "switch", "-q", "-c", "run", task.Ref); err != nil {
+	if err := checkOutWorkspace(context.Background(), dir, filepath.Join(dir, "src"), task.Ref); err != nil {
 		return err
 	}
 	serve := remoterun.Stdio(os.Stdout, os.Stdin)
@@ -73,6 +71,17 @@ func environment() error {
 	case "hang":
 		_ = serve.Send(remoterun.StartedMessage(spec))
 		time.Sleep(time.Minute)
+	case "echo what the setup names":
+		checkout := spec.Setup.Checkout.Worktree
+		var found []string
+		for _, name := range []string{"refs/heads/" + checkout.Branch, checkout.Base} {
+			out, err := exec.Command("git", "-C", "src", "rev-parse", "--verify", name+"^{commit}").Output()
+			if err != nil {
+				return fmt.Errorf("the environment doesn't have %s, which the run's setup names", name)
+			}
+			found = append(found, strings.TrimSpace(string(out)))
+		}
+		return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: &api.Response{Text: strings.Join(found, " ")}, Passed: true}, nil))
 	case "echo the run's environment":
 		return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: &api.Response{Text: os.Getenv("GAVEL_RUN_ID")}, Passed: true}, nil))
 	case "echo the host's data":
@@ -449,4 +458,19 @@ func TestARunsSetupWorktreeKeepsWhereItBranchedFrom(t *testing.T) {
 	assert.Equal(t, f.git(t, "rev-parse", worktree.Branch), worktree.Head)
 	assert.Equal(t, f.git(t, "rev-parse", worktree.Branch+"~1"), worktree.Base, "where the setup worktree branched from, as the environment said")
 	assert.Equal(t, worktree.Base, worktree.Setup)
+}
+
+func TestTheCommitsARunsSetupNamesGoWithTheWorkspace(t *testing.T) {
+	f := newFixture(t)
+	f.git(t, "branch", "feature")
+	f.git(t, "commit", "-q", "--allow-empty", "-m", "not on any branch")
+	loose := f.git(t, "rev-parse", "HEAD")
+	f.git(t, "reset", "-q", "--hard", f.head)
+	in := f.input("echo what the setup names")
+	in.Resolved.Spec.Setup.Checkout = &shell.Checkout{Mode: shell.CheckoutLocal, Worktree: &shell.Worktree{Mode: shell.WorktreeBranch, Branch: "feature", Base: loose}}
+
+	result, err := promptrun.Run(t.Context(), in)
+	require.NoError(t, err, environmentLog(err))
+	assert.Equal(t, f.head+" "+loose, result.Response.Text)
+	assert.Empty(t, f.git(t, "for-each-ref", "refs/captain"), "the refs the commits went out on are gone")
 }
