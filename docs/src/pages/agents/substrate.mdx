@@ -85,4 +85,6 @@ The substrate sandbox serves the `api`, `cli` and `agent` modes. A spec can sele
 
 ## Embedding
 
-A host offers the kind by importing `github.com/flanksource/captain/pkg/sandbox/substraterun`, which registers it; `captain` does. `promptrun.Run` hands a run whose selection is a substrate backend to the sandbox's `RunRemote`. The caller's `Input.Hooks` can't run in the environment and are refused, and approvals go through `Config.OnApproval`; the deprecated `CanUseTool` is refused.
+A host offers the kind by importing `github.com/flanksource/captain/pkg/sandbox/substraterun`, which registers it; `captain` does. `promptrun.Run` hands a run whose selection is a substrate backend to the sandbox's `RunRemote`. Approvals go through `Config.OnApproval`; the deprecated `CanUseTool` is refused.
+
+A host whose run needs hooks of its own sets `Input.HostData`, the data its hooks are built from, beside `Input.Hooks`, and the backend's `command` to its own program, which calls `substraterun.RunTask` with a `HostFor` that rebuilds the hooks in the environment. A run with hooks but no host data is refused. The program can ask its caller for what only the caller can do, such as pushing with credentials the environment never holds, through the host call `RunTask` hands it; the caller answers with `Input.HostCalls`.

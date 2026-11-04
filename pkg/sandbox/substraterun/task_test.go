@@ -32,14 +32,18 @@ func (p answering) GetModel() string        { return "claude-sonnet-5" }
 func (p answering) GetRuntime() api.Runtime { return api.RuntimeOf(api.Anthropic, api.ModeAgent) }
 
 // writesFile is a host's hook, rebuilt in the environment, that leaves a file in the checkout.
-type writesFile struct{ path string }
+type writesFile struct{ path, content string }
 
 func (h writesFile) Name() string { return "writes-file" }
 func (h writesFile) PreRun(*agent.HookContext) error {
 	if err := os.MkdirAll(filepath.Dir(h.path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(h.path, []byte("from the host's hook\n"), 0o644)
+	content := h.content
+	if content == "" {
+		content = "from the host's hook\n"
+	}
+	return os.WriteFile(h.path, []byte(content), 0o644)
 }
 
 func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
@@ -67,14 +71,19 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, TaskFile), task, 0o644))
 
 	var checkout string
-	hostFor := func(job remoterun.Job, src string) (remoterun.Host, error) {
+	hostFor := func(job remoterun.Job, src string, call remoterun.HostCall) (remoterun.Host, error) {
 		checkout = src
+		answer, err := call("greet", json.RawMessage(`"the environment"`))
+		if err != nil {
+			return remoterun.Host{}, err
+		}
 		var data struct{ File string }
 		if err := json.Unmarshal(job.Host, &data); err != nil {
 			return remoterun.Host{}, err
 		}
 		return remoterun.Host{Provider: answering{text: "fixed"}, Hooks: []any{
 			writesFile{path: filepath.Join(src, data.File)},
+			writesFile{path: filepath.Join(src, "greeting.json"), content: string(answer)},
 			// Stands in for the agent's transcript.
 			writesFile{path: filepath.Join(home, ".claude", "projects", "-tmp-captain-run-src", "session-1.jsonl")},
 		}}, nil
@@ -91,6 +100,14 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 	transcripts := map[string]string{}
 	in := promptrun.Input{OnTranscript: func(source, name string, data []byte) {
 		transcripts[source+"/"+name] = string(data)
+	}, HostCalls: map[string]func(context.Context, json.RawMessage) (json.RawMessage, error){
+		"greet": func(_ context.Context, data json.RawMessage) (json.RawMessage, error) {
+			var who string
+			if err := json.Unmarshal(data, &who); err != nil {
+				return nil, err
+			}
+			return json.Marshal("hello " + who)
+		},
 	}}
 	result, err := remoterun.Relay(t.Context(), in, func(api.Spec) error { return nil }, stdoutR, stdinW)
 	_ = stdinW.Close()
@@ -99,7 +116,8 @@ func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
 
 	assert.Equal(t, "fixed", result.Response.Text)
 	assert.Equal(t, filepath.Join(dir, "src"), checkout)
-	assert.Equal(t, "hosted.txt\n", git(checkout, "show", "--name-only", "--format=", "HEAD"), "the hook's file came back in the run's commit")
+	assert.Equal(t, "greeting.json\nhosted.txt\n", git(checkout, "show", "--name-only", "--format=", "HEAD"), "the hooks' files came back in the run's commit")
+	assert.Equal(t, `"hello the environment"`, git(checkout, "show", "HEAD:greeting.json"), "the host's program called its caller")
 	assert.FileExists(t, filepath.Join(dir, CommitsBundle))
 	assert.Equal(t, map[string]string{"claude/-tmp-captain-run-src/session-1.jsonl": "from the host's hook\n"}, transcripts,
 		"the agent's transcript came to the caller before the result")
@@ -131,7 +149,7 @@ func TestARunInASetupWorktreeBringsBackItsBranch(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, TaskFile), task, 0o644))
 
-	hostFor := func(remoterun.Job, string) (remoterun.Host, error) {
+	hostFor := func(remoterun.Job, string, remoterun.HostCall) (remoterun.Host, error) {
 		return remoterun.Host{Provider: answering{text: "fixed"}}, nil
 	}
 	stdoutR, stdoutW := io.Pipe()

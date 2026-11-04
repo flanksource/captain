@@ -97,8 +97,9 @@ var ErrNoResult = errors.New("the relocated run ended without a result")
 
 // Relay is the caller's side of the channel. It reads the run's messages from out, its process's
 // stdout; calls started with the spec the run starts with; hands events, verification progress
-// and transcripts to in's OnEvent, Verify.Progress and OnTranscript; answers tool calls and approvals with in's tools and
-// OnApproval on input, its stdin; and returns the run's result and error. Handlers get ctx. Relay
+// and transcripts to in's OnEvent, Verify.Progress and OnTranscript; answers tool calls,
+// approvals and host calls with in's tools, OnApproval and HostCalls on input, its stdin; and
+// returns the run's result and error. Handlers get ctx. Relay
 // returns when the run sends its result, out ends, or started fails, so a caller cancels a run by
 // ending its process.
 func Relay(ctx context.Context, in promptrun.Input, started func(api.Spec) error, out io.Reader, input io.Writer) (promptrun.Result, error) {
@@ -135,7 +136,7 @@ func Relay(ctx context.Context, in promptrun.Input, started func(api.Spec) error
 			if in.OnTranscript != nil && message.Transcript != nil {
 				in.OnTranscript(message.Transcript.Source, message.Transcript.Name, message.Transcript.Data)
 			}
-		case KindTool, KindApproval:
+		case KindTool, KindApproval, KindHost:
 			calls.Add(1)
 			go func() {
 				defer calls.Done()
@@ -156,6 +157,20 @@ func Relay(ctx context.Context, in promptrun.Input, started func(api.Spec) error
 // answer is the caller's reply to call: its tool's output, or its approval decision.
 func answer(ctx context.Context, in promptrun.Input, call Message) Reply {
 	reply := Reply{ID: call.ID}
+	if call.Kind == KindHost {
+		handle, ok := in.HostCalls[call.Name]
+		if !ok {
+			reply.Error = fmt.Sprintf("the caller has no host call %q", call.Name)
+			return reply
+		}
+		output, err := handle(ctx, call.Data)
+		if err != nil {
+			reply.Error = err.Error()
+			return reply
+		}
+		reply.Output = output
+		return reply
+	}
 	if call.Kind == KindApproval {
 		if in.Config.OnApproval == nil || call.Approval == nil {
 			reply.Error = "the caller asks no approvals"

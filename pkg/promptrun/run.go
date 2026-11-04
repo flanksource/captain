@@ -81,6 +81,11 @@ type Input struct {
 	// directory. nil leaves them to the sandbox, which keeps them where the
 	// agent would here. A local run's transcripts are already here.
 	OnTranscript func(source, name string, data []byte)
+	// HostCalls answer, by name, what the host's own program in a whole run's
+	// environment asks of the host: things only the caller can do, such as
+	// pushing to a PR with credentials the environment never holds. A call of a
+	// name with no answer is refused.
+	HostCalls map[string]func(ctx context.Context, data json.RawMessage) (json.RawMessage, error)
 	// CallerOwnsCommits hands committing to Hooks: Run builds no commit hook of
 	// its own from Workflow.Commits, and leaves the declaration on the request so
 	// the recorded spec still says what the run commits and validation of that
