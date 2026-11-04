@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"regexp"
 	"slices"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -30,6 +31,11 @@ type backendOptions struct {
 	Egress      []string            `json:"egress"`
 	Credentials []credentialOptions `json:"credentials"`
 	Command     *[]string           `json:"command"`
+	// Environment and Ref are a run's own, for a caller that builds each run's selection: the ID
+	// of the run's environment, and the commit the run starts from instead of the caller's
+	// checkout.
+	Environment string `json:"environment"`
+	Ref         string `json:"ref"`
 }
 
 // credentialOptions names a model key the egress gateway injects: whose it is, what kind, and the
@@ -46,7 +52,14 @@ type options struct {
 	image   string
 	egress  substrate.Egress
 	command []string
+	// environment is the run's environment ID; empty names it after the run.
+	environment string
+	// ref is the commit the run starts from; empty starts it from the caller's checkout.
+	ref string
 }
+
+// environmentID is the form of an environment's ID, which substrate names its actor by.
+var environmentID = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // runTask is the program the environment runs by default: captain's own side of a whole run.
 var runTask = []string{"captain", "sandbox", "substrate", "run-task"}
@@ -87,6 +100,8 @@ func decode(raw map[string]any) (options, error) {
 		return options{}, errors.New("clientCert and clientKey go together")
 	case in.Command != nil && len(*in.Command) == 0:
 		return options{}, errors.New("command, when set, names the program the environment runs")
+	case in.Environment != "" && !environmentID.MatchString(in.Environment):
+		return options{}, fmt.Errorf("environment %q must be lowercase letters, digits and '-', starting with a letter", in.Environment)
 	}
 	if err := substrate.PinnedImage(in.Image); err != nil {
 		return options{}, fmt.Errorf("image: %w", err)
@@ -97,8 +112,10 @@ func decode(raw map[string]any) (options, error) {
 			ClientCertFile: in.ClientCert, ClientKeyFile: in.ClientKey, Atespace: in.Atespace,
 			Template: in.Template, TrustBundle: in.TrustBundle,
 		},
-		image:   in.Image,
-		command: runTask,
+		image:       in.Image,
+		command:     runTask,
+		environment: in.Environment,
+		ref:         in.Ref,
 	}
 	if out.client.Atespace == "" {
 		out.client.Atespace = "ate-env"
