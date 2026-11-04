@@ -331,3 +331,13 @@ func TestARunsOutputGoesWhereItsCallerSays(t *testing.T) {
 	assert.Contains(t, output.String(), "the agent crashed")
 	assert.NoDirExists(t, filepath.Join(os.Getenv("HOME"), ".captain", "sandbox", "substrate"), "no log file of its own")
 }
+
+func TestAResumedSessionIsRefused(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("fix the build")
+	in.Resolved.Spec.SessionID = "session-1"
+
+	_, err := promptrun.Run(t.Context(), in)
+	require.EqualError(t, err, `sandbox substrate can't resume session session-1: the run's environment starts without the agent's earlier sessions`)
+	assert.Empty(t, f.server.Deleted(), "nothing was created")
+}

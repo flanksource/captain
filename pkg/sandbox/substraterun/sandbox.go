@@ -92,6 +92,9 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if len(in.Hooks) > 0 && len(in.HostData) == 0 {
 		return promptrun.Result{}, errors.New("sandbox substrate runs the whole run in its environment, where the caller's hooks can't run; set Input.HostData for the environment's program to rebuild them from")
 	}
+	if spec.SessionID != "" {
+		return promptrun.Result{}, fmt.Errorf("sandbox substrate can't resume session %s: the run's environment starts without the agent's earlier sessions", spec.SessionID)
+	}
 	if spec.Setup != nil && setup.Relocates(spec.Setup.Checkout) {
 		return promptrun.Result{}, errors.New("sandbox substrate runs the run in its own checkout; it cannot be combined with a setup checkout")
 	}
