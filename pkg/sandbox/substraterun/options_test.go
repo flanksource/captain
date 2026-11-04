@@ -48,6 +48,15 @@ func TestABackendsOptionsReachTheSubstrateClient(t *testing.T) {
 	}, options.egress)
 }
 
+func TestEgressReachesHostsOverTLSOrInCleartextOnTheirPorts(t *testing.T) {
+	options, err := decodeOptions(backend(map[string]any{"egress": []any{"proxy.golang.org", "git.example:8443", "http://gavel.gavel.svc:8080"}}))
+	require.NoError(t, err)
+	assert.Equal(t, substrate.Egress{
+		Passthrough: []substrate.HostPort{{Host: "proxy.golang.org", Port: 443}, {Host: "git.example", Port: 8443}},
+		HTTP:        []substrate.HostPort{{Host: "gavel.gavel.svc", Port: 8080}},
+	}, options.egress)
+}
+
 func TestARunsSelectionNamesItsEnvironmentAndCommit(t *testing.T) {
 	options, err := decodeOptions(backend(map[string]any{"environment": "gavel-run-1", "ref": "main", "env": map[string]any{"GAVEL_RUN_ID": "run-1"}}))
 	require.NoError(t, err)
@@ -81,6 +90,8 @@ func TestABackendsMistakesNameTheirKey(t *testing.T) {
 		"an empty command":          {map[string]any{"command": []any{}}, `sandbox backend "beta-substrate": command, when set, names the program the environment runs`},
 		"a lifetime":                {map[string]any{"maxLifetime": "soon"}, `sandbox backend "beta-substrate": maxLifetime "soon": time: invalid duration "soon"`},
 		"a negative lifetime":       {map[string]any{"maxLifetime": "-1h"}, `sandbox backend "beta-substrate": maxLifetime must be positive, got "-1h"`},
+		"an egress port":            {map[string]any{"egress": []any{"git.example:http"}}, `sandbox backend "beta-substrate": egress "git.example:http": the port must be a number`},
+		"an egress scheme":          {map[string]any{"egress": []any{"ftp://files.example"}}, `sandbox backend "beta-substrate": egress "ftp://files.example": a host, host:port, or http://host[:port]`},
 		"an environment ID":         {map[string]any{"environment": "Gavel Run"}, `sandbox backend "beta-substrate": environment "Gavel Run" must be lowercase letters, digits and '-', starting with a letter`},
 	} {
 		t.Run(name, func(t *testing.T) {
