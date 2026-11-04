@@ -27,7 +27,7 @@ func TestAnEnvironmentAgainstACluster(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Close()
 
-	env, err := client.Create(ctx, substrate.Environment{ID: "captain-e2e-" + uuid.NewString()[:8], Image: cluster.Image})
+	env, err := client.Create(ctx, substrate.Environment{ID: "captain-e2e-" + uuid.NewString()[:8]})
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, env.Delete(context.WithoutCancel(ctx))) }()
 
@@ -58,7 +58,7 @@ func TestLargeFilesRoundTripAgainstACluster(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Close()
 
-	env, err := client.Create(ctx, substrate.Environment{ID: "captain-e2e-" + uuid.NewString()[:8], Image: cluster.Image})
+	env, err := client.Create(ctx, substrate.Environment{ID: "captain-e2e-" + uuid.NewString()[:8]})
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, env.Delete(context.WithoutCancel(ctx))) }()
 

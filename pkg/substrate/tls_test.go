@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flanksource/captain/pkg/substrate/internal/ateapipb"
+	ateapipb "github.com/flanksource/captain/pkg/substrate/internal/ateapi"
 	"github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,7 +59,7 @@ func TestSubstrateClientCertificateReachesBothAPIs(t *testing.T) {
 
 	assert.Equal(t, []seenCall{
 		{Method: "/ateenv.v1alpha.EnvironmentService/GetEnvironment", Client: "captain"},
-		{Method: "/ateapi.Control/CreateActorEgressPolicy", Client: "captain", Authorization: "Bearer substrate-token"},
+		{Method: "/substrate.ateapi.v1.Control/CreateActorEgressPolicy", Client: "captain", Authorization: "Bearer substrate-token"},
 	}, calls.all())
 }
 

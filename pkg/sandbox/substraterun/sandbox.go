@@ -138,7 +138,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if s.options.environment == "" {
 		s.sweepNow(ctx, client)
 	}
-	env, err := client.Create(ctx, substrate.Environment{ID: firstNonEmpty(s.options.environment, environmentPrefix+run), Image: s.options.image, Egress: s.options.egress})
+	env, err := client.Create(ctx, substrate.Environment{ID: firstNonEmpty(s.options.environment, environmentPrefix+run), Egress: s.options.egress})
 	if err != nil {
 		return promptrun.Result{}, err
 	}

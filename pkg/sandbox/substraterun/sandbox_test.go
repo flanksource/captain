@@ -187,7 +187,7 @@ func newFixture(t *testing.T) fixture {
 	return fixture{server: server, repo: repo, head: run("rev-parse", "HEAD"), config: api.SandboxConfig{
 		Kind: api.SandboxSubstrate, Name: "test-substrate",
 		Options: map[string]any{
-			"envAPI": options.EnvAPI, "control": options.Control, "image": pinned,
+			"envAPI": options.EnvAPI, "control": options.Control, "template": "captain-runner",
 			"command": []any{"env", asEnvironment + "=1", executable},
 		},
 	}}
@@ -408,7 +408,7 @@ func TestARunSweepsWhatEarlierRunsLeftBehind(t *testing.T) {
 	f := newFixture(t)
 	client := f.client(t)
 	for _, id := range []string{"captain-run-left", "captain-run-recent", "gavel-run-1"} {
-		_, err := client.Create(t.Context(), substrate.Environment{ID: id, Image: pinned})
+		_, err := client.Create(t.Context(), substrate.Environment{ID: id})
 		require.NoError(t, err)
 	}
 	f.server.Backdate("ate-env", "captain-run-left", time.Now().Add(-25*time.Hour))
@@ -425,7 +425,7 @@ func TestARunSweepsWhatEarlierRunsLeftBehind(t *testing.T) {
 
 func TestSweepBackendDeletesTheBackendsLeftovers(t *testing.T) {
 	f := newFixture(t)
-	_, err := f.client(t).Create(t.Context(), substrate.Environment{ID: "captain-run-left", Image: pinned})
+	_, err := f.client(t).Create(t.Context(), substrate.Environment{ID: "captain-run-left"})
 	require.NoError(t, err)
 	f.server.Backdate("ate-env", "captain-run-left", time.Now().Add(-25*time.Hour))
 

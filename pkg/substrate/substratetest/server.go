@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/substrate"
-	"github.com/flanksource/captain/pkg/substrate/internal/ateapipb"
+	ateapipb "github.com/flanksource/captain/pkg/substrate/internal/ateapi"
 	"github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -63,7 +63,7 @@ type Server struct {
 
 // Environment is one environment the server created.
 type Environment struct {
-	ID, Atespace, Image, Template string
+	ID, Atespace, Template string
 	// Dir is the directory the environment's files live in and its processes run in.
 	Dir string
 	// Created is when the environment was created, its actor's create time.
@@ -182,7 +182,7 @@ func (e environments) CreateEnvironment(_ context.Context, req *ateenvv1alpha.Cr
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	s.envs[key] = &Environment{
-		ID: req.GetId(), Atespace: req.GetAtespace(), Image: req.GetRootfsImage(), Template: req.GetTemplate().GetName(),
+		ID: req.GetId(), Atespace: req.GetAtespace(), Template: req.GetTemplate().GetName(),
 		Dir: dir, Created: time.Now(), processes: map[string]*process{},
 	}
 	return &ateenvv1alpha.CreateEnvironmentResponse{}, nil

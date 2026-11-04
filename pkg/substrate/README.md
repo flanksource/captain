@@ -8,8 +8,8 @@ policies are set through). From another cluster, both sit behind an ingress that
 certificate (`ClientCertFile`/`ClientKeyFile`). The certificate is read on every handshake and
 `ControlTokenFile` on every call, so renewed ones are used without reconnecting.
 
-`Client.Create(Environment)` creates an environment from an image pinned by digest, deriving from
-`Options.Template`, and sets its actor's egress policy. An environment whose policy can't be set
+`Client.Create(Environment)` creates an environment from `Options.Template`, which sets the image it
+runs, and sets its actor's egress policy. An environment whose policy can't be set
 is deleted. Everything the policy doesn't name is denied:
 
 - `Egress.Passthrough`: hosts reached over TLS, passed through undecrypted;
@@ -41,10 +41,10 @@ processes are real processes run in it, so the client's tests run real commands 
 `TestAnEnvironmentAgainstACluster` runs against a live cluster when `CAPTAIN_SUBSTRATE_TEST=1`. It
 uses a kind cluster with Substrate and env installed, as gavel's `docs/sandbox.md` sets one up,
 with ate-env-api port-forwarded to `localhost:7777` and ate-api-server to `localhost:8443`. Set
-`CAPTAIN_SUBSTRATE_TOKEN_FILE` to a token for the control plane, and `CAPTAIN_SUBSTRATE_IMAGE` to an
-image the cluster pulls, pinned by digest, that has `sh` and coreutils.
-`CAPTAIN_SUBSTRATE_ENV_API`, `CAPTAIN_SUBSTRATE_CONTROL` and `CAPTAIN_SUBSTRATE_TEMPLATE` (default
-`default-template`) override the rest. For a Substrate behind a client-certificate ingress, set
+`CAPTAIN_SUBSTRATE_TOKEN_FILE` to a token for the control plane. `CAPTAIN_SUBSTRATE_TEMPLATE`
+(default `default-template`) names the template environments are created from, whose image must
+have `sh` and coreutils. `CAPTAIN_SUBSTRATE_ENV_API` and `CAPTAIN_SUBSTRATE_CONTROL` override the
+rest. For a Substrate behind a client-certificate ingress, set
 `CAPTAIN_SUBSTRATE_CLIENT_CERT` and `CAPTAIN_SUBSTRATE_CLIENT_KEY`, and `CAPTAIN_SUBSTRATE_CA_FILE`
 when its certificate isn't signed by a system root. `CAPTAIN_SUBSTRATE_ATESPACE` overrides
 `ate-env`.

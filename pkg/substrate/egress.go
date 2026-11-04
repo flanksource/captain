@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/flanksource/captain/pkg/substrate/internal/ateapipb"
+	ateapipb "github.com/flanksource/captain/pkg/substrate/internal/ateapi"
 )
 
 // HostPort is a host, by DNS name, and a port on it.

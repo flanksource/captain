@@ -183,14 +183,14 @@ func TestSweepDeletesWhatABackendsRunsLeftBehind(t *testing.T) {
       kind: substrate
       envAPI: %s
       control: %s
-      image: ghcr.io/flanksource/captain-runner@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      template: captain-runner
     local:
       kind: docker
 `, options.EnvAPI, options.Control))
 	client, err := substrate.Dial(options)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
-	_, err = client.Create(t.Context(), substrate.Environment{ID: "captain-run-left", Image: "ghcr.io/flanksource/captain-runner@sha256:0000000000000000000000000000000000000000000000000000000000000000"})
+	_, err = client.Create(t.Context(), substrate.Environment{ID: "captain-run-left"})
 	require.NoError(t, err)
 	server.Backdate("ate-env", "captain-run-left", time.Now().Add(-25*time.Hour))
 

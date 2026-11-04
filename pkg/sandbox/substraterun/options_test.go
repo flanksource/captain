@@ -12,10 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const pinned = "ghcr.io/flanksource/captain-runner@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-
 func backend(options map[string]any) api.SandboxConfig {
-	base := map[string]any{"envAPI": "env.example:443", "control": "control.example:443", "image": pinned}
+	base := map[string]any{"envAPI": "env.example:443", "control": "control.example:443", "template": "captain-runner"}
 	for key, value := range options {
 		base[key] = value
 	}
@@ -37,7 +35,6 @@ func TestABackendsOptionsReachTheSubstrateClient(t *testing.T) {
 		CAFile: "/etc/captain/ca.pem", ClientCertFile: "/etc/captain/client.crt", ClientKeyFile: "/etc/captain/client.key",
 		Atespace: "ate-captain", Template: "captain-runner", TrustBundle: "/run/ate/trust-bundle.pem",
 	}, options.client)
-	assert.Equal(t, pinned, options.image)
 	assert.Equal(t, []string{"gavel", "runner", "exec"}, options.command)
 	anthropic, err := substrate.CredentialFor("anthropic", "api-key")
 	require.NoError(t, err)
@@ -92,8 +89,8 @@ func TestABackendsMistakesNameTheirKey(t *testing.T) {
 		"an unknown credential key":    {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key", "URI": "ate-secret://x"}}}, `sandbox backend "beta-substrate": unknown option "credentials[0].URI"`},
 		"no env API":                   {map[string]any{"envAPI": ""}, `sandbox backend "beta-substrate": envAPI is required`},
 		"no control plane":             {map[string]any{"control": ""}, `sandbox backend "beta-substrate": control is required`},
-		"no image":                     {map[string]any{"image": ""}, `sandbox backend "beta-substrate": image is required`},
-		"an image tag":                 {map[string]any{"image": "ghcr.io/flanksource/captain-runner:v1"}, `sandbox backend "beta-substrate": image: substrate runs images pinned by digest: "ghcr.io/flanksource/captain-runner:v1" must be repo@sha256:<digest>`},
+		"no template":                  {map[string]any{"template": ""}, `sandbox backend "beta-substrate": template is required: it names the image template, registered with ate-env manifest template --rootfs-image, that the run's environment is created from`},
+		"an image":                     {map[string]any{"image": "ghcr.io/flanksource/captain-runner@sha256:0"}, `sandbox backend "beta-substrate": unknown option "image"`},
 		"a lone cert":                  {map[string]any{"clientCert": "/etc/captain/client.crt"}, `sandbox backend "beta-substrate": clientCert and clientKey go together`},
 		"a credential URI":             {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key"}}}, `sandbox backend "beta-substrate": credentials[0] (anthropic api-key) needs the uri the egress gateway resolves its key from`},
 		"a credential kind":            {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "password", "uri": "ate-secret://x"}}}, `sandbox backend "beta-substrate": credentials[0]: `},

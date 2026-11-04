@@ -5,7 +5,7 @@ package substrate
 import (
 	"testing"
 
-	"github.com/flanksource/captain/pkg/substrate/internal/ateapipb"
+	ateapipb "github.com/flanksource/captain/pkg/substrate/internal/ateapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

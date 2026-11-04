@@ -18,8 +18,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const image = "ghcr.io/flanksource/captain-runner@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-
 var anthropic = substrate.Credential{
 	Host: "api.anthropic.com", Header: "x-api-key", Env: "ANTHROPIC_API_KEY",
 	URI: "ate-secret://k8s.io/captain/anthropic/key",
@@ -56,7 +54,7 @@ func TestCreateMakesTheEnvironmentAndItsEgressPolicy(t *testing.T) {
 	client := dial(t, server, func(o *substrate.Options) { o.Template = "captain-runner" })
 
 	env, err := client.Create(testContext(t), substrate.Environment{
-		ID: "run-1", Image: image,
+		ID: "run-1",
 		Egress: substrate.Egress{Passthrough: []substrate.HostPort{{Host: "github.com", Port: 443}}, Credentials: []substrate.Credential{anthropic}},
 	})
 	require.NoError(t, err)
@@ -65,26 +63,17 @@ func TestCreateMakesTheEnvironmentAndItsEgressPolicy(t *testing.T) {
 
 	created, ok := server.Environment("ate-env", "run-1")
 	require.True(t, ok, "the environment is created in the default atespace")
-	assert.Equal(t, image, created.Image)
 	assert.Equal(t, "captain-runner", created.Template)
 	policy, ok := server.Policy("ate-env", "run-1")
 	require.True(t, ok, "the environment's actor gets its egress policy")
 	assert.Len(t, policy.GetRules(), 2)
 }
 
-func TestCreateRefusesAnImageNotPinnedByDigest(t *testing.T) {
-	server := substratetest.Start(t)
-	_, err := dial(t, server).Create(testContext(t), substrate.Environment{ID: "run-1", Image: "ghcr.io/flanksource/captain-runner:latest"})
-	require.EqualError(t, err, `substrate runs images pinned by digest: "ghcr.io/flanksource/captain-runner:latest" must be repo@sha256:<digest>`)
-	_, created := server.Environment("ate-env", "run-1")
-	assert.False(t, created)
-}
-
 func TestCreateDeletesTheEnvironmentWhenItsPolicyIsRefused(t *testing.T) {
 	server := substratetest.Start(t)
 	server.RefusePolicy = status.Error(codes.PermissionDenied, "not an editor of atespace ate-env")
 
-	_, err := dial(t, server).Create(testContext(t), substrate.Environment{ID: "run-1", Image: image})
+	_, err := dial(t, server).Create(testContext(t), substrate.Environment{ID: "run-1"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "set the egress policy of substrate environment ate-env/run-1")
 	assert.Contains(t, err.Error(), "not an editor of atespace ate-env")
@@ -94,7 +83,7 @@ func TestCreateDeletesTheEnvironmentWhenItsPolicyIsRefused(t *testing.T) {
 func TestFilesGoInAndOutAndTheProcessRunsOnThem(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	require.NoError(t, env.WriteFile(ctx, "in/task.txt", 0o644, strings.NewReader("the task\n")))
@@ -119,7 +108,7 @@ func TestFilesGoInAndOutAndTheProcessRunsOnThem(t *testing.T) {
 func TestReadingAMissingFileSaysWhichFile(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	file, err := env.ReadFile(ctx, "out/response.json")
@@ -135,7 +124,7 @@ func TestOutputReconnectsWhenTheRouterEndsTheStream(t *testing.T) {
 	server := substratetest.Start(t)
 	server.StreamLimit = 1
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", "for i in 1 2 3 4 5; do echo line $i; sleep 0.05; done"}})
@@ -147,7 +136,7 @@ func TestTheProcessHoldsOnlyPlaceholdersForInjectedCredentials(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
 	client := dial(t, server, func(o *substrate.Options) { o.TrustBundle = "/run/ate/egress-trust-bundle/trust-bundle.pem" })
-	env, err := client.Create(ctx, substrate.Environment{ID: "run-1", Image: image, Egress: substrate.Egress{Credentials: []substrate.Credential{anthropic}}})
+	env, err := client.Create(ctx, substrate.Environment{ID: "run-1", Egress: substrate.Egress{Credentials: []substrate.Credential{anthropic}}})
 	require.NoError(t, err)
 
 	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", `echo "$ANTHROPIC_API_KEY $NODE_EXTRA_CA_CERTS $TASK"`}, Env: map[string]string{"TASK": "review"}})
@@ -161,7 +150,7 @@ func TestTheProcessHoldsOnlyPlaceholdersForInjectedCredentials(t *testing.T) {
 func TestKillStopsTheProcessAndToleratesOneThatExited(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sleep", "60"}})
@@ -176,7 +165,7 @@ func TestKillStopsTheProcessAndToleratesOneThatExited(t *testing.T) {
 func TestDeleteRemovesTheEnvironment(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	require.NoError(t, env.Delete(ctx))
@@ -190,7 +179,7 @@ func TestDeleteRemovesTheEnvironment(t *testing.T) {
 func TestDeleteSaysWhySubstrateRefusedIt(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	server.RefuseDelete = status.Error(codes.Internal, "object-store plugin upload failed")
@@ -207,7 +196,7 @@ func TestDialNeedsBothAPIs(t *testing.T) {
 func TestInputReachesAProcessStartedWithStdin(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", "while read line; do echo got $line; done; echo closed"}, Stdin: true})
@@ -224,7 +213,7 @@ func TestInputReachesAProcessStartedWithStdin(t *testing.T) {
 func TestInputIsRefusedForAProcessWithoutStdin(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sleep", "60"}})
@@ -239,7 +228,7 @@ func TestStdoutAndStderrAreFollowedApart(t *testing.T) {
 	server := substratetest.Start(t)
 	server.StreamLimit = 1
 	ctx := testContext(t)
-	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1", Image: image})
+	env, err := dial(t, server).Create(ctx, substrate.Environment{ID: "run-1"})
 	require.NoError(t, err)
 
 	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", "for i in 1 2 3; do echo out $i; echo err $i >&2; sleep 0.05; done"}})
@@ -255,11 +244,11 @@ func TestSweepDeletesTheEnvironmentsLeftBehind(t *testing.T) {
 	ctx := testContext(t)
 	client := dial(t, server)
 	for _, id := range []string{"captain-run-left-1", "captain-run-left-2", "gavel-run-1"} {
-		_, err := client.Create(ctx, substrate.Environment{ID: id, Image: image})
+		_, err := client.Create(ctx, substrate.Environment{ID: id})
 		require.NoError(t, err)
 	}
 	cutoff := time.Now()
-	_, err := client.Create(ctx, substrate.Environment{ID: "captain-run-live", Image: image})
+	_, err := client.Create(ctx, substrate.Environment{ID: "captain-run-live"})
 	require.NoError(t, err)
 
 	swept, err := client.Sweep(ctx, "captain-run-", cutoff)
@@ -276,7 +265,7 @@ func TestSweepSaysWhichEnvironmentItCouldNotDelete(t *testing.T) {
 	server := substratetest.Start(t)
 	ctx := testContext(t)
 	client := dial(t, server)
-	_, err := client.Create(ctx, substrate.Environment{ID: "captain-run-left-1", Image: image})
+	_, err := client.Create(ctx, substrate.Environment{ID: "captain-run-left-1"})
 	require.NoError(t, err)
 	server.RefuseDelete = status.Error(codes.Internal, "object-store plugin upload failed")
 
