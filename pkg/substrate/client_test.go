@@ -248,3 +248,38 @@ func TestStdoutAndStderrAreFollowedApart(t *testing.T) {
 	assert.Equal(t, "out 1\nout 2\nout 3\n", readAll(t, proc.Stdout(ctx)))
 	assert.Equal(t, "err 1\nerr 2\nerr 3\n", readAll(t, stderr))
 }
+
+func TestSweepDeletesTheEnvironmentsLeftBehind(t *testing.T) {
+	server := substratetest.Start(t)
+	server.ListPageSize = 1
+	ctx := testContext(t)
+	client := dial(t, server)
+	for _, id := range []string{"captain-run-left-1", "captain-run-left-2", "gavel-run-1"} {
+		_, err := client.Create(ctx, substrate.Environment{ID: id, Image: image})
+		require.NoError(t, err)
+	}
+	cutoff := time.Now()
+	_, err := client.Create(ctx, substrate.Environment{ID: "captain-run-live", Image: image})
+	require.NoError(t, err)
+
+	swept, err := client.Sweep(ctx, "captain-run-", cutoff)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"captain-run-left-1", "captain-run-left-2"}, swept)
+	assert.ElementsMatch(t, []string{"ate-env/captain-run-left-1", "ate-env/captain-run-left-2"}, server.Deleted())
+	for _, live := range []string{"captain-run-live", "gavel-run-1"} {
+		_, ok := server.Environment("ate-env", live)
+		assert.True(t, ok, "%s is newer than the cutoff or isn't the prefix's", live)
+	}
+}
+
+func TestSweepSaysWhichEnvironmentItCouldNotDelete(t *testing.T) {
+	server := substratetest.Start(t)
+	ctx := testContext(t)
+	client := dial(t, server)
+	_, err := client.Create(ctx, substrate.Environment{ID: "captain-run-left-1", Image: image})
+	require.NoError(t, err)
+	server.RefuseDelete = status.Error(codes.Internal, "object-store plugin upload failed")
+
+	_, err = client.Sweep(ctx, "captain-run-", time.Now())
+	require.EqualError(t, err, "delete substrate environment ate-env/captain-run-left-1: rpc error: code = Internal desc = object-store plugin upload failed")
+}

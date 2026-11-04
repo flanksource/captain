@@ -214,6 +214,40 @@ func (e *Env) Delete(ctx context.Context) error {
 // fileChunk is how much of a file one message carries.
 const fileChunk = 256 * 1024
 
+// Sweep deletes the environments in the client's atespace whose ID starts with prefix and whose
+// actor was created before cutoff: the ones a caller that died mid-run left behind, once no run
+// of theirs can still be live. It returns the IDs it deleted, and an error for each it couldn't.
+func (c *Client) Sweep(ctx context.Context, prefix string, cutoff time.Time) ([]string, error) {
+	var stale []string
+	request := &ateapipb.ListActorsRequest{Atespace: c.options.Atespace, Options: &ateapipb.ListOptions{PageSize: 100}}
+	for {
+		page, err := c.control.ListActors(ctx, request)
+		if err != nil {
+			return nil, fmt.Errorf("list the actors of atespace %s: %w", c.options.Atespace, err)
+		}
+		for _, actor := range page.GetActors() {
+			metadata := actor.GetMetadata()
+			if strings.HasPrefix(metadata.GetName(), prefix) && metadata.GetCreateTime() != nil && metadata.GetCreateTime().AsTime().Before(cutoff) {
+				stale = append(stale, metadata.GetName())
+			}
+		}
+		if page.GetNextPageToken() == "" {
+			break
+		}
+		request.Options.PageToken = page.GetNextPageToken()
+	}
+	var swept []string
+	var errs []error
+	for _, id := range stale {
+		if err := (&Env{client: c, id: id}).Delete(ctx); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		swept = append(swept, id)
+	}
+	return swept, errors.Join(errs...)
+}
+
 // WriteFile writes what r holds to path in the environment, with mode, creating its directories.
 func (e *Env) WriteFile(ctx context.Context, path string, mode os.FileMode, r io.Reader) error {
 	stream, err := e.client.files.WriteFile(e.guest(ctx))
