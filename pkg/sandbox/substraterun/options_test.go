@@ -4,6 +4,7 @@ package substraterun
 
 import (
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/substrate"
@@ -57,6 +58,7 @@ func TestARunsSelectionNamesItsEnvironmentAndCommit(t *testing.T) {
 func TestABackendRunsCaptainInItsEnvironmentByDefault(t *testing.T) {
 	options, err := decodeOptions(backend(nil))
 	require.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, options.maxLifetime)
 	assert.Equal(t, []string{"captain", "sandbox", "substrate", "run-task"}, options.command)
 	assert.Equal(t, "ate-env", options.client.Atespace)
 }
@@ -76,6 +78,8 @@ func TestABackendsMistakesNameTheirKey(t *testing.T) {
 		"a credential URI":          {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "api-key"}}}, `sandbox backend "beta-substrate": credentials[0] (anthropic api-key) needs the uri the egress gateway resolves its key from`},
 		"a credential kind":         {map[string]any{"credentials": []any{map[string]any{"provider": "anthropic", "auth": "password", "uri": "ate-secret://x"}}}, `sandbox backend "beta-substrate": credentials[0]: `},
 		"an empty command":          {map[string]any{"command": []any{}}, `sandbox backend "beta-substrate": command, when set, names the program the environment runs`},
+		"a lifetime":                {map[string]any{"maxLifetime": "soon"}, `sandbox backend "beta-substrate": maxLifetime "soon": time: invalid duration "soon"`},
+		"a negative lifetime":       {map[string]any{"maxLifetime": "-1h"}, `sandbox backend "beta-substrate": maxLifetime must be positive, got "-1h"`},
 		"an environment ID":         {map[string]any{"environment": "Gavel Run"}, `sandbox backend "beta-substrate": environment "Gavel Run" must be lowercase letters, digits and '-', starting with a letter`},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -19,7 +19,9 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/captain/pkg/promptrun/remoterun"
+	"github.com/flanksource/captain/pkg/substrate"
 	"github.com/flanksource/captain/pkg/substrate/substratetest"
+	"github.com/flanksource/commons/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -158,6 +160,23 @@ func newFixture(t *testing.T) fixture {
 			"command": []any{"env", asEnvironment + "=1", executable},
 		},
 	}}
+}
+
+// captureLog sends the global logger to the returned buffer for the rest of t, so the lines a
+// test expects are asserted instead of printed.
+func captureLog(t *testing.T) *strings.Builder {
+	var buf strings.Builder
+	previous := logger.StandardLogger()
+	logger.Use(&buf)
+	t.Cleanup(func() { logger.SetLogger(previous) })
+	return &buf
+}
+
+func (f fixture) client(t *testing.T) *substrate.Client {
+	client, err := substrate.Dial(f.server.Options())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	return client
 }
 
 func (f fixture) git(t *testing.T, args ...string) string {
@@ -340,4 +359,46 @@ func TestAResumedSessionIsRefused(t *testing.T) {
 	_, err := promptrun.Run(t.Context(), in)
 	require.EqualError(t, err, `sandbox substrate can't resume session session-1: the run's environment starts without the agent's earlier sessions`)
 	assert.Empty(t, f.server.Deleted(), "nothing was created")
+}
+
+func TestARunLongerThanTheBackendsLifetimeIsRefused(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("fix the build")
+	in.Config.SandboxSelection.Options["maxLifetime"] = "1m"
+	in.Timeout = 2 * time.Minute
+
+	_, err := promptrun.Run(t.Context(), in)
+	require.Error(t, err)
+	assert.Regexp(t, `^substrate run [0-9a-f]{12} may last 2m0s, longer than the backend's maxLifetime of 1m0s, after which its environment may be swept as left behind; shorten its timeout or raise maxLifetime$`, err.Error())
+	assert.Empty(t, f.server.Deleted(), "nothing was created")
+}
+
+func TestARunSweepsWhatEarlierRunsLeftBehind(t *testing.T) {
+	f := newFixture(t)
+	client := f.client(t)
+	for _, id := range []string{"captain-run-left", "captain-run-recent", "gavel-run-1"} {
+		_, err := client.Create(t.Context(), substrate.Environment{ID: id, Image: pinned})
+		require.NoError(t, err)
+	}
+	f.server.Backdate("ate-env", "captain-run-left", time.Now().Add(-25*time.Hour))
+	f.server.Backdate("ate-env", "gavel-run-1", time.Now().Add(-25*time.Hour))
+	logged := captureLog(t)
+
+	_, err := promptrun.Run(t.Context(), f.input("fix the build"))
+	require.NoError(t, err, environmentLog(err))
+	assert.Contains(t, logged.String(), "deleted 1 substrate environments left behind by runs older than 24h0m0s: captain-run-left")
+	assert.Contains(t, f.server.Deleted(), "ate-env/captain-run-left", "older than the backend's maxLifetime")
+	assert.NotContains(t, f.server.Deleted(), "ate-env/captain-run-recent", "still within its lifetime")
+	assert.NotContains(t, f.server.Deleted(), "ate-env/gavel-run-1", "not captain's to sweep")
+}
+
+func TestSweepBackendDeletesTheBackendsLeftovers(t *testing.T) {
+	f := newFixture(t)
+	_, err := f.client(t).Create(t.Context(), substrate.Environment{ID: "captain-run-left", Image: pinned})
+	require.NoError(t, err)
+	f.server.Backdate("ate-env", "captain-run-left", time.Now().Add(-25*time.Hour))
+
+	swept, err := SweepBackend(t.Context(), f.config)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"captain-run-left"}, swept)
 }

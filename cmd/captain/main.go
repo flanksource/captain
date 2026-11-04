@@ -235,17 +235,24 @@ func newRootCommand() *cobra.Command {
 	})
 
 	substrateCmd := &cobra.Command{
-		Use:    "substrate",
-		Short:  "Internal: the environment's side of whole runs on agent substrate",
-		Hidden: true,
+		Use:   "substrate",
+		Short: "Whole runs on agent substrate: sweep leftovers, and the environment's side of a run",
 	}
+	// Its own help func, as git-agent's and credentials' have: the parent's prints the sandbox
+	// command list.
+	substrateCmd.SetHelpFunc(func(c *cobra.Command, _ []string) {
+		fmt.Fprint(os.Stderr, c.UsageString())
+	})
 	sandboxCmd.AddCommand(substrateCmd)
-	// run-task runs a task from its directory and talks to its caller on stdout; served as REST it
-	// would run an agent on a caller-chosen directory.
+	// run-task runs a task from its directory and talks to its caller on stdout, and sweep deletes
+	// environments; served as REST they would run an agent on a caller-chosen directory and delete
+	// another user's environments.
 	clicky.MarkLocalOnly(substrateCmd)
 	substrateRunTask := clicky.AddNamedCommandWithContext("run-task", substrateCmd, cli.SubstrateRunTaskOptions{}, cli.RunSubstrateRunTask)
 	substrateRunTask.Short = "Internal: run a substrate run's task in its environment and relay it on stdout"
 	substrateRunTask.Hidden = true
+	clicky.AddNamedCommandWithContext("sweep", substrateCmd, cli.SubstrateSweepOptions{}, cli.RunSubstrateSweep).Short =
+		"Delete the environments a substrate backend's runs left behind, older than its maxLifetime"
 
 	tokenCmd := &cobra.Command{
 		Use:   "token",

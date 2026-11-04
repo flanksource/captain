@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai/agent/setup"
@@ -102,6 +103,13 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err != nil {
 		return promptrun.Result{}, err
 	}
+	lifetime := s.options.maxLifetime
+	if deadline, ok := ctx.Deadline(); ok {
+		if lasts := time.Until(deadline).Round(time.Second); lasts > s.options.maxLifetime {
+			return promptrun.Result{}, fmt.Errorf("substrate run %s may last %s, longer than the backend's maxLifetime of %s, after which its environment may be swept as left behind; shorten its timeout or raise maxLifetime", run, lasts, s.options.maxLifetime)
+		}
+		lifetime = time.Until(deadline)
+	}
 	repo, start, err := s.startingPoint(ctx, firstNonEmpty(in.Repo, spec.Cwd(), "."), run)
 	if err != nil {
 		return promptrun.Result{}, err
@@ -131,7 +139,10 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 		return promptrun.Result{}, err
 	}
 	defer func() { _ = client.Close() }()
-	env, err := client.Create(ctx, substrate.Environment{ID: firstNonEmpty(s.options.environment, "captain-run-"+run), Image: s.options.image, Egress: s.options.egress})
+	if s.options.environment == "" {
+		s.sweepNow(ctx, client)
+	}
+	env, err := client.Create(ctx, substrate.Environment{ID: firstNonEmpty(s.options.environment, environmentPrefix+run), Image: s.options.image, Egress: s.options.egress})
 	if err != nil {
 		return promptrun.Result{}, err
 	}
@@ -147,10 +158,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err := writeBundle(ctx, env, workspace); err != nil {
 		return promptrun.Result{}, err
 	}
-	process := substrate.Process{Command: s.options.command, Cwd: RunDir, Stdin: true}
-	if deadline, ok := ctx.Deadline(); ok {
-		process.Timeout = time.Until(deadline)
-	}
+	process := substrate.Process{Command: s.options.command, Cwd: RunDir, Stdin: true, Timeout: lifetime}
 	proc, err := env.Start(ctx, process)
 	if err != nil {
 		return promptrun.Result{}, err
@@ -184,6 +192,49 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 		return result, errors.Join(err, fetchErr)
 	}
 	return result, err
+}
+
+// environmentPrefix starts the ID of every environment captain names, which a sweep deletes once
+// it is older than the backend's maxLifetime. A caller that names its environments sweeps its own.
+const environmentPrefix = "captain-run-"
+
+// sweepInterval is how often runs of one backend sweep what earlier runs left behind.
+const sweepInterval = 5 * time.Minute
+
+// lastSweeps is when runs of each backend, by its substrate and atespace, last swept.
+var lastSweeps sync.Map
+
+// sweepNow sweeps the backend's environments left behind, unless a run of the backend swept in
+// the last sweepInterval. A sweep that fails is a warning: the run goes on.
+func (s *substrateSandbox) sweepNow(ctx context.Context, client *substrate.Client) {
+	key := s.options.client.EnvAPI + "/" + s.options.client.Atespace
+	now := time.Now()
+	if last, ok := lastSweeps.Load(key); ok && now.Sub(last.(time.Time)) < sweepInterval {
+		return
+	}
+	lastSweeps.Store(key, now)
+	swept, err := client.Sweep(ctx, environmentPrefix, now.Add(-s.options.maxLifetime))
+	if len(swept) > 0 {
+		logger.Infof("deleted %d substrate environments left behind by runs older than %s: %s", len(swept), s.options.maxLifetime, strings.Join(swept, ", "))
+	}
+	if err != nil {
+		logger.Warnf("sweep the substrate environments left behind: %v", err)
+	}
+}
+
+// SweepBackend deletes the environments of the backend cfg selects that runs older than its
+// maxLifetime left behind, and returns their IDs.
+func SweepBackend(ctx context.Context, cfg api.SandboxConfig) ([]string, error) {
+	options, err := decodeOptions(cfg)
+	if err != nil {
+		return nil, err
+	}
+	client, err := substrate.Dial(options.client)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = client.Close() }()
+	return client.Sweep(ctx, environmentPrefix, time.Now().Add(-options.maxLifetime))
 }
 
 // runID names one run: its environment, branch and log.

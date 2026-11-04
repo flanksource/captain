@@ -106,6 +106,16 @@ func (s *Server) Environment(atespace, id string) (*Environment, bool) {
 	return env, ok
 }
 
+// Backdate makes the live environment id in atespace look created at created, as one a caller
+// left behind long ago.
+func (s *Server) Backdate(atespace, id string, created time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if env, ok := s.envs[atespace+"/"+id]; ok {
+		env.Created = created
+	}
+}
+
 // Policy returns the egress policy set for the actor id in atespace.
 func (s *Server) Policy(atespace, id string) (*ateapipb.EgressPolicy, bool) {
 	s.mu.Lock()
