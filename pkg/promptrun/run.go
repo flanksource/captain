@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -70,6 +71,10 @@ type Input struct {
 	// there rebuilds them from it. A host sets both, and the run uses whichever
 	// fits where it executes.
 	HostData json.RawMessage
+	// EnvironmentOutput receives the output of a whole run's environment, its
+	// program's own log, for a caller that shows it; nil leaves it to the
+	// sandbox, which keeps a log of its own.
+	EnvironmentOutput io.Writer
 	// CallerOwnsCommits hands committing to Hooks: Run builds no commit hook of
 	// its own from Workflow.Commits, and leaves the declaration on the request so
 	// the recorded spec still says what the run commits and validation of that
