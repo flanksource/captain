@@ -69,6 +69,8 @@ func environment() error {
 	case "hang":
 		_ = serve.Send(remoterun.StartedMessage(spec))
 		time.Sleep(time.Minute)
+	case "echo the host's data":
+		return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: &api.Response{Text: string(task.Job.Host)}, Passed: true}, nil))
 	}
 	if err := serve.Send(remoterun.StartedMessage(spec)); err != nil {
 		return err
@@ -237,12 +239,23 @@ func TestAStoppedRunIsKilledAndItsEnvironmentDeleted(t *testing.T) {
 	assert.Len(t, f.server.Deleted(), 1)
 }
 
-func TestACallersHooksAreRefused(t *testing.T) {
+func TestACallersHooksWithoutTheirDataAreRefused(t *testing.T) {
 	f := newFixture(t)
 	in := f.input("fix the build")
 	in.Hooks = []any{struct{}{}}
 
 	_, err := promptrun.Run(t.Context(), in)
-	require.EqualError(t, err, `sandbox substrate runs the whole run in its environment, where the caller's hooks can't run; run them in the environment's own program instead`)
+	require.EqualError(t, err, `sandbox substrate runs the whole run in its environment, where the caller's hooks can't run; set Input.HostData for the environment's program to rebuild them from`)
 	assert.Empty(t, f.server.Deleted(), "nothing was created")
+}
+
+func TestTheHostsDataReachesTheEnvironmentInPlaceOfItsHooks(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("echo the host's data")
+	in.Hooks = []any{struct{}{}}
+	in.HostData = json.RawMessage(`{"todo":"todo-1"}`)
+
+	result, err := promptrun.Run(t.Context(), in)
+	require.NoError(t, err, environmentLog(err))
+	assert.JSONEq(t, `{"todo":"todo-1"}`, result.Response.Text)
 }

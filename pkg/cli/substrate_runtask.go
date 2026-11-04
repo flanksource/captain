@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/captain/pkg/promptrun/remoterun"
 	"github.com/flanksource/captain/pkg/sandbox/substraterun"
 )
@@ -35,21 +36,14 @@ func RunSubstrateRunTask(ctx context.Context, opts SubstrateRunTaskOptions) (any
 
 // runSubstrateTask checks the task's workspace out in dir/src, runs its job there with out and
 // in as the channel to the caller, commits what the run left uncommitted, bundles what the run
-// committed into dir/out/commits.bundle, and sends the run's result last.
+// committed into dir/out/commits.bundle, and sends the run's result last. A run that can't start
+// sends why as its result.
 func runSubstrateTask(ctx context.Context, dir string, out io.Writer, in io.Reader) error {
-	data, err := os.ReadFile(filepath.Join(dir, substraterun.TaskFile))
-	if err != nil {
-		return fmt.Errorf("read the substrate run's task: %w", err)
-	}
-	var task substraterun.Task
-	if err := json.Unmarshal(data, &task); err != nil {
-		return fmt.Errorf("decode the substrate run's task: %w", err)
-	}
-	src := filepath.Join(dir, "src")
-	if err := checkOutWorkspace(ctx, dir, src, task.Ref); err != nil {
-		return err
-	}
 	serve := remoterun.Stdio(out, in)
+	task, src, err := prepareSubstrateTask(ctx, dir)
+	if err != nil {
+		return errors.Join(err, serve.Send(remoterun.ResultMessage(promptrun.Result{}, err)))
+	}
 	finished, err := remoterun.Execute(ctx, task.Job, src, remoterun.Host{}, serve)
 	if err != nil {
 		return err
@@ -62,6 +56,23 @@ func runSubstrateTask(ctx context.Context, dir string, out io.Writer, in io.Read
 		return errors.Join(runErr, fmt.Errorf("send the run's result to its caller: %w", err))
 	}
 	return runErr
+}
+
+// prepareSubstrateTask reads dir's task and checks its workspace out, returning the checkout.
+func prepareSubstrateTask(ctx context.Context, dir string) (substraterun.Task, string, error) {
+	var task substraterun.Task
+	data, err := os.ReadFile(filepath.Join(dir, substraterun.TaskFile))
+	if err != nil {
+		return task, "", fmt.Errorf("read the substrate run's task: %w", err)
+	}
+	if err := json.Unmarshal(data, &task); err != nil {
+		return task, "", fmt.Errorf("decode the substrate run's task: %w", err)
+	}
+	if len(task.Job.Host) > 0 {
+		return task, "", errors.New("this run carries its host's data, which captain's run-task rebuilds no hooks from; set the substrate backend's command to the host's own program")
+	}
+	src := filepath.Join(dir, "src")
+	return task, src, checkOutWorkspace(ctx, dir, src, task.Ref)
 }
 
 // checkOutWorkspace checks ref out of the workspace bundle into src, on a branch of its own, and

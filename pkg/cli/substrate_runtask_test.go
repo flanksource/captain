@@ -30,6 +30,11 @@ const workspaceRef = "refs/captain/substrate/0123456789ab"
 // runTaskDir is a run's directory as the substrate sandbox leaves it in an environment: the
 // caller's checkout in the workspace bundle, and the task.
 func runTaskDir(t *testing.T, spec api.Spec) string {
+	return runTaskDirWithHost(t, spec, nil)
+}
+
+// runTaskDirWithHost is runTaskDir for a run that carries a host's data.
+func runTaskDirWithHost(t *testing.T, spec api.Spec, host json.RawMessage) string {
 	repo := t.TempDir()
 	git := func(dir string, args ...string) {
 		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=caller", "-c", "user.email=caller@example.com"}, args...)...).CombinedOutput()
@@ -45,7 +50,7 @@ func runTaskDir(t *testing.T, spec api.Spec) string {
 
 	spec.SetCwd(repo)
 	in := promptrun.Input{Resolved: api.ResolvedSpec{Spec: spec}, Timeout: time.Minute}
-	job := remoterun.JobFor(in, nil)
+	job := remoterun.JobFor(in, host)
 	job.Root = repo
 	task, err := json.Marshal(substraterun.Task{Job: job, Ref: workspaceRef})
 	require.NoError(t, err)
@@ -154,4 +159,14 @@ func TestRunTaskSendsTheRunsFailureAndExitsWithIt(t *testing.T) {
 	assert.Contains(t, err.Error(), "no scenario rule matched this request")
 	require.Error(t, ranErr, "and the program exits with it")
 	assert.Equal(t, err.Error(), ranErr.Error())
+}
+
+func TestRunTaskRefusesAHostsDataItCannotRebuildHooksFrom(t *testing.T) {
+	dir := runTaskDirWithHost(t, capitalSpec(t), json.RawMessage(`{"todo":"todo-1"}`))
+
+	_, _, err, ranErr := runTask(t, dir)
+	want := "this run carries its host's data, which captain's run-task rebuilds no hooks from; set the substrate backend's command to the host's own program"
+	require.EqualError(t, err, want, "the caller is told why")
+	require.EqualError(t, ranErr, want)
+	assert.NoDirExists(t, filepath.Join(dir, "src"), "nothing ran")
 }

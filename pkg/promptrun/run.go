@@ -18,6 +18,7 @@ package promptrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -64,6 +65,11 @@ type Input struct {
 	// environment stamp. They sit after the workflow's checks and before setup,
 	// so a Post hook of theirs at PhaseRun still sees a live worktree.
 	Hooks []any
+	// HostData is what Hooks are built from, for a run a sandbox runs whole in an
+	// environment of its own, where live hooks can't go: the host's own program
+	// there rebuilds them from it. A host sets both, and the run uses whichever
+	// fits where it executes.
+	HostData json.RawMessage
 	// CallerOwnsCommits hands committing to Hooks: Run builds no commit hook of
 	// its own from Workflow.Commits, and leaves the declaration on the request so
 	// the recorded spec still says what the run commits and validation of that

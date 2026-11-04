@@ -89,8 +89,8 @@ func (s *substrateSandbox) ProvidesEgressProxy() bool { return true }
 // environment is deleted however the run ends.
 func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, started func(api.Spec) error) (promptrun.Result, error) {
 	spec := in.Resolved.Spec
-	if len(in.Hooks) > 0 {
-		return promptrun.Result{}, errors.New("sandbox substrate runs the whole run in its environment, where the caller's hooks can't run; run them in the environment's own program instead")
+	if len(in.Hooks) > 0 && len(in.HostData) == 0 {
+		return promptrun.Result{}, errors.New("sandbox substrate runs the whole run in its environment, where the caller's hooks can't run; set Input.HostData for the environment's program to rebuild them from")
 	}
 	if spec.Setup != nil && setup.Relocates(spec.Setup.Checkout) {
 		return promptrun.Result{}, errors.New("sandbox substrate runs the run in its own checkout; it cannot be combined with a setup checkout")
@@ -109,7 +109,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 		return promptrun.Result{}, err
 	}
 	defer func() { _ = os.Remove(workspace) }()
-	job := remoterun.JobFor(in, nil)
+	job := remoterun.JobFor(in, in.HostData)
 	job.Root = repo
 	// The environment is the run's boundary, so the run in it is unsandboxed.
 	job.Resolved.Spec.Sandbox = &api.SandboxRef{Mode: api.SandboxOff}
