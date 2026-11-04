@@ -110,7 +110,7 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	if err != nil {
 		return promptrun.Result{}, err
 	}
-	workspace, err := bundleWorkspace(ctx, repo, run, start)
+	workspace, err := bundleWorkspace(ctx, repo, run, start, setupNames(spec))
 	if err != nil {
 		return promptrun.Result{}, err
 	}
@@ -287,22 +287,69 @@ func (s *substrateSandbox) startingPoint(ctx context.Context, dir, run string) (
 
 // bundleWorkspace bundles the commit the run starts from as workspaceRef(run), and returns the
 // bundle's path.
-func bundleWorkspace(ctx context.Context, repo, run string, start start) (string, error) {
+func bundleWorkspace(ctx context.Context, repo, run string, start start, setup []string) (string, error) {
 	ref := workspaceRef(run)
+	refs, temporary, err := setupRefs(ctx, repo, run, setup)
+	if err != nil {
+		return "", err
+	}
+	temporary = append(temporary, ref)
+	defer func() {
+		for _, ref := range temporary {
+			_, _ = gitOutput(context.WithoutCancel(ctx), repo, "update-ref", "-d", ref)
+		}
+	}()
 	if _, err := gitOutput(ctx, repo, "update-ref", ref, start.setup); err != nil {
 		return "", err
 	}
-	defer func() { _, _ = gitOutput(context.WithoutCancel(ctx), repo, "update-ref", "-d", ref) }()
 	bundle, err := os.CreateTemp("", "captain-substrate-"+run+"-*.bundle")
 	if err != nil {
 		return "", err
 	}
 	_ = bundle.Close()
-	if _, err := gitOutput(ctx, repo, "bundle", "create", "-q", bundle.Name(), ref); err != nil {
+	if _, err := gitOutput(ctx, repo, append([]string{"bundle", "create", "-q", bundle.Name(), ref}, refs...)...); err != nil {
 		_ = os.Remove(bundle.Name())
 		return "", err
 	}
 	return bundle.Name(), nil
+}
+
+// setupNames are what the spec's setup checks out besides the workspace: the branch a worktree
+// checks out, and the commit a new worktree branches from.
+func setupNames(spec api.Spec) []string {
+	if spec.Setup == nil || spec.Setup.Checkout == nil || spec.Setup.Checkout.Worktree == nil {
+		return nil
+	}
+	worktree := spec.Setup.Checkout.Worktree
+	var names []string
+	if worktree.Branch != "" {
+		names = append(names, "refs/heads/"+worktree.Branch)
+	}
+	if worktree.Base != "" {
+		names = append(names, worktree.Base)
+	}
+	return names
+}
+
+// setupRefs are the refs that carry names into the bundle: a ref names itself, and a commit gets a
+// temporary ref of its own, which the caller deletes. A name repo doesn't have is left out, for
+// the run's setup to report.
+func setupRefs(ctx context.Context, repo, run string, names []string) (refs, temporary []string, err error) {
+	for i, name := range names {
+		if _, err := gitOutput(ctx, repo, "rev-parse", "--verify", "--quiet", name+"^{commit}"); err != nil {
+			continue
+		}
+		if full, err := gitOutput(ctx, repo, "rev-parse", "--symbolic-full-name", name); err == nil && strings.HasPrefix(full, "refs/") {
+			refs = append(refs, full)
+			continue
+		}
+		ref := fmt.Sprintf("refs/captain/substrate-setup/%s-%d", run, i)
+		if _, err := gitOutput(ctx, repo, "update-ref", ref, name+"^{commit}"); err != nil {
+			return nil, temporary, err
+		}
+		refs, temporary = append(refs, ref), append(temporary, ref)
+	}
+	return refs, temporary, nil
 }
 
 func writeFile(ctx context.Context, env *substrate.Env, name string, r io.Reader) error {

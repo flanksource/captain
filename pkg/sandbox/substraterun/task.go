@@ -28,6 +28,11 @@ type HostFor func(job remoterun.Job, src string) (remoterun.Host, error)
 // RunTask returns the run's error, after sending it.
 func RunTask(ctx context.Context, dir string, out io.Writer, in io.Reader, hostFor HostFor) error {
 	serve := remoterun.Stdio(out, in)
+	// Git runs in the checkout, so the run's directory must not be relative to where this runs.
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return errors.Join(err, serve.Send(remoterun.ResultMessage(promptrun.Result{}, err)))
+	}
 	task, src, host, err := prepareTask(ctx, dir, hostFor)
 	if err != nil {
 		return errors.Join(err, serve.Send(remoterun.ResultMessage(promptrun.Result{}, err)))
@@ -89,13 +94,14 @@ func prepareTask(ctx context.Context, dir string, hostFor HostFor) (Task, string
 	return task, src, host, checkOutWorkspace(ctx, dir, src, task.Ref)
 }
 
-// checkOutWorkspace checks ref out of the workspace bundle into src, on a branch of its own, and
-// keeps ref, which the run's commits are bundled on top of.
+// checkOutWorkspace checks ref out of the workspace bundle into src, on a branch of its own. It
+// keeps every ref the bundle carries: ref, which the run's commits are bundled on top of, and the
+// branches and commits the run's setup names.
 func checkOutWorkspace(ctx context.Context, dir, src, ref string) error {
 	if _, err := gitOutput(ctx, dir, "init", "-q", src); err != nil {
 		return err
 	}
-	if _, err := gitOutput(ctx, src, "fetch", "-q", filepath.Join(dir, WorkspaceBundle), ref+":"+ref); err != nil {
+	if _, err := gitOutput(ctx, src, "fetch", "-q", "--update-head-ok", filepath.Join(dir, WorkspaceBundle), "refs/*:refs/*"); err != nil {
 		return err
 	}
 	_, err := gitOutput(ctx, src, "switch", "-q", "-c", "substrate-run", ref)
