@@ -342,8 +342,13 @@ func fetchCommits(ctx context.Context, env *substrate.Env, repo, run string, sta
 	if result.Response.Workspace != nil {
 		workspace = *result.Response.Workspace
 	}
-	workspace.Cwd, workspace.Repo = repo, repo
-	workspace.Worktree = &api.WorktreeState{Repo: repo, Branch: branch(run), Base: start.base, Setup: start.setup, Head: head}
+	worktree := api.WorktreeState{Repo: repo, Branch: branch(run), Base: start.base, Setup: start.setup, Head: head}
+	if workspace.Worktree != nil {
+		// The run's setup made a worktree in the environment: the branch is where it branched
+		// from and what setup put on it, which the run's commits came back with.
+		worktree.Base, worktree.Setup = workspace.Worktree.Base, workspace.Worktree.Setup
+	}
+	workspace.Cwd, workspace.Repo, workspace.Worktree = repo, repo, &worktree
 	result.Response.Workspace = &workspace
 	return nil
 }

@@ -115,7 +115,18 @@ func environment() error {
 		return err
 	}
 	text := fmt.Sprintf("fixed after %s, with %s", reply.Output, strings.TrimSpace(string(dirty)))
-	return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: &api.Response{Text: text}, Passed: true}, nil))
+	response := &api.Response{Text: text}
+	if spec.Prompt.User == "fix the build in a setup worktree" {
+		start, err := exec.Command("git", "-C", "src", "rev-parse", task.Ref).Output()
+		if err != nil {
+			return err
+		}
+		sha := strings.TrimSpace(string(start))
+		response.Workspace = &api.Workspace{Worktree: &api.WorktreeState{
+			Repo: filepath.Join(RunDir, "src"), Path: filepath.Join(RunDir, "worktree"), Branch: "run", Base: sha, Setup: sha, Head: sha,
+		}}
+	}
+	return serve.Send(remoterun.ResultMessage(promptrun.Result{Response: response, Passed: true}, nil))
 }
 
 func git(dir string, args ...string) error {
@@ -423,4 +434,19 @@ func TestARunsOwnEnvironmentVariablesReachItsProcessOnly(t *testing.T) {
 	result, err := promptrun.Run(t.Context(), in)
 	require.NoError(t, err, environmentLog(err))
 	assert.Equal(t, "run-1", result.Response.Text)
+}
+
+func TestARunsSetupWorktreeKeepsWhereItBranchedFrom(t *testing.T) {
+	f := newFixture(t)
+
+	result, err := promptrun.Run(t.Context(), f.input("fix the build in a setup worktree"))
+	require.NoError(t, err, environmentLog(err))
+	worktree := result.Response.Workspace.Worktree
+	require.NotNil(t, worktree)
+	assert.Regexp(t, `^captain/substrate/[0-9a-f]{12}$`, worktree.Branch, "the branch is the one here")
+	assert.Equal(t, f.repo, worktree.Repo)
+	assert.Empty(t, worktree.Path, "the worktree was in the environment")
+	assert.Equal(t, f.git(t, "rev-parse", worktree.Branch), worktree.Head)
+	assert.Equal(t, f.git(t, "rev-parse", worktree.Branch+"~1"), worktree.Base, "where the setup worktree branched from, as the environment said")
+	assert.Equal(t, worktree.Base, worktree.Setup)
 }
