@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/captain/pkg/promptrun/remoterun"
 )
@@ -36,7 +37,7 @@ func RunTask(ctx context.Context, dir string, out io.Writer, in io.Reader, hostF
 		return err
 	}
 	runErr := finished.Err
-	if err := bundleCommits(ctx, dir, src, task.Ref); err != nil {
+	if err := bundleCommits(ctx, dir, src, task.Ref, finished.Result); err != nil {
 		runErr = errors.Join(runErr, err)
 	}
 	if err := serve.Send(remoterun.ResultMessage(finished.Result, runErr)); err != nil {
@@ -101,19 +102,26 @@ func checkOutWorkspace(ctx context.Context, dir, src, ref string) error {
 	return err
 }
 
-// bundleCommits commits what the run left in src, and bundles what it committed on top of ref.
+// bundleCommits commits what the run left uncommitted, and bundles what it committed on top of ref.
+// The run's work is in src, or in the worktree its setup made, whose branch src then checks out.
 // A run that committed nothing leaves no bundle.
-func bundleCommits(ctx context.Context, dir, src, ref string) error {
-	if _, err := gitOutput(ctx, src, "add", "-A"); err != nil {
-		return err
-	}
-	staged, err := gitOutput(ctx, src, "diff", "--cached", "--name-only")
-	if err != nil {
-		return err
-	}
-	if staged != "" {
-		message := "captain: the work substrate run " + strings.TrimPrefix(ref, "refs/captain/substrate/") + " left uncommitted"
-		if _, err := gitOutput(ctx, src, "-c", "user.name=captain", "-c", "user.email=captain@substrate.invalid", "commit", "-q", "-m", message); err != nil {
+func bundleCommits(ctx context.Context, dir, src, ref string, result promptrun.Result) error {
+	run := strings.TrimPrefix(ref, "refs/captain/substrate/")
+	worktree := setupWorktree(result)
+	if worktree == nil {
+		if err := commitLeftovers(ctx, src, run); err != nil {
+			return err
+		}
+	} else {
+		if _, err := os.Stat(worktree.Path); err == nil && !worktree.Removed {
+			if err := commitLeftovers(ctx, worktree.Path, run); err != nil {
+				return err
+			}
+		}
+		if worktree.Branch == "" || worktree.BranchDeleted {
+			return nil
+		}
+		if _, err := gitOutput(ctx, src, "switch", "-q", "--detach", worktree.Branch); err != nil {
 			return err
 		}
 	}
@@ -129,5 +137,27 @@ func bundleCommits(ctx context.Context, dir, src, ref string) error {
 		return err
 	}
 	_, err = gitOutput(ctx, src, "bundle", "create", "-q", bundle, "HEAD", "^"+ref)
+	return err
+}
+
+// setupWorktree is the worktree the run's setup made, when it made one.
+func setupWorktree(result promptrun.Result) *api.WorktreeState {
+	if result.Response == nil || result.Response.Workspace == nil {
+		return nil
+	}
+	return result.Response.Workspace.Worktree
+}
+
+// commitLeftovers commits what run left uncommitted in tree.
+func commitLeftovers(ctx context.Context, tree, run string) error {
+	if _, err := gitOutput(ctx, tree, "add", "-A"); err != nil {
+		return err
+	}
+	staged, err := gitOutput(ctx, tree, "diff", "--cached", "--name-only")
+	if err != nil || staged == "" {
+		return err
+	}
+	_, err = gitOutput(ctx, tree, "-c", "user.name=captain", "-c", "user.email=captain@substrate.invalid", "commit", "-q", "-m",
+		"captain: the work substrate run "+run+" left uncommitted")
 	return err
 }

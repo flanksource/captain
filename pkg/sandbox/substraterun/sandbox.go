@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flanksource/captain/pkg/ai/agent/setup"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/gitagent"
@@ -95,9 +94,6 @@ func (s *substrateSandbox) RunRemote(ctx context.Context, in promptrun.Input, st
 	}
 	if spec.SessionID != "" {
 		return promptrun.Result{}, fmt.Errorf("sandbox substrate can't resume session %s: the run's environment starts without the agent's earlier sessions", spec.SessionID)
-	}
-	if spec.Setup != nil && setup.Relocates(spec.Setup.Checkout) {
-		return promptrun.Result{}, errors.New("sandbox substrate runs the run in its own checkout; it cannot be combined with a setup checkout")
 	}
 	run, err := runID()
 	if err != nil {

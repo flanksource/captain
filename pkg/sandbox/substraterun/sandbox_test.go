@@ -21,6 +21,7 @@ import (
 	"github.com/flanksource/captain/pkg/promptrun/remoterun"
 	"github.com/flanksource/captain/pkg/substrate"
 	"github.com/flanksource/captain/pkg/substrate/substratetest"
+	"github.com/flanksource/commons-db/shell"
 	"github.com/flanksource/commons/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -401,4 +402,13 @@ func TestSweepBackendDeletesTheBackendsLeftovers(t *testing.T) {
 	swept, err := SweepBackend(t.Context(), f.config)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"captain-run-left"}, swept)
+}
+
+func TestARunWithASetupCheckoutIsHandedOverForTheEnvironmentToSetUp(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("fix the build")
+	in.Resolved.Spec.Setup.Checkout = &shell.Checkout{Mode: shell.CheckoutLocal, Worktree: &shell.Worktree{Mode: shell.WorktreeNew}}
+
+	_, err := promptrun.Run(t.Context(), in)
+	require.NoError(t, err, environmentLog(err))
 }
