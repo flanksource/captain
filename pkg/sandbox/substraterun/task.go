@@ -18,8 +18,9 @@ import (
 )
 
 // HostFor is what a host's program adds to a run, built from the run's job with its checkout at
-// src: the hooks it rebuilds from the job's Host data, and the tools that run beside them.
-type HostFor func(job remoterun.Job, src string) (remoterun.Host, error)
+// src: the hooks it rebuilds from the job's Host data, and the tools that run beside them, which
+// may use call to ask the run's caller for what only the caller can do.
+type HostFor func(job remoterun.Job, src string, call remoterun.HostCall) (remoterun.Host, error)
 
 // RunTask runs the task in dir, the run's directory, with out and in as its channel to the
 // caller. It checks the task's workspace out in dir/src, runs the job there with what hostFor
@@ -33,7 +34,7 @@ func RunTask(ctx context.Context, dir string, out io.Writer, in io.Reader, hostF
 	if err != nil {
 		return errors.Join(err, serve.Send(remoterun.ResultMessage(promptrun.Result{}, err)))
 	}
-	task, src, host, err := prepareTask(ctx, dir, hostFor)
+	task, src, host, err := prepareTask(ctx, dir, hostFor, serve.HostCall)
 	if err != nil {
 		return errors.Join(err, serve.Send(remoterun.ResultMessage(promptrun.Result{}, err)))
 	}
@@ -77,7 +78,7 @@ func executeSendingTranscripts(ctx context.Context, job remoterun.Job, src strin
 }
 
 // prepareTask reads dir's task, checks its workspace out, and builds what the host adds to it.
-func prepareTask(ctx context.Context, dir string, hostFor HostFor) (Task, string, remoterun.Host, error) {
+func prepareTask(ctx context.Context, dir string, hostFor HostFor, call remoterun.HostCall) (Task, string, remoterun.Host, error) {
 	var task Task
 	data, err := os.ReadFile(filepath.Join(dir, TaskFile))
 	if err != nil {
@@ -87,7 +88,7 @@ func prepareTask(ctx context.Context, dir string, hostFor HostFor) (Task, string
 		return task, "", remoterun.Host{}, fmt.Errorf("decode the substrate run's task: %w", err)
 	}
 	src := filepath.Join(dir, "src")
-	host, err := hostFor(task.Job, src)
+	host, err := hostFor(task.Job, src, call)
 	if err != nil {
 		return task, "", remoterun.Host{}, err
 	}

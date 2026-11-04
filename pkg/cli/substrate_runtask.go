@@ -35,7 +35,7 @@ func runSubstrateTask(ctx context.Context, dir string, out io.Writer, in io.Read
 }
 
 // captainHost refuses a run that carries a host's data: captain has no hooks to rebuild from it.
-func captainHost(job remoterun.Job, _ string) (remoterun.Host, error) {
+func captainHost(job remoterun.Job, _ string, _ remoterun.HostCall) (remoterun.Host, error) {
 	if len(job.Host) > 0 {
 		return remoterun.Host{}, errors.New("this run carries its host's data, which captain's run-task rebuilds no hooks from; set the substrate backend's command to the host's own program")
 	}

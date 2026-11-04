@@ -95,8 +95,8 @@ func underRoot(root, dir, path string) string {
 }
 
 // Message kinds, in the order a run sends them: started once its setup is done, then events,
-// verification progress and transcripts as they happen, and its result last. A tool call and an
-// approval request are calls: the run waits for the caller's reply.
+// verification progress and transcripts as they happen, and its result last. A tool call, an
+// approval request and a host call are calls: the run waits for the caller's reply.
 const (
 	KindStarted    = "started"
 	KindEvent      = "event"
@@ -105,6 +105,7 @@ const (
 	KindResult     = "result"
 	KindTool       = "tool"
 	KindApproval   = "approval"
+	KindHost       = "host"
 )
 
 // Message is one thing a run reports to its caller.
@@ -126,6 +127,10 @@ type Message struct {
 	Approval *api.ApprovalRequest `json:"approval,omitempty"`
 	// Transcript is one of the run's transcript files, whole, as it is now.
 	Transcript *Transcript `json:"transcript,omitempty"`
+	// Name and Data are a host call: the host's program in the environment asking its caller for
+	// something of the host's own, by name, with data only the host reads.
+	Name string          `json:"name,omitempty"`
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // Transcript is a transcript file an agent wrote in the environment: Source is the agent
@@ -148,6 +153,11 @@ type Reply struct {
 // ToolCallMessage calls the run's tool with input.
 func ToolCallMessage(tool string, input map[string]any) Message {
 	return Message{Kind: KindTool, Tool: tool, Input: input}
+}
+
+// HostCallMessage calls the host's call name, with data.
+func HostCallMessage(name string, data json.RawMessage) Message {
+	return Message{Kind: KindHost, Name: name, Data: data}
 }
 
 // ApprovalMessage asks for a person's approval of request.

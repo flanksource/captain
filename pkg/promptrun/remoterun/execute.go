@@ -24,6 +24,21 @@ type Serve struct {
 	Call func(Message) (Reply, error)
 }
 
+// HostCall asks the caller for the host's call name, with data, and returns its answer.
+type HostCall func(name string, data json.RawMessage) (json.RawMessage, error)
+
+// HostCall is the host's way to call its caller over serve.
+func (s Serve) HostCall(name string, data json.RawMessage) (json.RawMessage, error) {
+	reply, err := s.Call(HostCallMessage(name, data))
+	if err == nil && reply.Error != "" {
+		err = errors.New(reply.Error)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("host call %s: %w", name, err)
+	}
+	return reply.Output, nil
+}
+
 // Host is what the host's program in the environment adds to the run: the provider it runs on
 // (nil builds it from the job's model, as a local run does), hooks it rebuilt from the job's host
 // data, and tools that run in the environment in place of the caller's of the same name.

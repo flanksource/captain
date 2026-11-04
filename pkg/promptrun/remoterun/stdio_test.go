@@ -183,3 +183,26 @@ func TestTheRunsTranscriptsReachTheCaller(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []file{{"claude", "-tmp-captain-run-src/session-1.jsonl", `{"type":"user"}` + "\n"}}, got)
 }
+
+func TestTheCallerAnswersTheHostsCalls(t *testing.T) {
+	c := newChannel(t)
+	var greeted, unknown Reply
+	c.environment(func(serve Serve) {
+		greeted, _ = serve.Call(HostCallMessage("greet", json.RawMessage(`{"name":"ada"}`)))
+		unknown, _ = serve.Call(HostCallMessage("launch", nil))
+		_ = serve.Send(ResultMessage(promptrun.Result{}, nil))
+	})
+	in := promptrun.Input{HostCalls: map[string]func(context.Context, json.RawMessage) (json.RawMessage, error){
+		"greet": func(_ context.Context, data json.RawMessage) (json.RawMessage, error) {
+			var who struct{ Name string }
+			if err := json.Unmarshal(data, &who); err != nil {
+				return nil, err
+			}
+			return json.Marshal("hello " + who.Name)
+		},
+	}}
+	_, err := c.relay(t, in)
+	require.NoError(t, err)
+	assert.JSONEq(t, `"hello ada"`, string(greeted.Output))
+	assert.Equal(t, `the caller has no host call "launch"`, unknown.Error)
+}
