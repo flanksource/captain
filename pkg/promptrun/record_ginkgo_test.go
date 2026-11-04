@@ -314,6 +314,34 @@ var _ = Describe("a recorded prompt run", func() {
 		Expect(run.ResultText).To(Equal("done"))
 	})
 
+	It("tells the host the run is admitted, after admission and before the provider is called", func(ctx SpecContext) {
+		provider := &eventsProvider{events: answeredTurn(uuid.NewString())}
+		rec := recording(nil)
+		admitted := 0
+		rec.Admitted = func() error {
+			Expect(provider.Calls()).To(BeZero(), "the run hasn't been dispatched yet")
+			admitted++
+			return nil
+		}
+
+		_, err := promptrun.Run(ctx, promptrun.Input{Resolved: resolved, Provider: provider, Timeout: testTimeout, Record: rec})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(admitted).To(Equal(1))
+	})
+
+	It("fails the run, dispatching nothing, when the host can't take its admission", func(ctx SpecContext) {
+		provider := &eventsProvider{events: answeredTurn(uuid.NewString())}
+		rec := recording(nil)
+		rec.Admitted = func() error { return errors.New("the todo was deleted") }
+
+		res, err := promptrun.Run(ctx, promptrun.Input{Resolved: resolved, Provider: provider, Timeout: testTimeout, Record: rec})
+		Expect(err).To(MatchError("promptrun: the host refused the admitted run: the todo was deleted"))
+		Expect(provider.Calls()).To(BeZero())
+		run, getErr := db.GetPromptRun(ctx, res.PromptRunID)
+		Expect(getErr).NotTo(HaveOccurred())
+		Expect(run.State).To(Equal(database.PromptRunStateFailed))
+	})
+
 	It("records a run stopped by its caller as cancelled", func(ctx SpecContext) {
 		provider := &eventsProvider{events: []ai.Event{{Kind: ai.EventSystem, SessionID: uuid.NewString()}}, block: true}
 		runCtx, cancel := context.WithCancel(ctx)
