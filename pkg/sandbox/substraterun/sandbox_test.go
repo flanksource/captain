@@ -38,6 +38,14 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	// A git fetch starts a detached `git maintenance run --auto`, which can still be repacking a
+	// test's repository when its temporary directory is removed; the tests' git runs none.
+	for key, value := range map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "maintenance.auto", "GIT_CONFIG_VALUE_0": "false"} {
+		if err := os.Setenv(key, value); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
 	os.Exit(m.Run())
 }
 
