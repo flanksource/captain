@@ -64,7 +64,7 @@ sandbox:
 | `template` | The ActorTemplate environments derive from. |
 | `trustBundle` | The path, in the environment, of the egress gateway's CA, which the run's clients trust (`NODE_EXTRA_CA_CERTS`) when there are credentials. |
 | `egress` | What the run may reach besides the model hosts: `host` over TLS on 443, `host:port` over TLS on that port, passed through untouched, or `http://host[:port]` in cleartext. |
-| `credentials` | Model keys the egress gateway injects: `provider` and `auth` (`anthropic api-key`, `anthropic oauth-token`, `openai api-key`), and the `uri` the cluster's credential provider resolves the key from. The run's process holds a placeholder in the key's variable. |
+| `credentials` | Model keys the egress gateway injects: `provider` and `auth` (`anthropic api-key`, `anthropic oauth-token`, `openai api-key`), or in full: the `host`, the `header` it goes in, a `prefix`, and the `env` variable the run's client reads; and the `uri` the cluster's credential provider resolves the key from. The run's process holds a placeholder in the key's variable. |
 | `command` | The program the environment runs, from the run's directory. It must speak captain's run protocol; `captain sandbox substrate run-task` does. |
 | `maxLifetime` | The longest a run may last, `24h` when empty. A run whose timeout is longer is refused, and an environment of the backend's older than this is swept as left behind. |
 | `environment` | A run's own: the environment's ID, for a caller that builds each run's selection; `captain-run-<run>` when empty. Lowercase letters, digits and `-`. |
