@@ -52,9 +52,11 @@ var (
 			CapabilityIsolateWorkspace,
 			CapabilityEgressProxy,
 		},
-		// No ModeAPI, as for git-agent: the run's work comes back as commits. No
-		// ModeCmux: the environment has no terminal multiplexer to drive.
-		Modes: []RuntimeMode{ModeCLI, ModeAgent},
+		// ModeAPI too, unlike git-agent: the whole run happens in the environment,
+		// which calls its model from there with the key injected on the way out,
+		// and its tools back on the caller. No ModeCmux: the environment has no
+		// terminal multiplexer to drive.
+		Modes: []RuntimeMode{ModeAPI, ModeCLI, ModeAgent},
 	}
 
 	internalSRTSandbox = &Sandbox{
