@@ -1,0 +1,88 @@
+// Tests RunTask with a host's program: the hooks the host rebuilds from the job's data run in the
+// environment's checkout, and what they leave comes back with the run's commits.
+package substraterun
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/agent"
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/promptrun"
+	"github.com/flanksource/captain/pkg/promptrun/remoterun"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// answering answers every turn with text, as a model would.
+type answering struct{ text string }
+
+func (p answering) Execute(context.Context, ai.Request) (*ai.Response, error) {
+	return &ai.Response{Text: p.text}, nil
+}
+func (p answering) GetModel() string        { return "claude-sonnet-5" }
+func (p answering) GetRuntime() api.Runtime { return api.RuntimeOf(api.Anthropic, api.ModeAgent) }
+
+// writesFile is a host's hook, rebuilt in the environment, that leaves a file in the checkout.
+type writesFile struct{ path string }
+
+func (h writesFile) Name() string { return "writes-file" }
+func (h writesFile) PreRun(*agent.HookContext) error {
+	return os.WriteFile(h.path, []byte("from the host's hook\n"), 0o644)
+}
+
+func TestAHostsProgramRunsTheHooksItRebuildsInTheCheckout(t *testing.T) {
+	repo := t.TempDir()
+	git := func(dir string, args ...string) string {
+		out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=caller", "-c", "user.email=caller@example.com"}, args...)...).CombinedOutput()
+		require.NoError(t, err, string(out))
+		return string(out)
+	}
+	git(repo, "init", "-q")
+	git(repo, "commit", "-q", "--allow-empty", "-m", "first")
+	const ref = "refs/captain/substrate/0123456789ab"
+	git(repo, "update-ref", ref, "HEAD")
+	dir := t.TempDir()
+	git(repo, "bundle", "create", "-q", filepath.Join(dir, WorkspaceBundle), ref)
+
+	spec := api.Spec{Model: api.Model{Name: "claude-sonnet-5", Provider: api.Anthropic, Mode: api.ModeAgent}, Prompt: api.Prompt{User: "fix the build"}}
+	spec.SetCwd(repo)
+	job := remoterun.JobFor(promptrun.Input{Resolved: api.ResolvedSpec{Spec: spec}, Timeout: time.Minute}, json.RawMessage(`{"file":"hosted.txt"}`))
+	job.Root = repo
+	task, err := json.Marshal(Task{Job: job, Ref: ref})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, TaskFile), task, 0o644))
+
+	var checkout string
+	hostFor := func(job remoterun.Job, src string) (remoterun.Host, error) {
+		checkout = src
+		var data struct{ File string }
+		if err := json.Unmarshal(job.Host, &data); err != nil {
+			return remoterun.Host{}, err
+		}
+		return remoterun.Host{Provider: answering{text: "fixed"}, Hooks: []any{writesFile{path: filepath.Join(src, data.File)}}}, nil
+	}
+	stdoutR, stdoutW := io.Pipe()
+	stdinR, stdinW := io.Pipe()
+	ran := make(chan error, 1)
+	go func() {
+		ran <- RunTask(t.Context(), dir, stdoutW, stdinR, hostFor)
+		_ = stdoutW.Close()
+	}()
+	result, err := remoterun.Relay(t.Context(), promptrun.Input{}, func(api.Spec) error { return nil }, stdoutR, stdinW)
+	_ = stdinW.Close()
+	require.NoError(t, err)
+	require.NoError(t, <-ran)
+
+	assert.Equal(t, "fixed", result.Response.Text)
+	assert.Equal(t, filepath.Join(dir, "src"), checkout)
+	assert.Equal(t, "hosted.txt\n", git(checkout, "show", "--name-only", "--format=", "HEAD"), "the hook's file came back in the run's commit")
+	assert.FileExists(t, filepath.Join(dir, CommitsBundle))
+}
