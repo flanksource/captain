@@ -163,6 +163,11 @@ func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error)
 	if err := bindToolApprovals(&in); err != nil {
 		return Result{}, false, err
 	}
+	if in.Record != nil && in.Record.Admitted != nil {
+		if err := in.Record.Admitted(); err != nil {
+			return Result{}, false, fmt.Errorf("promptrun: the host refused the admitted run: %w", err)
+		}
+	}
 	if runner, closeRunner, err := remoteRunner(in); err != nil {
 		return Result{}, false, err
 	} else if runner != nil {

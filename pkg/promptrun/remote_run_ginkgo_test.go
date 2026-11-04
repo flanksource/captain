@@ -132,12 +132,19 @@ var _ = Describe("promptrun.Run with a sandbox that runs whole runs", func() {
 			return promptrun.Result{Response: &api.Response{Text: "done in the environment"}, Passed: true}, nil
 		}
 		in := wholeRun()
+		admitted := 0
 		in.Record = &promptrun.Recording{
 			DB: db, Placement: promptrun.Placement{Sessions: hostTree()}, AdmissionKey: "admission-" + uuid.NewString(),
+			Admitted: func() error {
+				Expect(sandbox.in.Resolved.Spec.Prompt.User).To(BeEmpty(), "the host hears of the admission before the run is handed over")
+				admitted++
+				return nil
+			},
 		}
 
 		result, err := promptrun.Run(ctx, in)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(admitted).To(Equal(1))
 
 		run, err := db.GetPromptRun(ctx, result.PromptRunID)
 		Expect(err).NotTo(HaveOccurred())
