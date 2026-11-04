@@ -474,3 +474,14 @@ func TestTheCommitsARunsSetupNamesGoWithTheWorkspace(t *testing.T) {
 	assert.Equal(t, f.head+" "+loose, result.Response.Text)
 	assert.Empty(t, f.git(t, "for-each-ref", "refs/captain"), "the refs the commits went out on are gone")
 }
+
+func TestARunsCommitsComeBackOnTheBranchItsCallerNames(t *testing.T) {
+	f := newFixture(t)
+	in := f.input("fix the build")
+	in.Config.SandboxSelection.Options["branch"] = "gavel/todo1234-run56789"
+
+	result, err := promptrun.Run(t.Context(), in)
+	require.NoError(t, err, environmentLog(err))
+	assert.Equal(t, "gavel/todo1234-run56789", result.Response.Workspace.Worktree.Branch)
+	assert.Equal(t, "fix the build", f.git(t, "log", "-1", "--format=%s", "gavel/todo1234-run56789"))
+}

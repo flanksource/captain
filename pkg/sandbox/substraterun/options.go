@@ -42,6 +42,8 @@ type backendOptions struct {
 	// checkout.
 	Environment string `json:"environment"`
 	Ref         string `json:"ref"`
+	// Branch is a run's own: the branch its commits come back on, in the run's repository.
+	Branch string `json:"branch"`
 	// Env is a run's own variables for the environment's program, such as a host's run token. It
 	// is set on the process alone, never written into the environment's files.
 	Env map[string]string `json:"env"`
@@ -90,6 +92,8 @@ type options struct {
 	maxLifetime time.Duration
 	// env is the run's own variables for the environment's program.
 	env map[string]string
+	// branch is the branch the run's commits come back on; empty names it after the run.
+	branch string
 }
 
 // defaultMaxLifetime is a backend's maxLifetime when it sets none.
@@ -165,6 +169,7 @@ func decode(raw map[string]any) (options, error) {
 		ref:         in.Ref,
 		maxLifetime: maxLifetime,
 		env:         in.Env,
+		branch:      in.Branch,
 	}
 	if out.client.Atespace == "" {
 		out.client.Atespace = "ate-env"
