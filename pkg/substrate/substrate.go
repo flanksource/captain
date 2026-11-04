@@ -1,4 +1,4 @@
-// Package substrate drives agent-substrate environments: it creates one from an image with its
+// Package substrate drives agent-substrate environments: it creates one from a template with its
 // egress policy, moves files in and out, runs its processes, and deletes it.
 package substrate
 
@@ -11,11 +11,10 @@ import (
 	"io"
 	"math"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
-	"github.com/flanksource/captain/pkg/substrate/internal/ateapipb"
+	ateapipb "github.com/flanksource/captain/pkg/substrate/internal/ateapi"
 	"github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -47,8 +46,9 @@ type Options struct {
 	ClientKeyFile  string
 	// Atespace is the atespace environments are created in; empty is ate-env.
 	Atespace string
-	// Template is the ActorTemplate environments derive from, its container replaced by the
-	// environment's image; empty is env's default-template.
+	// Template is the ActorTemplate environments are created from, which sets the image they
+	// run: one an operator registered with ate-env manifest template --rootfs-image. Empty is
+	// env's default-template.
 	Template string
 	// TrustBundle is the path, inside an environment, of the egress gateway's CA, which a process
 	// must trust to reach a host whose requests carry an injected credential.
@@ -133,11 +133,10 @@ func (c *Client) Close() error {
 	return errors.Join(errs...)
 }
 
-// Environment is an environment to create: its ID in the client's atespace, the image its
-// container runs, pinned by digest, and what it may reach.
+// Environment is an environment to create: its ID in the client's atespace, and what it may
+// reach.
 type Environment struct {
 	ID     string
-	Image  string
 	Egress Egress
 }
 
@@ -151,14 +150,11 @@ type Env struct {
 // Create creates environment and sets its actor's egress policy. An environment whose policy
 // can't be set is deleted, since without it the environment reaches nothing it needs.
 func (c *Client) Create(ctx context.Context, environment Environment) (*Env, error) {
-	if err := PinnedImage(environment.Image); err != nil {
-		return nil, err
-	}
 	policy, err := egressPolicy(c.options.Atespace, environment.Egress)
 	if err != nil {
 		return nil, err
 	}
-	create := &ateenvv1alpha.CreateEnvironmentRequest{Id: environment.ID, Atespace: c.options.Atespace, RootfsImage: environment.Image}
+	create := &ateenvv1alpha.CreateEnvironmentRequest{Id: environment.ID, Atespace: c.options.Atespace}
 	if c.options.Template != "" {
 		create.Template = &ateenvv1alpha.Template{Name: c.options.Template, Atespace: c.options.Atespace}
 	}
@@ -175,14 +171,6 @@ func (c *Client) Create(ctx context.Context, environment Environment) (*Env, err
 		)
 	}
 	return env, nil
-}
-
-// PinnedImage refuses an image that isn't pinned by digest, which Substrate requires.
-func PinnedImage(image string) error {
-	if !regexp.MustCompile(`@sha256:[0-9a-f]{64}$`).MatchString(image) {
-		return fmt.Errorf("substrate runs images pinned by digest: %q must be repo@sha256:<digest>", image)
-	}
-	return nil
 }
 
 // ID is the environment's ID in its atespace.

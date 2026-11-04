@@ -1,5 +1,5 @@
 // The live Substrate cluster the substrate e2e tests run against: its API addresses, the token
-// for its control plane, and the template and image environments are created from.
+// for its control plane, and the template environments are created from.
 package substratetest
 
 import (
@@ -12,9 +12,8 @@ import (
 // Cluster is a kind cluster with Substrate and env installed, as gavel's docs/sandbox.md sets up,
 // as its environment variables override it, or a Substrate behind a client-certificate ingress.
 type Cluster struct {
+	// Options.Template is an image template with sh and coreutils.
 	Options substrate.Options
-	// Image is an image pinned by digest, in a registry the cluster pulls from, with sh and coreutils.
-	Image string
 }
 
 // FromEnv skips t unless CAPTAIN_SUBSTRATE_TEST=1, and returns the cluster's settings.
@@ -43,6 +42,5 @@ func FromEnv(t testing.TB) Cluster {
 			ClientCertFile:   os.Getenv("CAPTAIN_SUBSTRATE_CLIENT_CERT"),
 			ClientKeyFile:    os.Getenv("CAPTAIN_SUBSTRATE_CLIENT_KEY"),
 		},
-		Image: setting("CAPTAIN_SUBSTRATE_IMAGE", ""),
 	}
 }
