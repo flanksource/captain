@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/substrate"
@@ -31,6 +32,9 @@ type backendOptions struct {
 	Egress      []string            `json:"egress"`
 	Credentials []credentialOptions `json:"credentials"`
 	Command     *[]string           `json:"command"`
+	// MaxLifetime is the longest a run may last. An environment of the backend's older than that
+	// was left behind by a caller that died, and is swept.
+	MaxLifetime string `json:"maxLifetime"`
 	// Environment and Ref are a run's own, for a caller that builds each run's selection: the ID
 	// of the run's environment, and the commit the run starts from instead of the caller's
 	// checkout.
@@ -56,7 +60,12 @@ type options struct {
 	environment string
 	// ref is the commit the run starts from; empty starts it from the caller's checkout.
 	ref string
+	// maxLifetime is the longest a run may last, after which its environment may be swept.
+	maxLifetime time.Duration
 }
+
+// defaultMaxLifetime is a backend's maxLifetime when it sets none.
+const defaultMaxLifetime = 24 * time.Hour
 
 // environmentID is the form of an environment's ID, which substrate names its actor by.
 var environmentID = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -106,6 +115,16 @@ func decode(raw map[string]any) (options, error) {
 	if err := substrate.PinnedImage(in.Image); err != nil {
 		return options{}, fmt.Errorf("image: %w", err)
 	}
+	maxLifetime := defaultMaxLifetime
+	if in.MaxLifetime != "" {
+		var err error
+		if maxLifetime, err = time.ParseDuration(in.MaxLifetime); err != nil {
+			return options{}, fmt.Errorf("maxLifetime %q: %w", in.MaxLifetime, err)
+		}
+		if maxLifetime <= 0 {
+			return options{}, fmt.Errorf("maxLifetime must be positive, got %q", in.MaxLifetime)
+		}
+	}
 	out := options{
 		client: substrate.Options{
 			EnvAPI: in.EnvAPI, Control: in.Control, ControlTokenFile: in.TokenFile, CAFile: in.CAFile,
@@ -116,6 +135,7 @@ func decode(raw map[string]any) (options, error) {
 		command:     runTask,
 		environment: in.Environment,
 		ref:         in.Ref,
+		maxLifetime: maxLifetime,
 	}
 	if out.client.Atespace == "" {
 		out.client.Atespace = "ate-env"

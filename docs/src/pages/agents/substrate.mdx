@@ -24,6 +24,10 @@ captain prompt run fix.prompt --sandbox beta-substrate
 
 Stopping a run kills its process. A run whose process exits without a result fails with `substrate run <run> exited <code> without a result; its output is in <log>`.
 
+## Environments left behind
+
+A caller that dies mid-run (a laptop shut, a killed process) never deletes its environment, and substrate doesn't expire one on its own. So captain sweeps: before a run, at most every five minutes per backend, it deletes the backend's `captain-run-` environments created more than `maxLifetime` ago, which no live run can be. `captain sandbox substrate sweep --backend beta-substrate` does the same on demand. Sweeping lists the atespace's actors, so the caller's identity needs that right as well as creating and deleting environments. A host that names its own environments (the `environment` option) sweeps its own.
+
 Inside the environment the run is unsandboxed: the environment is its boundary. Codex runs there with full access.
 
 ## Backend options
@@ -62,6 +66,7 @@ sandbox:
 | `egress` | Hosts the run may reach over HTTPS, passed through untouched. |
 | `credentials` | Model keys the egress gateway injects: `provider` and `auth` (`anthropic api-key`, `anthropic oauth-token`, `openai api-key`), and the `uri` the cluster's credential provider resolves the key from. The run's process holds a placeholder in the key's variable. |
 | `command` | The program the environment runs, from the run's directory. It must speak captain's run protocol; `captain sandbox substrate run-task` does. |
+| `maxLifetime` | The longest a run may last, `24h` when empty. A run whose timeout is longer is refused, and an environment of the backend's older than this is swept as left behind. |
 | `environment` | A run's own: the environment's ID, for a caller that builds each run's selection; `captain-run-<run>` when empty. Lowercase letters, digits and `-`. |
 | `ref` | A run's own: the commit the run starts from, in the run's repository, which may be bare. The run gets that commit and none of a checkout's uncommitted work, and its branch comes back to that repository. |
 

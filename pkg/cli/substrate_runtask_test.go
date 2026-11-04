@@ -6,6 +6,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -21,6 +22,8 @@ import (
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/captain/pkg/promptrun/remoterun"
 	"github.com/flanksource/captain/pkg/sandbox/substraterun"
+	"github.com/flanksource/captain/pkg/substrate"
+	"github.com/flanksource/captain/pkg/substrate/substratetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -169,4 +172,32 @@ func TestRunTaskRefusesAHostsDataItCannotRebuildHooksFrom(t *testing.T) {
 	require.EqualError(t, err, want, "the caller is told why")
 	require.EqualError(t, ranErr, want)
 	assert.NoDirExists(t, filepath.Join(dir, "src"), "nothing ran")
+}
+
+func TestSweepDeletesWhatABackendsRunsLeftBehind(t *testing.T) {
+	server := substratetest.Start(t)
+	options := server.Options()
+	seedSavedAI(t, fmt.Sprintf(`sandbox:
+  backends:
+    beta-substrate:
+      kind: substrate
+      envAPI: %s
+      control: %s
+      image: ghcr.io/flanksource/captain-runner@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    local:
+      kind: docker
+`, options.EnvAPI, options.Control))
+	client, err := substrate.Dial(options)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	_, err = client.Create(t.Context(), substrate.Environment{ID: "captain-run-left", Image: "ghcr.io/flanksource/captain-runner@sha256:0000000000000000000000000000000000000000000000000000000000000000"})
+	require.NoError(t, err)
+	server.Backdate("ate-env", "captain-run-left", time.Now().Add(-25*time.Hour))
+
+	swept, err := RunSubstrateSweep(t.Context(), SubstrateSweepOptions{Backend: "beta-substrate"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"captain-run-left"}, swept)
+
+	_, err = RunSubstrateSweep(t.Context(), SubstrateSweepOptions{Backend: "local"})
+	require.EqualError(t, err, `sandbox backend "local" is a docker backend, not a substrate one`)
 }
