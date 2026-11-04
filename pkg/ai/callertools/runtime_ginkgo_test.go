@@ -296,6 +296,45 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		Expect(handledInput).To(Equal(map[string]any{"status": "draft"}))
 	})
 
+	It("accepts the provider tool-use ID on a tool whose schema forbids other properties, and still refuses input outside it", func(ctx SpecContext) {
+		var handledInput map[string]any
+		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
+			Definitions: []api.ToolDefinition{{
+				Name: "todo_get", DefaultPermission: api.ToolPolicyAllow,
+				InputSchema: map[string]any{
+					"type": "object", "additionalProperties": false,
+					"properties": map[string]any{"ref": map[string]any{"type": "string"}},
+				},
+				Handler: func(_ context.Context, input map[string]any) (any, error) {
+					handledInput = input
+					return input, nil
+				},
+			}},
+			SessionID: "strict-schema-session",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(runtime.Close)
+		client := authenticatedClient(ctx, runtime.Endpoint())
+		DeferCleanup(client.Close)
+		call := func(arguments map[string]any) *mcp.CallToolResult {
+			request := mcp.CallToolRequest{}
+			request.Params.Name = "todo_get"
+			request.Params.Arguments = arguments
+			result, err := client.CallTool(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			return result
+		}
+
+		result := call(map[string]any{"ref": "a1b2c3d4", "__captain_tool_use_id": "claude-tool-use-1"})
+		Expect(result.IsError).To(BeFalse(), "%+v", result.Content)
+		Expect(handledInput).To(Equal(map[string]any{"ref": "a1b2c3d4"}))
+
+		refused := call(map[string]any{"ref": "a1b2c3d4", "title": "not a property", "__captain_tool_use_id": "claude-tool-use-2"})
+		Expect(refused.IsError).To(BeTrue())
+		Expect(refused.Content).To(ContainElement(HaveField("Text", ContainSubstring(`caller tool "todo_get" input is invalid`))))
+	})
+
 	It("rejects wrong-session credentials and browser origins", func(ctx SpecContext) {
 		first := newRuntime(ctx, "captain-session-1", "first")
 		DeferCleanup(first.Close)
