@@ -26,6 +26,12 @@ func init() {
 	})
 }
 
+// RunsWhole reports whether cfg's sandbox runs whole runs in an environment of its own, which only
+// Run hands a run to: a caller that builds a provider itself must go through Run instead.
+func RunsWhole(cfg ai.Config) bool {
+	return cfg.SandboxSelection != nil && runsWhole(*cfg.SandboxSelection)
+}
+
 // runsWhole reports whether the selection's sandbox runs whole runs in an environment of its own.
 func runsWhole(selection api.SandboxConfig) bool {
 	descriptor, ok := registry.SandboxFor(selection.Kind)

@@ -152,6 +152,15 @@ var _ = Describe("NewProvider sandbox validation", func() {
 		Expect(err).To(MatchError(ContainSubstring("does not support runtime mode")))
 	})
 
+	It("refuses a sandbox that runs whole runs, which a provider built here would run unsandboxed", func() {
+		_, err := api.NewProvider(api.Config{
+			Model:            api.Model{Name: "claude-sonnet-5", Mode: api.ModeAgent},
+			SandboxSelection: &api.SandboxConfig{Kind: api.SandboxSubstrate, Name: "beta-substrate"},
+		})
+
+		Expect(err).To(MatchError(`sandbox "beta-substrate" (substrate) runs whole runs in an environment of its own, which only promptrun.Run hands it; a provider built here would run unsandboxed`))
+	})
+
 	It("accepts off for agent backends", func() {
 		_, err := api.NewProvider(api.Config{
 			Model:            api.Model{Name: "claude-sonnet-5", Mode: api.ModeAgent},

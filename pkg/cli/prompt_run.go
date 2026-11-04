@@ -168,8 +168,10 @@ func executeSyncRunSingle(ctx context.Context, rendered PromptRenderResult, opts
 func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered PromptRenderResult, opts AIPromptOptions, binding *promptSessionBinding) (PromptRunResult, error) {
 	// A configured workflow must go through the runner-backed path: the direct
 	// provider call below never constructs verify/commit/judge hooks, so taking
-	// it would complete the run with every declared check silently skipped.
-	if workflowConfigured(rendered.Input.Workflow) {
+	// it would complete the run with every declared check silently skipped. So
+	// must a run on a sandbox that runs whole runs, which only that path hands
+	// over.
+	if workflowConfigured(rendered.Input.Workflow) || promptrun.RunsWhole(rendered.Config) {
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
 	r, err := executeDirectPrompt(ctx, rendered, opts)
