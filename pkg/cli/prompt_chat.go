@@ -32,6 +32,7 @@ type chatSession struct {
 	provider   ai.Provider
 	streamer   ai.StreamingProvider
 	baseCancel context.CancelFunc
+	task       *task.Task
 	turnCancel context.CancelFunc
 	turnDone   chan struct{}
 	acc        *promptEventAccumulator
@@ -93,10 +94,18 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 	t.SetBackground(true)
 	baseCtx, cancel := context.WithCancel(t.Context())
 	c.mu.Lock()
+	if c.terminal {
+		c.mu.Unlock()
+		cancel()
+		return PromptRunSummary{RunID: c.runID, Error: "stopped"}, errors.New("stopped")
+	}
 	c.baseCancel = cancel
 	c.mu.Unlock()
 	c.stream.setCancel(cancel)
 	defer cancel()
+	if err := baseCtx.Err(); err != nil {
+		return c.fail(t, err)
+	}
 
 	req, cfg := c.rendered.Input, c.rendered.Config
 	if err := preparePromptAttachments(baseCtx, &req, cfg); err != nil {
@@ -464,13 +473,24 @@ func (c *chatSession) stop() bool {
 		return false
 	}
 	c.state.Status = "stopping"
-	state := c.stateCopyLocked()
 	cancel := c.baseCancel
+	queued := cancel == nil
+	if queued {
+		c.terminal = true
+	}
+	state := c.stateCopyLocked()
+	handle := c.task
 	c.mu.Unlock()
 	c.stream.setChatState(state)
 	c.stream.requestStop()
 	if cancel != nil {
 		cancel()
+	}
+	if queued {
+		if handle != nil {
+			handle.Cancel()
+		}
+		_, _ = c.failRun(errors.New("stopped"))
 	}
 	return true
 }
@@ -567,6 +587,12 @@ func (c *chatSession) complete(t *task.Task, summary PromptRunSummary) PromptRun
 }
 
 func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
+	summary, err := c.failRun(err)
+	_, _ = t.FailedWithError(err)
+	return summary, err
+}
+
+func (c *chatSession) failRun(err error) (PromptRunSummary, error) {
 	c.mu.Lock()
 	c.terminal = true
 	c.mu.Unlock()
@@ -574,7 +600,6 @@ func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
 	err = errors.Join(err, c.recordFailedRun(err))
 	err = errors.Join(err, c.endSessions(err))
 	summary := c.stream.fail(err.Error())
-	_, _ = t.FailedWithError(err)
 	return summary, err
 }
 

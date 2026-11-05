@@ -196,7 +196,7 @@ func enrichProcessesFromOS(processes []agentProcess) {
 }
 
 // enrichSurfacesFromCmux joins each process's CMUX surface id to cmux's own tree
-// to attach the authoritative surface title and workspace name. Best-effort:
+// to attach the authoritative surface title and workspace identity. Best-effort:
 // when cmux is not running the processes keep their env-derived surface only.
 func enrichSurfacesFromCmux(processes []agentProcess) {
 	surfaces, err := discoverCmuxSurfaces()
@@ -214,6 +214,7 @@ func enrichSurfacesFromCmux(processes []agentProcess) {
 
 func enrichCmuxSurface(surface *CmuxSurface, surfaces map[string]cmux.Surface) {
 	if info, ok := surfaces[surface.SurfaceID]; ok {
+		surface.WorkspaceID = info.WorkspaceID
 		surface.SurfaceRef = info.Ref
 		surface.Title = info.Title
 		surface.Workspace = info.Workspace

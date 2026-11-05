@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/flanksource/captain/pkg/cmux"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session/deliver"
 	clickyprocess "github.com/flanksource/clicky/process"
@@ -208,5 +209,31 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		status, body := deliverTo(ctx, live.ProviderSessionID, `{"text":"  "}`)
 		Expect(status).To(Equal(http.StatusBadRequest))
 		Expect(body).To(ContainSubstring("message text is required"))
+	})
+
+	It("targets the current workspace when a live terminal has moved", func(ctx SpecContext) {
+		previousDiscovery, previousSurfaces := discoverSessionProcesses, discoverCmuxSurfaces
+		DeferCleanup(func() {
+			discoverSessionProcesses, discoverCmuxSurfaces = previousDiscovery, previousSurfaces
+		})
+		discoverSessionProcesses = func() ([]agentProcess, error) {
+			return []agentProcess{{PID: livePID, Surface: &CmuxSurface{
+				SurfaceID: "surface-moved", WorkspaceID: "workspace-original",
+			}}}, nil
+		}
+		discoverCmuxSurfaces = func() (map[string]cmux.Surface, error) {
+			return map[string]cmux.Surface{"surface-moved": {
+				ID: "surface-moved", Ref: "surface:42", WorkspaceID: "workspace-current", Workspace: "Current",
+			}}, nil
+		}
+		envByPID[inboxWaitPID] = map[string]string{}
+
+		target, err := liveDeliveryTarget(ctx, live.ProviderSessionID)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(target.Surface).To(Equal(&CmuxSurface{
+			SurfaceID: "surface-moved", SurfaceRef: "surface:42", WorkspaceID: "workspace-current", Workspace: "Current",
+		}))
+		Expect(deliver.ChooseChannel(target)).To(Equal(deliver.ChannelCmux))
 	})
 })
