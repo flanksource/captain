@@ -1,0 +1,22 @@
+# Generates this package from agent-substrate/env's API (proto/ateenv/v1alpha) at the commit the
+# cluster's ate-env-api runs, as go generate does; bump the commit and run go generate to follow env.
+version: v2
+plugins:
+  - local: [go, tool, protoc-gen-go]
+    out: .
+    opt:
+      - module=github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha
+      - Mproto/ateenv/v1alpha/env.proto=github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha
+      - Mproto/ateenv/v1alpha/guest.proto=github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha
+  - local: [go, tool, protoc-gen-go-grpc]
+    out: .
+    opt:
+      - module=github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha
+      - Mproto/ateenv/v1alpha/env.proto=github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha
+      - Mproto/ateenv/v1alpha/guest.proto=github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha
+inputs:
+  - git_repo: https://github.com/agent-substrate/env.git
+    commit: 56424de763f91daa6b6c38f6249bacef1d82e5e1
+    paths:
+      - proto/ateenv/v1alpha/env.proto
+      - proto/ateenv/v1alpha/guest.proto

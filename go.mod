@@ -69,6 +69,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.7 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.4 // indirect
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.6.2 // indirect
 	gorm.io/driver/sqlserver v1.6.4 // indirect
 	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
@@ -389,4 +390,8 @@ require (
 // registration. gavel and oipa-cli carry the identical replace.
 replace github.com/glebarez/sqlite => github.com/clarkmcc/gorm-sqlite v0.0.0-20240426202654-00ed082c0311
 
-tool github.com/atombender/go-jsonschema
+tool (
+	github.com/atombender/go-jsonschema
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc
+	google.golang.org/protobuf/cmd/protoc-gen-go
+)
