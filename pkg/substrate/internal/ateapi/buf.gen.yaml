@@ -1,0 +1,19 @@
+# Generates this package from Substrate's control-plane API (api/ateapi/v1) at the tag the
+# cluster runs, as go generate does; bump the tag and run go generate to follow Substrate.
+version: v2
+plugins:
+  - local: [go, tool, protoc-gen-go]
+    out: .
+    opt:
+      - module=github.com/flanksource/captain/pkg/substrate/internal/ateapi
+      - Mapi/ateapi/v1/ateapi.proto=github.com/flanksource/captain/pkg/substrate/internal/ateapi
+  - local: [go, tool, protoc-gen-go-grpc]
+    out: .
+    opt:
+      - module=github.com/flanksource/captain/pkg/substrate/internal/ateapi
+      - Mapi/ateapi/v1/ateapi.proto=github.com/flanksource/captain/pkg/substrate/internal/ateapi
+inputs:
+  - git_repo: https://github.com/agent-substrate/substrate.git
+    tag: v1.0.0-rc.2
+    paths:
+      - api/ateapi/v1/ateapi.proto
