@@ -447,7 +447,7 @@ Human output shows the number of files checked and separate error and warning co
 
 ## Review documents with Gavel
 
-`gavel lint prompt` runs a prompt with the `lint` preset, which replaces the prompt's output schema with Gavel's violation contract, so any prompt that asks for located findings works as a linter. Captain provides five document review examples in `examples/`. They run as read-only agents: they read the listed files themselves, search the working tree to check concrete references, and report each finding with its file, line, quoted text, severity and a stable `family/name` rule id. Errors fail the lint; warnings and info do not.
+`gavel lint prompt` runs a prompt with the `lint` preset, which replaces the prompt's output schema with Gavel's violation contract, so any prompt that asks for located findings works as a linter. Captain provides seven document review examples in `examples/`. They run as read-only agents: they read the listed files themselves, search the working tree to check concrete references, and report each finding with its file, line, quoted text, severity and a stable `family/name` rule id. Errors fail the lint; warnings and info do not.
 
 <table>
   <thead>
@@ -459,10 +459,14 @@ Human output shows the number of files checked and separate error and warning co
     <tr><td><code>spec-public-high</code></td><td>Customers evaluating: product specs, solution overviews, whitepapers</td><td><code>req/</code> <code>doc/</code> <code>hl/</code> <code>pub/</code></td></tr>
     <tr><td><code>spec-public-low</code></td><td>External integrators: API references, protocol and format specs</td><td><code>req/</code> <code>doc/</code> <code>ll/</code> <code>pub/</code></td></tr>
     <tr><td><code>proposal-review</code></td><td>Evaluators: RFP responses, proposals, statements of work</td><td><code>req/</code> <code>doc/</code> <code>prop/</code></td></tr>
+    <tr><td><code>website-oss-developer-tools</code></td><td>Developers deciding whether to try an open-source tool: landing, feature, pricing, comparison and community pages</td><td><code>doc/</code> <code>pub/</code> <code>web/</code> <code>oss/</code> <code>ia/</code> <code>ux/</code> <code>dx/</code> <code>density/</code></td></tr>
+    <tr><td><code>website-docs-developer-tools</code></td><td>Developers following the docs: tutorials, how-to guides, reference, explanation</td><td><code>doc/</code> <code>pub/</code> <code>ia/</code> <code>ux/</code> <code>dx/</code> <code>density/</code></td></tr>
   </tbody>
 </table>
 
 `req/` checks requirement quality (verifiable, unambiguous, singular, with units, consistent). `doc/` catches defects common in generated documents: unsourced numbers, cross-section inconsistencies, placeholders, boilerplate, and planned behavior described as existing. `hl/` and `ll/` hold each level to its job, so a PRD is not asked for field types and an API reference is not asked for market rationale. `int/` verifies references against the repository; `pub/` catches internal leaks, undefined terms and missing versioning. `prop/` traces every mandatory RFP requirement to the response when `rfp` is supplied.
+
+The two website prompts check every command, flag, version and example against the tool's source (`source`, default the working directory) and share four families. `ia/` covers information architecture: navigation grouped by reader goals rather than code layout, one purpose per page, labels that predict their content, a clean heading outline, cross-links, and orphaned, dead-end or broken links. `ux/` covers reading and interaction: link and call-to-action labels, conditions placed before the step they govern, callouts, a recommended default among options, and text alternatives for images and recordings. `dx/` covers developer experience: prerequisites, time to the first working result, commands that paste and run, complete examples and option reference, configuration precedence, version drift and unsafe steps. `density/` covers information density: walls of text, buried ledes, filler, content in the wrong shape, repetition and fragmentation. The numeric thresholds in these rules are reporting triggers, not targets. The marketing prompt adds `web/` for the landing page's message and `oss/` for open-source essentials: license, repository, the open-core boundary, ungated access, community, security contact, maintenance and telemetry.
 
 Each review prompt declares `permissions: {access: read-only}` rather than a tool list. The same file therefore runs read-only on claude, where it compiles to Edit, Write, Bash and sub-agent denies, and on codex, where it compiles to a read-only sandbox that never asks. Web tools stay available on both. `captain permissions explain examples/proposal-review.prompt --model agent:sonnet --model agent:gpt-6.1-sol` shows both postures; see [Portable access](/prompts/runtime/#portable-access).
 
@@ -484,4 +488,10 @@ gavel lint prompt --summary examples/spec-public-low.prompt docs/api.md docs/err
 
 # Trace an RFP response against the RFP.
 gavel lint prompt examples/proposal-review.prompt bid/response.md -- -V rfp=bid/rfp.md
+
+# Review an open-source tool's landing and pricing pages against its source.
+gavel lint prompt examples/website-oss-developer-tools.prompt site/index.mdx site/pricing.mdx -- -V source=cmd/tool
+
+# Review a docs site's quickstart and CLI reference against the tool's source.
+gavel lint prompt examples/website-docs-developer-tools.prompt docs/quickstart.md docs/reference/cli.md -- -V source=cmd/tool
 `} />

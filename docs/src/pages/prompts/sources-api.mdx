@@ -106,4 +106,6 @@ Rendering accepts template variables and an optional runtime `spec` overlay. It 
 
 The `run` action renders synchronously, creates a prompt run id, then streams session entries through `/api/captain/prompt/runs/{runId}/stream`. A snapshot endpoint at `/api/captain/prompt/runs/{runId}` lets the UI recover entries, completion state, summary, and error text.
 
+Send `chat: true` in the run request to keep a managed chat available for follow-up messages. Each chat runs as a supervisor, so starting another chat does not wait for an existing chat to finish or leave its idle period. This applies to single runs and multi-runtime chat batches. `POST /api/captain/prompt/runs/{runId}/stop` also cancels a chat that has not started: its stream becomes terminal and its queued task cannot later launch a provider.
+
 A workflow that declares `workflow.verify` also publishes its own `verify` SSE event: `{"report": <VerifyReport>, "done": boolean}`. Only the newest snapshot is kept — a late subscriber gets the run's current verification state on connect, the same way it gets `run` and `state` — and it stops updating once the run is done. See [Verification](/agents/verification/) for the report shape and how it is persisted.
