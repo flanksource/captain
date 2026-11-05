@@ -151,16 +151,14 @@ func launchAsyncRun(launch promptLaunch) (PromptRunResult, error) {
 	execute := func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
 		return runPromptStream(t, rendered, timeout, runID, stream, nil)
 	}
+	taskOptions := []task.Option{task.WithGroup(launch.runGroup(runID, "")), task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User)}
 	if chat {
 		chatSession := newChatSession(runID, rendered, timeout, stream, nil)
 		promptChats.register(chatSession)
-		execute = func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
-			return chatSession.run(t)
-		}
+		chatSession.start(launch.taskName(""), taskOptions...)
+	} else {
+		task.StartTask(launch.taskName(""), execute, taskOptions...)
 	}
-	task.StartTask(launch.taskName(""), execute,
-		task.WithGroup(launch.runGroup(runID, "")),
-		task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User))
 	return PromptRunResult{
 		RunID: runID, Status: "running", Model: rendered.Model, Provider: rendered.Provider, Mode: rendered.Mode,
 		Chat: chat, Capabilities: capabilities,

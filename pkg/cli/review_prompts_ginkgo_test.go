@@ -15,7 +15,7 @@ import (
 
 var _ = Describe("Example document review prompts", func() {
 	var ctx context.Context
-	allFamilies := []string{"req/", "doc/", "hl/", "ll/", "int/", "pub/", "prop/"}
+	allFamilies := []string{"req/", "doc/", "hl/", "ll/", "int/", "pub/", "prop/", "web/", "oss/", "ia/", "ux/", "dx/", "density/"}
 
 	BeforeEach(func() {
 		captainconfig.SetPathForTesting(filepath.Join(GinkgoT().TempDir(), "captain.yaml"))
@@ -68,6 +68,8 @@ var _ = Describe("Example document review prompts", func() {
 		Entry("public high-level", "spec-public-high", []string{`files:=["docs/overview.md"]`}, []string{"req/", "doc/", "hl/", "pub/"}),
 		Entry("public low-level", "spec-public-low", []string{`files:=["docs/api.md"]`, "parent=docs/overview.md"}, []string{"req/", "doc/", "ll/", "pub/"}),
 		Entry("proposal", "proposal-review", []string{`files:=["bid/response.md"]`, "rfp=bid/rfp.md"}, []string{"req/", "doc/", "prop/"}),
+		Entry("open-source developer tool website", "website-oss-developer-tools", []string{`files:=["site/index.mdx"]`, "source=cmd/tool"}, []string{"doc/", "pub/", "web/", "oss/", "ia/", "ux/", "dx/", "density/"}),
+		Entry("developer tool documentation website", "website-docs-developer-tools", []string{`files:=["docs/quickstart.md"]`, "source=cmd/tool"}, []string{"doc/", "pub/", "ia/", "ux/", "dx/", "density/"}),
 	)
 })
 

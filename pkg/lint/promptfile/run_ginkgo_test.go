@@ -132,11 +132,12 @@ var _ = Describe("Promptfile linter", func() {
 		examples, err := filepath.Abs(filepath.Join("..", "..", "..", "examples"))
 		Expect(err).NotTo(HaveOccurred())
 		results := Run(context.Background(), Options{WorkDir: examples,
-			Paths: []string{"spec-internal-high.prompt", "spec-internal-low.prompt", "spec-public-high.prompt", "spec-public-low.prompt", "proposal-review.prompt"},
-			Data:  map[string]any{"files": "docs/spec.md"}})
+			Paths: []string{"spec-internal-high.prompt", "spec-internal-low.prompt", "spec-public-high.prompt", "spec-public-low.prompt", "proposal-review.prompt",
+				"website-oss-developer-tools.prompt", "website-docs-developer-tools.prompt"},
+			Data: map[string]any{"files": "docs/spec.md"}})
 		Expect(results).To(HaveLen(1))
 		Expect(results[0].Success).To(BeTrue(), results[0].Error)
-		Expect(results[0].FileCount).To(Equal(5))
+		Expect(results[0].FileCount).To(Equal(7))
 		Expect(results[0].Violations).To(BeEmpty())
 	})
 

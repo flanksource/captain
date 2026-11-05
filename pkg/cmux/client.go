@@ -127,12 +127,13 @@ func DefaultSocketPath() string {
 // Surface is a cmux terminal surface hosting an agent, keyed by its UUID (which
 // matches the CMUX_SURFACE_ID env var of the process running inside it).
 type Surface struct {
-	ID        string
-	Ref       string
-	Title     string
-	Workspace string
-	Tty       string
-	Type      string
+	WorkspaceID string
+	ID          string
+	Ref         string
+	Title       string
+	Workspace   string
+	Tty         string
+	Type        string
 }
 
 // Surfaces returns the current cmux surfaces keyed by surface UUID, sourced from
@@ -150,6 +151,7 @@ func Surfaces() (map[string]Surface, error) {
 type cmuxTree struct {
 	Windows []struct {
 		Workspaces []struct {
+			ID    string `json:"id"`
 			Title string `json:"title"`
 			Panes []struct {
 				Surfaces []struct {
@@ -178,12 +180,13 @@ func parseSurfaces(data []byte) (map[string]Surface, error) {
 						continue
 					}
 					surfaces[s.ID] = Surface{
-						ID:        s.ID,
-						Ref:       s.Ref,
-						Title:     stripStatusGlyph(s.Title),
-						Workspace: stripStatusGlyph(ws.Title),
-						Tty:       s.Tty,
-						Type:      s.Type,
+						WorkspaceID: ws.ID,
+						ID:          s.ID,
+						Ref:         s.Ref,
+						Title:       stripStatusGlyph(s.Title),
+						Workspace:   stripStatusGlyph(ws.Title),
+						Tty:         s.Tty,
+						Type:        s.Type,
 					}
 				}
 			}
