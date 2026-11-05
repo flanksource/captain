@@ -54,7 +54,7 @@ func TestCreateMakesTheEnvironmentAndItsEgressPolicy(t *testing.T) {
 	client := dial(t, server, func(o *substrate.Options) { o.Template = "captain-runner" })
 
 	env, err := client.Create(testContext(t), substrate.Environment{
-		ID: "run-1",
+		ID:     "run-1",
 		Egress: substrate.Egress{Passthrough: []substrate.HostPort{{Host: "github.com", Port: 443}}, Credentials: []substrate.Credential{anthropic}},
 	})
 	require.NoError(t, err)
