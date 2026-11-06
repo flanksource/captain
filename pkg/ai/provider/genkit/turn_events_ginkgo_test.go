@@ -55,8 +55,7 @@ var _ = Describe("Genkit turn events", func() {
 		Expect(turns[0].Message.Role).To(Equal(api.RoleSystem))
 		Expect(turns[0].Message.Parts).To(HaveExactElements(
 			api.Part{Type: api.PartText, Text: "Look things up."},
-			HaveField("Text", ContainSubstring("Output should be in JSON format")),
-		), "the transcript records the schema instruction genkit sends with the system prompt")
+		), "the transcript records the system prompt as sent; the schema travels as a native JSON constraint")
 		Expect(turns[1:]).To(HaveExactElements(
 			turnOf(api.RoleUser, nil, api.Part{Type: api.PartText, Text: "Find alpha."}),
 			turnOf(api.RoleAssistant, &ai.Usage{InputTokens: 20, OutputTokens: 5}, api.Part{
