@@ -424,6 +424,12 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
 	},
+	// bash runs a command, with no tools to filter and no resources to load.
+	RuntimeOf(Bash, ModeAPI): {
+		Modes:        unsupportedModes(),
+		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
+		Resources:    resources(false, false),
+	},
 
 	// --- claude transports: the enum's native home.
 	RuntimeOf(Anthropic, ModeCLI): {

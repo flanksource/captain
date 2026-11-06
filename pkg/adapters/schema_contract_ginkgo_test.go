@@ -133,6 +133,7 @@ var _ = ginkgo.Describe("Adapter schema contract", func() {
 				"risk":  map[string]any{"type": "score", "instructions": "How risky?", "criteria": []any{"Low", "Medium", "High"}},
 			},
 		})
+		assertJSONRoundTrip[BashAPIOptions](map[string]any{"command": "gavel test ./...", "dir": "/workspace"})
 	})
 
 	ginkgo.It("aligns OpenAI agent mappings with the published runtime schema", func() {

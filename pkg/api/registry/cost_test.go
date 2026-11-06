@@ -108,11 +108,18 @@ func TestCostForRejectsUnpricedIDs(t *testing.T) {
 }
 
 // TestEveryCatalogModelIsPriced guards the generator: a models.json row with no
-// cost block would silently price that model at zero everywhere.
+// cost block would silently price that model at zero everywhere. Bash is no
+// model: a command costs nothing, which its empty cost block says.
 func TestEveryCatalogModelIsPriced(t *testing.T) {
 	for _, m := range knownModels {
 		if m.Cost == nil {
 			t.Errorf("catalog model %q carries no cost block", m.ID)
+			continue
+		}
+		if m.Provider == Bash.Name {
+			if *m.Cost != (ModelCost{}) {
+				t.Errorf("catalog model %q runs a command, which costs nothing, but is priced %+v", m.ID, *m.Cost)
+			}
 			continue
 		}
 		if m.Cost.Input <= 0 || m.Cost.Output < 0 || (m.Provider != Jev.Name && m.Cost.Output == 0) {

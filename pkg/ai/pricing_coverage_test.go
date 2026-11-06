@@ -30,6 +30,10 @@ func TestPricingIDsCoverEveryCatalogModel(t *testing.T) {
 	pricing.EnsureLoaded(pricing.LoadOptions{})
 
 	for _, p := range registry.Providers() {
+		if p == registry.Bash {
+			// Bash runs a command, which no pricing source prices: it costs nothing.
+			continue
+		}
 		for _, m := range p.Models() {
 			if !m.Preferred {
 				continue
