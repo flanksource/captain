@@ -51,6 +51,7 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	duration := time.Since(start)
 	if errors.Is(err, ai.ErrSchemaValidation) {
 		log.Debugf("%s response rejected after %v: %v", identity, duration.Round(time.Millisecond), err)
+		logRejectedReply(resp)
 		return resp, err
 	}
 
@@ -59,15 +60,7 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 			Add(icons.Error).
 			Append(" "+identity, "text-red-600 font-medium").
 			Append(fmt.Sprintf(" failed after %v: %v", duration.Round(time.Millisecond), err), "text-red-500"))
-		// A reply rejected as unparseable rides back with the error; the parse
-		// error names only the first bad byte, so show the reply itself.
-		if log.IsDebugEnabled() && resp != nil && resp.Text != "" {
-			log.Debugf("%v", clicky.Text("").
-				Add(icons.ArrowDown).
-				Append(" rejected response", "text-gray-500").
-				NewLine().
-				Append(resp.Text, "text-gray-600"))
-		}
+		logRejectedReply(resp)
 		return resp, err
 	}
 
@@ -90,6 +83,20 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 	}
 
 	return resp, nil
+}
+
+// logRejectedReply shows, under debug, a reply that rides back with its error:
+// a parse error names only the first bad byte, so the reply itself is what
+// diagnoses the failure.
+func logRejectedReply(resp *ai.Response) {
+	if !log.IsDebugEnabled() || resp == nil || resp.Text == "" {
+		return
+	}
+	log.Debugf("%v", clicky.Text("").
+		Add(icons.ArrowDown).
+		Append(" rejected response", "text-gray-500").
+		NewLine().
+		Append(resp.Text, "text-gray-600"))
 }
 
 // ExecuteStream forwards to the inner provider when it implements
