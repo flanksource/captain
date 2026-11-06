@@ -1387,5 +1387,15 @@
     },
     "preferred": true,
     "priority": 1
+  },
+  {
+    "id": "bash",
+    "provider": "bash",
+    "family": "bash",
+    "label": "Bash",
+    "releaseDate": "2026-11-06",
+    "cost": {},
+    "preferred": true,
+    "priority": 1
   }
 ]

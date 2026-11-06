@@ -13,7 +13,7 @@ import (
 
 type AIModelsOptions struct {
 	Filter   string `flag:"filter" help:"Filter models by name substring" short:"f"`
-	Provider string `flag:"provider" help:"Filter by provider: anthropic|openai|google|deepseek|jev" short:"p"`
+	Provider string `flag:"provider" help:"Filter by provider: anthropic|openai|google|deepseek|jev|bash" short:"p"`
 	Mode     string `flag:"mode" help:"Filter by runtime mode: api|agent|cli|cmux"`
 	Limit    int    `flag:"limit" help:"Maximum models to show" default:"50" short:"l"`
 	All      bool   `flag:"all" help:"Include all OpenRouter models" short:"a"`

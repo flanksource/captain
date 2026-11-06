@@ -114,6 +114,23 @@ var (
 		emptyTokens:   []string{"jev"},
 		emptyFamily:   "jev",
 	}
+
+	// Bash is no model: it runs the prompt as a bash command, for a run whose work is a program
+	// rather than an answer. Its output is the response and its exit code the structured output.
+	Bash = &Provider{
+		Name:          "bash",
+		AgentName:     "bash",
+		CatalogPrefix: "bash",
+		PricingPrefix: "bash",
+		DefaultMode:   ModeAPI,
+		modes: map[RuntimeMode]ModeCapabilities{
+			ModeAPI: {Streaming: true},
+		},
+		claimPrefixes: []string{"bash"},
+		families:      []string{"bash"},
+		emptyTokens:   []string{"bash"},
+		emptyFamily:   "bash",
+	}
 )
 
 // Providers returns the provider families in canonical claim order. Parse walks
@@ -121,7 +138,7 @@ var (
 // contract, not an accident. The claim prefixes are disjoint today; the order
 // also fixes AllRuntimes ordering.
 func Providers() []*Provider {
-	return []*Provider{Anthropic, OpenAI, Google, DeepSeek, Jev}
+	return []*Provider{Anthropic, OpenAI, Google, DeepSeek, Jev, Bash}
 }
 
 // ProviderByName resolves a provider by Name, AgentName, CatalogPrefix, or

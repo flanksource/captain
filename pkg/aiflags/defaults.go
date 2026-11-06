@@ -157,6 +157,8 @@ func DefaultModelFor(p *registry.Provider, mode registry.RuntimeMode) string {
 		return "deepseek-v4-pro"
 	case registry.Jev.Name:
 		return "jev-latest"
+	case registry.Bash.Name:
+		return "bash"
 	}
 	return ""
 }

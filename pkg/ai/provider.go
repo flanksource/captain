@@ -22,6 +22,7 @@ var (
 	Google    = api.Google
 	DeepSeek  = api.DeepSeek
 	Jev       = api.Jev
+	Bash      = api.Bash
 )
 
 const (
