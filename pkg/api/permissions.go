@@ -22,6 +22,17 @@ import (
 type Permissions struct {
 	// Mode is the base permission posture, independent of any sandbox.
 	Mode PermissionMode `json:"mode,omitempty" yaml:"mode,omitempty" pretty:"label=Mode"`
+	// Access is the portable access contract, compiled per runtime by
+	// CompileAccess. Unset leaves every runtime's output unchanged.
+	Access AccessLevel `json:"access,omitempty" yaml:"access,omitempty" pretty:"label=Access"`
+	// AccessState is the access intent ResolveSpecLayers derived layer by layer,
+	// including an intent converted from another dialect (a tool-deny list, a
+	// read-only native sandbox). It cannot be recomputed from the flattened spec,
+	// because the fold forgets which layer wrote a key, so it rides on the spec
+	// to the provider decorator that compiles it. It is runtime state, never
+	// serialized: a spec that crosses a process boundary loses it and is then
+	// compiled from Access alone, which refuses rather than loosens.
+	AccessState *AccessState `json:"-" yaml:"-" pretty:"-"`
 	// Presets are named safety bundles applied before per-tool rules. (--edit/--bare)
 	Presets []Preset `json:"presets,omitempty" yaml:"presets,omitempty" pretty:"label=Presets"`
 	// Tools is the per-tool allow/deny/mode policy.
@@ -167,6 +178,12 @@ func (t Tools) toolsWithPolicy(want ToolPolicy) []string {
 // another name, and dropping the deny would hand the agent the very tool the
 // spec forbade.
 //
+// Support is read from the capability matrix. Under a read-only access intent,
+// a deny the compiled posture already enforces is accepted rather than refused:
+// an edit or write tool everywhere, and a shell where it is the runtime's only
+// read path (codex), confined by the read-only sandbox. CompileAccess reports
+// each one as an equivalence.
+//
 // `ask` is refused everywhere, on the authored keys and before translation: no
 // transport has a per-tool prompt, so it would resolve to "allowed" on the
 // runtimes that advertise tool policy support. `auto` constrains nothing, so it
@@ -177,19 +194,32 @@ func RequireToolPolicySupport(p *ModelProvider, mode RuntimeMode, permissions Pe
 			"per-tool policy \"ask\" (%s) is not enforceable on any runtime: transports carry allow/deny tool lists only, so the tool would run unprompted; use allow or deny",
 			strings.Join(asked, ", "))
 	}
+	runtime := RuntimeOf(p, mode)
+	caps := PermissionCapabilitiesFor(runtime)
+	readOnly := permissions.EffectiveAccess().ReadOnly()
+	vocabulary := AgentToolsFor(p, mode)
 	resolved, _ := permissions.Tools.resolveForRuntime(p, mode)
 	var enforced []string
 	for _, rule := range sortedKeys(resolved) {
-		if tool := resolved[rule]; tool.policy == ToolPolicyAllow || tool.policy == ToolPolicyDeny {
-			enforced = append(enforced, tool.describe(rule))
+		tool := resolved[rule]
+		if tool.policy != ToolPolicyAllow && tool.policy != ToolPolicyDeny || caps.ToolPolicySupport(ProvenanceAgent, tool.policy).Honoured() {
+			continue
 		}
+		if _, ok := accessEnforcedDeny(vocabulary, rule, ""); readOnly && ok && tool.policy == ToolPolicyDeny {
+			continue
+		}
+		enforced = append(enforced, tool.describe(rule))
 	}
-	if len(enforced) == 0 || registry.SupportsToolPolicy(p, mode) {
+	if len(enforced) == 0 {
 		return nil
 	}
+	hint := ""
+	if !readOnly && toolsDenyAll(permissions.Tools, readOnlyDeniedAliases) {
+		hint = "; these rules deny every edit, write and shell tool, which is permissions: {access: read-only} — `captain permissions convert <file>` rewrites them"
+	}
 	return fmt.Errorf(
-		"%s cannot enforce a per-tool policy (%s), and running without it would grant more than the spec allows; remove permissions.tools or use one of: %s",
-		registry.RuntimeOf(p, mode), strings.Join(enforced, ", "), registry.RuntimesList(registry.ToolPolicyRuntimes()))
+		"%s cannot enforce a per-tool policy (%s), and running without it would grant more than the spec allows; remove permissions.tools or use one of: %s%s",
+		runtime, strings.Join(enforced, ", "), registry.RuntimesList(ToolPolicyRuntimes()), hint)
 }
 
 // Validate checks the mode, presets, tool policies, and resource modes are
@@ -197,6 +227,9 @@ func RequireToolPolicySupport(p *ModelProvider, mode RuntimeMode, permissions Pe
 func (p Permissions) Validate() error {
 	if !p.Mode.Valid() {
 		return fmt.Errorf("invalid permission mode %q", p.Mode)
+	}
+	if !p.Access.Valid() {
+		return fmt.Errorf("invalid permissions access %q (valid: read-only, full)", p.Access)
 	}
 	for _, preset := range p.Presets {
 		if !preset.Valid() {

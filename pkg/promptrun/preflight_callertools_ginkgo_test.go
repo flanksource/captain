@@ -10,6 +10,8 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/promptrun"
 	clickyentity "github.com/flanksource/clicky/entity"
+	"github.com/flanksource/commons-db/connection"
+	"github.com/flanksource/commons-db/shell"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -136,10 +138,73 @@ var _ = Describe("promptrun.Preflight caller tools", func() {
 		expectRefused(`runtime "google cli" cannot expose caller tools`)
 	})
 
+	It("admits an asking inline tool on Jev, which ignores tools and leaves them to hooks", func() {
+		in.Config.Tools = nil
+		in.Resolved.Spec.Model = api.Model{Name: "jev-latest", Mode: api.ModeAPI}
+		in.Resolved.Spec.Tools = api.InlineTools{"drop_table": {Exec: "true", Destructive: true}}
+		in.Resolved.Spec.ToolPolicy = api.PermissionPolicy{{ToolMatch: api.ToolMatch{Name: api.MatchPatterns{"drop_table"}}, Policy: api.ToolPolicyAsk}}
+		_, err := promptrun.Preflight(in)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
 	It("checks every fallback candidate, not only the primary model", func() {
 		in.Config.OnApproval = broker
 		in.Resolved.Spec.Fallbacks = []api.Model{{Name: "gemini-2.5-pro", Mode: api.ModeCLI}}
 		expectRefused(`runtime "google cli" cannot expose caller tools`)
+	})
+
+	Context("declared inline in the spec", func() {
+		BeforeEach(func() { in.Config.Tools = nil })
+
+		It("admits a destructive inline tool like a host tool: refused without a broker", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"drop_table": {Exec: "true", Destructive: true}}
+			expectRefused("caller tools drop_table resolve to ask")
+		})
+
+		It("admits a readonly inline tool without a broker", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true}}
+			_, err := promptrun.Preflight(in)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("refuses inline tools under a sandbox that cannot run them", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true}}
+			in.Resolved.Spec.Model = api.Model{Name: "sonnet", Mode: api.ModeCLI}
+			in.Config.SandboxSelection = &api.SandboxConfig{Kind: api.SandboxDocker}
+			expectRefused(`tools.lookup: sandbox "docker" cannot run inline tools`)
+		})
+
+		It("refuses placement: sandbox on a run with no sandbox to place it in", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true, Placement: api.ToolPlacementSandbox}}
+			expectRefused(`tools.lookup: sandbox "off" cannot run an inline tool with placement "sandbox"; it supports: host`)
+		})
+
+		DescribeTable("refuses a sidecar tool the sidecar could not run as declared",
+			func(tool api.InlineTool, message string) {
+				tool.Exec, tool.Placement = "true", api.ToolPlacementSidecar
+				in.Resolved.Spec.Tools = api.InlineTools{"lookup": tool}
+				in.Resolved.Spec.Model = api.Model{Name: "sonnet", Mode: api.ModeCLI}
+				in.Config.SandboxSelection = &api.SandboxConfig{Kind: api.SandboxGitAgent}
+				expectRefused(message)
+			},
+			Entry("the supervisor's real secrets", api.InlineTool{ReadOnly: true, Credentials: api.ToolCredentialsDirect}, "would send the supervisor's secrets to the sidecar"),
+			Entry("a call nobody could approve", api.InlineTool{Destructive: true}, "tools.lookup needs approval, but a sidecar tool runs where no one can approve it"),
+			Entry("secrets with no mode", api.InlineTool{ReadOnly: true, Setup: shell.Setup{Connections: connection.ExecConnections{AWS: &connection.AWSConnection{}}}}, "needs an explicit credentials"),
+		)
+
+		It("admits a readonly sidecar tool and keeps it off the supervisor's caller tools", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true, Placement: api.ToolPlacementSidecar}}
+			in.Resolved.Spec.Model = api.Model{Name: "sonnet", Mode: api.ModeCLI}
+			in.Config.SandboxSelection = &api.SandboxConfig{Kind: api.SandboxGitAgent}
+			_, err := promptrun.Preflight(in)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("refuses inline tools on a runtime that cannot expose them", func() {
+			in.Resolved.Spec.Tools = api.InlineTools{"lookup": {Exec: "true", ReadOnly: true}}
+			in.Resolved.Spec.Model = api.Model{Name: "gemini-2.5-pro", Mode: api.ModeCLI}
+			expectRefused(`runtime "google cli" cannot expose caller tools`)
+		})
 	})
 
 	It("fires none of the caller-tool checks for a run with no caller tools", func() {

@@ -55,11 +55,8 @@ func TestPromptRunIterationRejectsInvalidInputBeforeWriting(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidPromptRun)
 }
 
-// TestPromptRunVerificationReaderRejectsCorruptStoredReports covers rows the store
-// itself would never write: a JSONB `null` (which passes `IS NOT NULL`) must not
-// decode into a blank passing report, and a report that fails Validate must surface
-// as an error rather than render as an empty verdict.
-func TestPromptRunVerificationReaderRejectsCorruptStoredReports(t *testing.T) {
+// Historical reports retain their evidence even when current validation rejects them.
+func TestPromptRunVerificationReaderPreservesInconsistentStoredReports(t *testing.T) {
 	db := openPromptRunIterationDB(t, "captain_prompt_run_iteration_corrupt")
 
 	jsonNullRun := newPromptRunForIterations(t, db)
@@ -85,9 +82,17 @@ func TestPromptRunVerificationReaderRejectsCorruptStoredReports(t *testing.T) {
 	corruptRun := newPromptRunForIterations(t, db)
 	insertRawIterationVerification(t, db, corruptRun.ID, 1,
 		`{"kind":"cmd","name":"corrupt","ran":true,"passed":true,"state":"failed","summary":{}}`)
+	report, verified, err = db.LatestPromptRunVerification(t.Context(), corruptRun.ID)
+	require.NoError(t, err)
+	require.NotNil(t, report)
+	assert.Equal(t, 1, verified)
+	assert.True(t, report.Passed)
+	assert.EqualValues(t, "failed", report.State)
+	assert.EqualError(t, report.Validate(), `verify report "corrupt": passed=true with state "failed"`)
+
+	insertRawIterationVerification(t, db, corruptRun.ID, 2, `{"tests":"not an array"}`)
 	_, _, err = db.LatestPromptRunVerification(t.Context(), corruptRun.ID)
-	require.Error(t, err, "a stored report that fails Validate must surface, not render as a blank pass")
-	assert.Contains(t, err.Error(), "passed=true with state")
+	require.ErrorContains(t, err, "decode verification result")
 }
 
 func insertRawIterationVerification(t *testing.T, db *DB, runID uuid.UUID, iteration int, verification string) {

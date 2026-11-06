@@ -10,10 +10,12 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/gitagent"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // identityWrap satisfies the mandatory confinement seam for tests without a
@@ -198,17 +200,26 @@ var _ = Describe("hook sets", func() {
 		Expect(v.Findings[0].Message).To(ContainSubstring("H15"))
 	})
 
-	It("applies commit gates to changed paths", func() {
+	It("applies the commit policies' configured gates to changed paths", func() {
 		w := ws()
 		writeFileT(w.Dir, ".env", "TOKEN=x\n")
 		w.Changed = append(w.Changed, ".env")
+		secretNames := []workspace.GateSpec{{Name: workspace.SecretNamesGateName}}
+
 		v := gitagent.RunHookSet(ctx, w, gitagent.HookSetOptions{
 			Task: "t-1", Attempt: 1, Tier: "sidecar",
 			Workflow: &api.Workflow{Commits: []api.Commit{{}}},
 		})
+		Expect(v.Status).To(Equal(gitagent.StatusAccepted), "no gate runs unless a policy configures it")
+
+		v = gitagent.RunHookSet(ctx, w, gitagent.HookSetOptions{
+			Task: "t-1", Attempt: 1, Tier: "sidecar",
+			Workflow: &api.Workflow{Commits: []api.Commit{{Gates: secretNames}}},
+		})
 		Expect(v.Status).To(Equal(gitagent.StatusRejected))
-		Expect(v.Findings[0].Kind).To(Equal("commit"))
-		Expect(v.Findings[0].Message).To(ContainSubstring(".env"))
+		Expect(v.Findings[0]).To(MatchFields(IgnoreExtras, Fields{
+			"Hook": Equal("gate:" + workspace.SecretNamesGateName), "Kind": Equal("commit"), "Message": ContainSubstring(".env"),
+		}))
 	})
 })
 

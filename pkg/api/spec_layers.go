@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -39,6 +40,7 @@ type SpecLayer struct {
 	Name   string          `json:"name" yaml:"name"`
 	Scope  SpecLayerScope  `json:"scope" yaml:"scope"`
 	Spec   Spec            `json:"spec,omitempty" yaml:"spec,omitempty"`
+	Order  int             `json:"order,omitempty" yaml:"order,omitempty"`
 }
 
 // ResolvedSpec is Captain's effective runtime profile plus ordered provenance.
@@ -47,6 +49,9 @@ type ResolvedSpec struct {
 	Trace      []SpecLayer                `json:"trace" yaml:"trace"`
 	Warnings   []string                   `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 	Provenance map[string]FieldProvenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+	// Access is the layer-resolved access intent and the layer that set it; see
+	// ResolveAccessState. The same state rides on Spec.Permissions.AccessState.
+	Access *AccessState `json:"access,omitempty" yaml:"access,omitempty"`
 }
 
 // PromptSpecLayer adapts parsed .prompt frontmatter into the normal surface layer.
@@ -60,11 +65,14 @@ func RequestSpecLayer(name string, spec Spec) SpecLayer {
 	return SpecLayer{Name: name, Source: SpecLayerSourceRequest, Scope: SpecLayerUser, Spec: spec}
 }
 
-// OrderSpecLayers copies the stack into effective scope order, preserving ties.
+// OrderSpecLayers sorts by explicit order, then scope, preserving selection order for ties.
 func OrderSpecLayers(input ...SpecLayer) []SpecLayer {
 	layers := append([]SpecLayer(nil), input...)
 	slices.SortStableFunc(layers, func(left, right SpecLayer) int {
-		return scopeRank(left.Scope) - scopeRank(right.Scope)
+		if order := cmp.Compare(left.Order, right.Order); order != 0 {
+			return order
+		}
+		return cmp.Compare(scopeRank(left.Scope), scopeRank(right.Scope))
 	})
 	return layers
 }

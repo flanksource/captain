@@ -1,11 +1,59 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Serve
-description: Placeholder for Captain serve documentation.
-section: Next Sections
+description: Embedded HTTP API, prompt workbench, sessions, and development proxy.
+section: Reference
 ---
 
 # Serve
 
-This section is scaffolded for the embedded HTTP API and web UI. The prompts docs refer to `captain serve` where it hosts the prompt workbench, but this page will later cover API routing, Vite dev proxying, embedded assets, and chat/session integration.
+`captain serve` starts the Go command API, embedded React UI, prompt run streams, chat service, and session monitor. It binds to `localhost:9020` by default and prints the actual listening address on startup.
+
+```sh
+captain serve --open
+captain serve --port 9080 --prompt-dir ./prompts
+```
+
+The prompt workbench at `/prompts` discovers, edits, previews and runs promptfiles. `/sessions` inspects history and live runs; `/whoami` configures providers and runtime defaults. Run startup requires a working PostgreSQL database and valid configuration. The startup log identifies the database source and masked DSN.
+
+## HTTP surfaces
+
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | Server health |
+| `GET /api/openapi.json`, `/api/openapi.yaml` | Generated command API and Captain-specific schemas |
+| `/api/v1/...` | Clicky command execution, including the `prompt` entity |
+| `GET /api/captain/ai/prompt/schema` | Prompt authoring schemas, runtime catalogs, sources and verifier availability |
+| `GET /api/captain/ai/permissions/catalog` | Permission catalog |
+| `/api/captain/prompt/runs/{runId}` | Run snapshots, SSE streams and stop controls |
+| `/api/captain/sessions/{id}` | Canonical session transcript, controls and token footprints |
+| `/api/captain/tasks` | Task snapshots and progress streams |
+| `/api/chat` | Chat backend |
+| `POST /api/attachments` | Durable attachment upload |
+
+Unknown API paths remain API errors rather than falling through to the UI's SPA route handler. See [Sources and API](/prompts/sources-api/) for payloads and [Approvals](/agents/approvals/) for broker controls.
+
+## Development
+
+```sh
+task www:build
+make build
+.bin/captain serve --dev --open
+```
+
+`--dev` starts Vite from `pkg/cli/webapp`, chooses a free UI port, and proxies `/api` to the Go server. `--ui-port 5173` pins that port. `task www:dev` installs dependencies and starts the same development mode. Rebuild the web assets before building a distributable binary; the Go binary embeds `pkg/cli/webapp/dist`.
+
+The documentation site is a separate Astro app:
+
+```sh
+task docs:dev
+task docs:build
+pnpm --dir docs check
+```
+
+## Remote access and TLS
+
+Loopback requests need no bearer token. Off-box requests require a Captain token with the appropriate scope: `api` for the command API or `git` for the git-agent endpoint. Inspect `captain token --help` for token management.
+
+`--tls` generates and reuses a self-signed certificate beside the git-agent keys. Add each address clients use with repeated `--tls-host`; a supplied or existing certificate that omits the requested address fails validation. To use an existing certificate, supply both `--tls-cert` and `--tls-key`. Remote git-agent enrollment pins the supervisor certificate. Binding a server off-box makes its API reachable by other hosts; configure its network and token access deliberately.
 

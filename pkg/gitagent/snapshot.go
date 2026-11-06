@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	dbcontext "github.com/flanksource/commons-db/context"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 // Default snapshot caps, applied when the policy leaves a cap zero.
@@ -67,9 +69,17 @@ func TakeSnapshot(ctx context.Context, repoDir string, policy SnapshotPolicy) (*
 			return nil, fmt.Errorf("snapshot refused: %q is unmerged; resolve the conflict before dispatching", e.Path)
 		}
 	}
+	// Content a workspace setup cloned in from its source's gitignored files is
+	// never dispatched, even where this checkout's .gitignore does not hide it.
+	ws, err := workspace.Open(dbcontext.NewContext(ctx), dir)
+	if err != nil {
+		return nil, err
+	}
 	all := make([]string, 0, len(entries))
 	for _, e := range entries {
-		all = append(all, e.Path)
+		if !ws.IsExcluded(e.Path) {
+			all = append(all, e.Path)
+		}
 	}
 	paths, err := filterPolicyPaths(all, policy.Paths)
 	if err != nil {

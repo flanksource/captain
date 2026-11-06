@@ -2,6 +2,7 @@ package promptrun
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,6 +34,13 @@ type streamingProvider struct {
 	streamCalls int
 }
 
+type rejectedBufferedProvider struct{ bufferedOnlyProvider }
+
+func (p *rejectedBufferedProvider) Execute(ctx context.Context, _ ai.Request) (*ai.Response, error) {
+	ai.ReportEvent(ctx, ai.Event{Kind: ai.EventText, Text: "# Initial findings", Rejected: true})
+	return &ai.Response{Text: "# Final findings", Usage: ai.Usage{OutputTokens: 30}, CostUSD: 0.75}, fmt.Errorf("%w: expected JSON", ai.ErrSchemaValidation)
+}
+
 func (p *streamingProvider) ExecuteStream(context.Context, ai.Request) (<-chan ai.Event, error) {
 	p.streamCalls++
 	events := make(chan ai.Event, 1)
@@ -50,6 +58,19 @@ func drain(events <-chan ai.Event) []ai.Event {
 }
 
 var _ = ginkgo.Describe("runnerProvider", func() {
+	ginkgo.It("keeps buffered rejection diagnostics before the terminal error and its spend", func() {
+		runner, err := runnerProvider(&rejectedBufferedProvider{}, true, false)
+		Expect(err).NotTo(HaveOccurred())
+		events, err := runner.ExecuteStream(context.Background(), ai.Request{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(drain(events)).To(HaveExactElements(
+			And(HaveField("Kind", ai.EventText), HaveField("Text", "# Initial findings"), HaveField("Rejected", true)),
+			And(HaveField("Kind", ai.EventText), HaveField("Text", "# Final findings"), HaveField("Rejected", true)),
+			And(HaveField("Kind", ai.EventError), HaveField("Error", ContainSubstring(ai.ErrSchemaValidation.Error())),
+				HaveField("Usage", &ai.Usage{OutputTokens: 30}), HaveField("CostUSD", 0.75)),
+		))
+	})
+
 	ginkgo.It("replays a buffered-only provider's response as completed events", func() {
 		provider := &bufferedOnlyProvider{}
 		runner, err := runnerProvider(provider, false, false)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 
 	"github.com/flanksource/clicky"
@@ -10,7 +11,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// markdownEscape matches a CommonMark backslash escape of ASCII punctuation.
+var markdownEscape = regexp.MustCompile("\\\\([!-/:-@[-`{-~])")
+
+// unescapeMarkdown is the text a Markdown reader sees, so help assertions name
+// what is documented rather than how the renderer escaped it.
+func unescapeMarkdown(markdown string) string {
+	return markdownEscape.ReplaceAllString(markdown, "$1")
+}
+
 var _ = Describe("prompt help", func() {
+	BeforeEach(func() {
+		// UseFlags (e.g. forceObservationOutput in other specs) leaves a
+		// process-wide NoColor default that clicky.Format merges in.
+		DeferCleanup(clicky.UseFormatter, clicky.Flags.FormatOptions)
+		clicky.UseFormatter(clicky.FormatOptions{})
+		GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "1")
+		GinkgoT().Setenv("NO_COLOR", "")
+		GinkgoT().Setenv("TERM", "xterm-256color")
+		GinkgoT().Setenv("COLOR", "")
+	})
 	clearSessionMarkers := func() {
 		for _, marker := range []string{
 			"CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_SANDBOX",
@@ -26,10 +46,6 @@ var _ = Describe("prompt help", func() {
 	}
 
 	It("renders colored terminal help for a human session", func() {
-		// UseFlags (e.g. forceObservationOutput in other specs) leaves a
-		// process-wide NoColor default that clicky.Format merges in.
-		DeferCleanup(clicky.UseFormatter, clicky.Flags.FormatOptions)
-		clicky.UseFormatter(clicky.FormatOptions{})
 		GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "1")
 		GinkgoT().Setenv("NO_COLOR", "")
 		GinkgoT().Setenv("COLOR", "")
@@ -49,8 +65,30 @@ var _ = Describe("prompt help", func() {
 		Expect(output).NotTo(ContainSubstring("\x1b["))
 	})
 
+	DescribeTable("honors plain help output", func(name, reason string) {
+		switch reason {
+		case "environment":
+			GinkgoT().Setenv("NO_COLOR", "1")
+		case "redirected":
+			GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "")
+		}
+		output, err := renderPromptHelp(&cobra.Command{Use: name}, promptHelpRenderOptions{NoColor: reason == "flag"})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(output).NotTo(BeEmpty())
+		Expect(output).NotTo(ContainSubstring("\x1b["))
+	},
+		Entry("root flag", "prompt", "flag"),
+		Entry("root environment", "prompt", "environment"),
+		Entry("root redirected", "prompt", "redirected"),
+		Entry("child flag", "run", "flag"),
+		Entry("child environment", "run", "environment"),
+		Entry("child redirected", "run", "redirected"),
+	)
+
 	It("documents the complete prompt-file authoring contract", func() {
 		output, err := renderPromptHelp(promptCommand(), promptHelpRenderOptions{LLMSession: true})
+		output = unescapeMarkdown(output)
 
 		Expect(err).NotTo(HaveOccurred())
 		for _, required := range []string{
@@ -65,6 +103,10 @@ var _ = Describe("prompt help", func() {
 			"fallbacks[]",
 			"prompt.schemaStrictness",
 			"permissions.tools.<tool>",
+			"permissions.access",
+			"presets[]",
+			"--no-color",
+			"captain prompt observe",
 			"permissions.mcp.<server>",
 			"memory.skipProject",
 			"setup.checkout.worktree.uncommitted",
@@ -99,4 +141,59 @@ var _ = Describe("prompt help", func() {
 		Expect(output.String()).NotTo(ContainSubstring("\x1b["))
 		Expect(output.String()).NotTo(ContainSubstring("style="))
 	})
+
+	It("documents prompt lookup locations in list help", func() {
+		output, err := renderPromptHelp(&cobra.Command{Use: "list"}, promptHelpRenderOptions{LLMSession: true})
+		output = unescapeMarkdown(output)
+
+		Expect(err).NotTo(HaveOccurred())
+		for _, location := range []string{"Prompt lookup locations", "~/.captain.yaml", "prompts.dirs", ".captain/prompts", "~/.config/captain/prompts", "$XDG_CONFIG_HOME/captain/prompts"} {
+			Expect(output).To(ContainSubstring(location))
+		}
+	})
+
+	DescribeTable("renders help throughout the prompt command tree", func(name string, llm, noColor bool) {
+		clearSessionMarkers()
+		if llm {
+			GinkgoT().Setenv("CODEX_THREAD_ID", "thread-example")
+		}
+		previous := clicky.Flags.NoColor
+		DeferCleanup(func() { clicky.Flags.NoColor = previous })
+		clicky.Flags.NoColor = noColor
+		root := &cobra.Command{Use: "captain"}
+		prompt := promptCommand()
+		child := &cobra.Command{Use: name + " [id]", Short: "Manage " + name, Run: func(*cobra.Command, []string) {}}
+		child.Flags().String("query", "", "Filter by name")
+		prompt.AddCommand(child)
+		root.AddCommand(prompt)
+		Expect(AttachPromptHelp(root)).To(Succeed())
+		var output bytes.Buffer
+		root.SetOut(&output)
+		root.SetArgs([]string{"prompt", name, "--help"})
+
+		Expect(root.Execute()).To(Succeed())
+		Expect(output.String()).To(ContainSubstring("captain prompt " + name))
+		Expect(output.String()).To(ContainSubstring("--query"))
+		Expect(output.String()).NotTo(ContainSubstring("Captain .prompt Files"))
+		if llm {
+			Expect(output.String()).To(HavePrefix("# captain prompt " + name))
+		}
+		if llm || noColor {
+			Expect(output.String()).NotTo(ContainSubstring("\x1b["))
+		} else {
+			Expect(output.String()).To(ContainSubstring("\x1b["))
+			Expect(output.String()).To(ContainSubstring("38;2;"))
+		}
+	},
+		Entry("run on a terminal", "run", false, false),
+		Entry("render on a terminal", "render", false, false),
+		Entry("list on a terminal", "list", false, false),
+		Entry("get on a terminal", "get", false, false),
+		Entry("create on a terminal", "create", false, false),
+		Entry("update on a terminal", "update", false, false),
+		Entry("delete on a terminal", "delete", false, false),
+		Entry("observe on a terminal", "observe", false, false),
+		Entry("run in an agent session", "run", true, false),
+		Entry("render without color", "render", false, true),
+	)
 })

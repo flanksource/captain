@@ -4,10 +4,697 @@ package adapters
 
 import "encoding/json"
 
+// The properties Data, MediaType, Type are required.
+type AnthropicAPIBase64ImageSourceParam struct {
+	// Data configuration. See the linked native reference for semantics and
+	// availability.
+	Data string `json:"data"`
+
+	// Any of "image/jpeg", "image/png", "image/gif", "image/webp".
+	//
+	MediaType AnthropicAPIBase64ImageSourceParamMediaType `json:"media_type"`
+
+	// This field can be elided, and will marshal its zero value as "base64".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPIBase64ImageSourceParamMediaType string
+
+const AnthropicAPIBase64ImageSourceParamMediaTypeImageGif AnthropicAPIBase64ImageSourceParamMediaType = "image/gif"
+const AnthropicAPIBase64ImageSourceParamMediaTypeImageJpeg AnthropicAPIBase64ImageSourceParamMediaType = "image/jpeg"
+const AnthropicAPIBase64ImageSourceParamMediaTypeImagePng AnthropicAPIBase64ImageSourceParamMediaType = "image/png"
+const AnthropicAPIBase64ImageSourceParamMediaTypeImageWebp AnthropicAPIBase64ImageSourceParamMediaType = "image/webp"
+
+// The properties Data, MediaType, Type are required.
+type AnthropicAPIBase64PDFSourceParam struct {
+	// Data configuration. See the linked native reference for semantics and
+	// availability.
+	Data string `json:"data"`
+
+	// This field can be elided, and will marshal its zero value as "application/pdf".
+	//
+	MediaType interface{} `json:"media_type"`
+
+	// This field can be elided, and will marshal its zero value as "base64".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties FileID, Type are required.
+type AnthropicAPIBashCodeExecutionOutputBlockParam struct {
+	// File id configuration. See the linked native reference for semantics and
+	// availability.
+	FileId string `json:"file_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "bash_code_execution_output".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, ReturnCode, Stderr, Stdout, Type are required.
+type AnthropicAPIBashCodeExecutionResultBlockParam struct {
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content []AnthropicAPIBashCodeExecutionOutputBlockParam `json:"content"`
+
+	// Return code configuration. See the linked native reference for semantics and
+	// availability.
+	ReturnCode int `json:"return_code"`
+
+	// Stderr configuration. See the linked native reference for semantics and
+	// availability.
+	Stderr string `json:"stderr"`
+
+	// Stdout configuration. See the linked native reference for semantics and
+	// availability.
+	Stdout string `json:"stdout"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "bash_code_execution_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, ToolUseID, Type are required.
+type AnthropicAPIBashCodeExecutionToolResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content AnthropicAPIBashCodeExecutionToolResultBlockParamContentUnion `json:"content"`
+
+	// Tool use id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolUseId string `json:"tool_use_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "bash_code_execution_tool_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIBash Code Execution Tool Result Block Param Content Union
+// configuration. See the linked native reference for semantics and availability.
+type AnthropicAPIBashCodeExecutionToolResultBlockParamContentUnion = json.RawMessage
+
+// The properties ErrorCode, Type are required.
+type AnthropicAPIBashCodeExecutionToolResultErrorParam struct {
+	// Any of "invalid_tool_input", "unavailable", "too_many_requests",
+	// "execution_time_exceeded", "output_file_too_large".
+	//
+	ErrorCode AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCode `json:"error_code"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "bash_code_execution_tool_result_error".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCode string
+
+const AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCodeExecutionTimeExceeded AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCode = "execution_time_exceeded"
+const AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCodeInvalidToolInput AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCode = "invalid_tool_input"
+const AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCodeOutputFileTooLarge AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCode = "output_file_too_large"
+const AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCodeTooManyRequests AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCode = "too_many_requests"
+const AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCodeUnavailable AnthropicAPIBashCodeExecutionToolResultErrorParamErrorCode = "unavailable"
+
+// This struct has a constant value, construct it with
+// [NewCacheControlEphemeralParam].
+type AnthropicAPICacheControlEphemeralParam struct {
+	// The time-to-live for the cache control breakpoint.
+	//
+	// This may be one the following values:
+	//
+	// - `5m`: 5 minutes
+	// - `1h`: 1 hour
+	//
+	// Defaults to `5m`.
+	//
+	// Any of "5m", "1h".
+	//
+	Ttl *AnthropicAPICacheControlEphemeralParamTtl `json:"ttl,omitempty,omitzero"`
+
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPICacheControlEphemeralParamTtl string
+
+const AnthropicAPICacheControlEphemeralParamTtlA1H AnthropicAPICacheControlEphemeralParamTtl = "1h"
+const AnthropicAPICacheControlEphemeralParamTtlA5M AnthropicAPICacheControlEphemeralParamTtl = "5m"
+
+// The properties CitedText, DocumentIndex, DocumentTitle, EndCharIndex,
+// StartCharIndex, Type are required.
+type AnthropicAPICitationCharLocationParam struct {
+	// Cited text configuration. See the linked native reference for semantics and
+	// availability.
+	CitedText string `json:"cited_text"`
+
+	// Document index configuration. See the linked native reference for semantics and
+	// availability.
+	DocumentIndex int `json:"document_index"`
+
+	// Document title configuration. See the linked native reference for semantics and
+	// availability.
+	DocumentTitle string `json:"document_title"`
+
+	// End char index configuration. See the linked native reference for semantics and
+	// availability.
+	EndCharIndex int `json:"end_char_index"`
+
+	// Start char index configuration. See the linked native reference for semantics
+	// and availability.
+	StartCharIndex int `json:"start_char_index"`
+
+	// This field can be elided, and will marshal its zero value as "char_location".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties CitedText, DocumentIndex, DocumentTitle, EndBlockIndex,
+// StartBlockIndex, Type are required.
+type AnthropicAPICitationContentBlockLocationParam struct {
+	// Cited text configuration. See the linked native reference for semantics and
+	// availability.
+	CitedText string `json:"cited_text"`
+
+	// Document index configuration. See the linked native reference for semantics and
+	// availability.
+	DocumentIndex int `json:"document_index"`
+
+	// Document title configuration. See the linked native reference for semantics and
+	// availability.
+	DocumentTitle string `json:"document_title"`
+
+	// End block index configuration. See the linked native reference for semantics
+	// and availability.
+	EndBlockIndex int `json:"end_block_index"`
+
+	// Start block index configuration. See the linked native reference for semantics
+	// and availability.
+	StartBlockIndex int `json:"start_block_index"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "content_block_location".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties CitedText, DocumentIndex, DocumentTitle, EndPageNumber,
+// StartPageNumber, Type are required.
+type AnthropicAPICitationPageLocationParam struct {
+	// Cited text configuration. See the linked native reference for semantics and
+	// availability.
+	CitedText string `json:"cited_text"`
+
+	// Document index configuration. See the linked native reference for semantics and
+	// availability.
+	DocumentIndex int `json:"document_index"`
+
+	// Document title configuration. See the linked native reference for semantics and
+	// availability.
+	DocumentTitle string `json:"document_title"`
+
+	// End page number configuration. See the linked native reference for semantics
+	// and availability.
+	EndPageNumber int `json:"end_page_number"`
+
+	// Start page number configuration. See the linked native reference for semantics
+	// and availability.
+	StartPageNumber int `json:"start_page_number"`
+
+	// This field can be elided, and will marshal its zero value as "page_location".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties CitedText, EndBlockIndex, SearchResultIndex, Source,
+// StartBlockIndex, Title, Type are required.
+type AnthropicAPICitationSearchResultLocationParam struct {
+	// Cited text configuration. See the linked native reference for semantics and
+	// availability.
+	CitedText string `json:"cited_text"`
+
+	// End block index configuration. See the linked native reference for semantics
+	// and availability.
+	EndBlockIndex int `json:"end_block_index"`
+
+	// Search result index configuration. See the linked native reference for
+	// semantics and availability.
+	SearchResultIndex int `json:"search_result_index"`
+
+	// Source configuration. See the linked native reference for semantics and
+	// availability.
+	Source string `json:"source"`
+
+	// Start block index configuration. See the linked native reference for semantics
+	// and availability.
+	StartBlockIndex int `json:"start_block_index"`
+
+	// Title configuration. See the linked native reference for semantics and
+	// availability.
+	Title string `json:"title"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "search_result_location".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties CitedText, EncryptedIndex, Title, Type, URL are required.
+type AnthropicAPICitationWebSearchResultLocationParam struct {
+	// Cited text configuration. See the linked native reference for semantics and
+	// availability.
+	CitedText string `json:"cited_text"`
+
+	// Encrypted index configuration. See the linked native reference for semantics
+	// and availability.
+	EncryptedIndex string `json:"encrypted_index"`
+
+	// Title configuration. See the linked native reference for semantics and
+	// availability.
+	Title string `json:"title"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_search_result_location".
+	//
+	Type interface{} `json:"type"`
+
+	// Url configuration. See the linked native reference for semantics and
+	// availability.
+	Url string `json:"url"`
+}
+
+// Anthropic APICitations Config Param configuration. See the linked native
+// reference for semantics and availability.
+type AnthropicAPICitationsConfigParam struct {
+	// Enabled configuration. See the linked native reference for semantics and
+	// availability.
+	Enabled *bool `json:"enabled,omitempty,omitzero"`
+}
+
+// The properties FileID, Type are required.
+type AnthropicAPICodeExecutionOutputBlockParam struct {
+	// File id configuration. See the linked native reference for semantics and
+	// availability.
+	FileId string `json:"file_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_output".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, ReturnCode, Stderr, Stdout, Type are required.
+type AnthropicAPICodeExecutionResultBlockParam struct {
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content []AnthropicAPICodeExecutionOutputBlockParam `json:"content"`
+
+	// Return code configuration. See the linked native reference for semantics and
+	// availability.
+	ReturnCode int `json:"return_code"`
+
+	// Stderr configuration. See the linked native reference for semantics and
+	// availability.
+	Stderr string `json:"stderr"`
+
+	// Stdout configuration. See the linked native reference for semantics and
+	// availability.
+	Stdout string `json:"stdout"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Name, Type are required.
+type AnthropicAPICodeExecutionTool20250522Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "code_execution".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_20250522".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Name, Type are required.
+type AnthropicAPICodeExecutionTool20250825Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "code_execution".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_20250825".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Code execution tool with REPL state persistence (daemon mode + gVisor
+// checkpoint).
+//
+// The properties Name, Type are required.
+type AnthropicAPICodeExecutionTool20260120Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "code_execution".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_20260120".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, ToolUseID, Type are required.
+type AnthropicAPICodeExecutionToolResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Code execution result with encrypted stdout for PFC + web_search results.
+	//
+	Content AnthropicAPICodeExecutionToolResultBlockParamContentUnion `json:"content"`
+
+	// Tool use id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolUseId string `json:"tool_use_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_tool_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APICode Execution Tool Result Block Param Content Union configuration.
+// See the linked native reference for semantics and availability.
+type AnthropicAPICodeExecutionToolResultBlockParamContentUnion = json.RawMessage
+
+// The properties ErrorCode, Type are required.
+type AnthropicAPICodeExecutionToolResultErrorParam struct {
+	// Any of "invalid_tool_input", "unavailable", "too_many_requests",
+	// "execution_time_exceeded".
+	//
+	ErrorCode AnthropicAPICodeExecutionToolResultErrorParamErrorCode `json:"error_code"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_tool_result_error".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPICodeExecutionToolResultErrorParamErrorCode string
+
+const AnthropicAPICodeExecutionToolResultErrorParamErrorCodeExecutionTimeExceeded AnthropicAPICodeExecutionToolResultErrorParamErrorCode = "execution_time_exceeded"
+const AnthropicAPICodeExecutionToolResultErrorParamErrorCodeInvalidToolInput AnthropicAPICodeExecutionToolResultErrorParamErrorCode = "invalid_tool_input"
+const AnthropicAPICodeExecutionToolResultErrorParamErrorCodeTooManyRequests AnthropicAPICodeExecutionToolResultErrorParamErrorCode = "too_many_requests"
+const AnthropicAPICodeExecutionToolResultErrorParamErrorCodeUnavailable AnthropicAPICodeExecutionToolResultErrorParamErrorCode = "unavailable"
+
+// A content block that represents a file to be uploaded to the container Files
+// uploaded via this block will be available in the container's input directory.
+//
+// The properties FileID, Type are required.
+type AnthropicAPIContainerUploadBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// File id configuration. See the linked native reference for semantics and
+	// availability.
+	FileId string `json:"file_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "container_upload".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIContent Block Param Union configuration. See the linked native
+// reference for semantics and availability.
+type AnthropicAPIContentBlockParamUnion = json.RawMessage
+
+// Anthropic APIContent Block Source Content Item Union Param configuration. See
+// the linked native reference for semantics and availability.
+type AnthropicAPIContentBlockSourceContentItemUnionParam = json.RawMessage
+
+// Anthropic APIContent Block Source Content Union Param configuration. See the
+// linked native reference for semantics and availability.
+type AnthropicAPIContentBlockSourceContentUnionParam = json.RawMessage
+
+// The properties Content, Type are required.
+type AnthropicAPIContentBlockSourceParam struct {
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content AnthropicAPIContentBlockSourceContentUnionParam `json:"content"`
+
+	// This field can be elided, and will marshal its zero value as "content".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Tool invocation directly from the model.
+//
+// This struct has a constant value, construct it with [NewDirectCallerParam].
+type AnthropicAPIDirectCallerParam struct {
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type interface{} `json:"type"`
+}
+
+// The properties Source, Type are required.
+type AnthropicAPIDocumentBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Citations configuration. See the linked native reference for semantics and
+	// availability.
+	Citations *AnthropicAPICitationsConfigParam `json:"citations,omitempty,omitzero"`
+
+	// Context configuration. See the linked native reference for semantics and
+	// availability.
+	Context *string `json:"context,omitempty,omitzero"`
+
+	// Source configuration. See the linked native reference for semantics and
+	// availability.
+	Source AnthropicAPIDocumentBlockParamSourceUnion `json:"source"`
+
+	// Title configuration. See the linked native reference for semantics and
+	// availability.
+	Title *string `json:"title,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as "document".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIDocument Block Param Source Union configuration. See the linked
+// native reference for semantics and availability.
+type AnthropicAPIDocumentBlockParamSourceUnion = json.RawMessage
+
+// Code execution result with encrypted stdout for PFC + web_search results.
+//
+// The properties Content, EncryptedStdout, ReturnCode, Stderr, Type are required.
+type AnthropicAPIEncryptedCodeExecutionResultBlockParam struct {
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content []AnthropicAPICodeExecutionOutputBlockParam `json:"content"`
+
+	// Encrypted stdout configuration. See the linked native reference for semantics
+	// and availability.
+	EncryptedStdout string `json:"encrypted_stdout"`
+
+	// Return code configuration. See the linked native reference for semantics and
+	// availability.
+	ReturnCode int `json:"return_code"`
+
+	// Stderr configuration. See the linked native reference for semantics and
+	// availability.
+	Stderr string `json:"stderr"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "encrypted_code_execution_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Source, Type are required.
+type AnthropicAPIImageBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Source configuration. See the linked native reference for semantics and
+	// availability.
+	Source AnthropicAPIImageBlockParamSourceUnion `json:"source"`
+
+	// This field can be elided, and will marshal its zero value as "image".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIImage Block Param Source Union configuration. See the linked native
+// reference for semantics and availability.
+type AnthropicAPIImageBlockParamSourceUnion = json.RawMessage
+
+// The properties Schema, Type are required.
+type AnthropicAPIJSONOutputFormatParam struct {
+	// The JSON schema of the format
+	//
+	Schema AnthropicAPIJSONOutputFormatParamSchema `json:"schema"`
+
+	// This field can be elided, and will marshal its zero value as "json_schema".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The JSON schema of the format
+type AnthropicAPIJSONOutputFormatParamSchema map[string]interface{}
+
+// The properties Name, Type are required.
+type AnthropicAPIMemoryTool20250818Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Input examples configuration. See the linked native reference for semantics and
+	// availability.
+	InputExamples []AnthropicAPIMemoryTool20250818ParamInputExamplesElem `json:"input_examples,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "memory".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as "memory_20250818".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Input examples value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIMemoryTool20250818ParamInputExamplesElem map[string]interface{}
+
+// The properties Content, Role are required.
+type AnthropicAPIMessageParam struct {
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content []AnthropicAPIContentBlockParamUnion `json:"content"`
+
+	// Any of "user", "assistant".
+	//
+	Role AnthropicAPIMessageParamRole `json:"role"`
+}
+
+type AnthropicAPIMessageParamRole string
+
+const AnthropicAPIMessageParamRoleAssistant AnthropicAPIMessageParamRole = "assistant"
+const AnthropicAPIMessageParamRoleUser AnthropicAPIMessageParamRole = "user"
+
+// Anthropic APIMetadata Param configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIMetadataParam struct {
+	// An external identifier for the user who is associated with the request.
+	//
+	// This should be a uuid, hash value, or other opaque identifier. Anthropic may
+	// use
+	// this id to help detect abuse. Do not include any identifying information such
+	// as
+	// name, email address, or phone number.
+	//
+	UserId *string `json:"user_id,omitempty,omitzero"`
+}
+
 // Native Anthropic Messages API request options used by Captain's API runtime.
 type AnthropicAPIOptions struct {
 	// Top-level prompt-cache marker applied to the final cacheable block.
-	CacheControl *json.RawMessage `json:"cache_control,omitempty,omitzero"`
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
 
 	// Container identifier reused across Messages API requests.
 	Container *string `json:"container,omitempty,omitzero"`
@@ -19,16 +706,16 @@ type AnthropicAPIOptions struct {
 	MaxTokens int `json:"max_tokens"`
 
 	// Alternating user and assistant messages sent to the Messages API.
-	Messages json.RawMessage `json:"messages"`
+	Messages []AnthropicAPIMessageParam `json:"messages"`
 
 	// Request metadata, including the optional user identifier.
-	Metadata *json.RawMessage `json:"metadata,omitempty,omitzero"`
+	Metadata *AnthropicAPIMetadataParam `json:"metadata,omitempty,omitzero"`
 
 	// Anthropic model identifier used to complete the request.
 	Model string `json:"model"`
 
 	// Structured-output format and adaptive-thinking effort configuration.
-	OutputConfig *json.RawMessage `json:"output_config,omitempty,omitzero"`
+	OutputConfig *AnthropicAPIOutputConfigParam `json:"output_config,omitempty,omitzero"`
 
 	// Capacity tier used to serve the request.
 	ServiceTier *AnthropicAPIOptionsServiceTier `json:"service_tier,omitempty,omitzero"`
@@ -40,19 +727,19 @@ type AnthropicAPIOptions struct {
 	Stream *bool `json:"stream,omitempty,omitzero"`
 
 	// System instruction blocks supplied outside the message list.
-	System *json.RawMessage `json:"system,omitempty,omitzero"`
+	System []AnthropicAPITextBlockParam `json:"system,omitempty,omitzero"`
 
 	// Sampling temperature between zero and one.
 	Temperature *float64 `json:"temperature,omitempty,omitzero"`
 
 	// Extended-thinking configuration for reasoning-capable models.
-	Thinking *json.RawMessage `json:"thinking,omitempty,omitzero"`
+	Thinking *AnthropicAPIThinkingConfigParamUnion `json:"thinking,omitempty,omitzero"`
 
 	// Policy controlling whether and which native tool Claude should call.
-	ToolChoice *json.RawMessage `json:"tool_choice,omitempty,omitzero"`
+	ToolChoice *AnthropicAPIToolChoiceUnionParam `json:"tool_choice,omitempty,omitzero"`
 
 	// Native Anthropic tool definitions derived from Captain caller tools.
-	Tools *json.RawMessage `json:"tools,omitempty,omitzero"`
+	Tools []AnthropicAPIToolUnionParam `json:"tools,omitempty,omitzero"`
 
 	// Number of highest-probability tokens retained during sampling.
 	TopK *int `json:"top_k,omitempty,omitzero"`
@@ -65,3 +752,1303 @@ type AnthropicAPIOptionsServiceTier string
 
 const AnthropicAPIOptionsServiceTierAuto AnthropicAPIOptionsServiceTier = "auto"
 const AnthropicAPIOptionsServiceTierStandardOnly AnthropicAPIOptionsServiceTier = "standard_only"
+
+// Anthropic APIOutput Config Param configuration. See the linked native reference
+// for semantics and availability.
+type AnthropicAPIOutputConfigParam struct {
+	// All possible effort levels.
+	//
+	// Any of "low", "medium", "high", "max".
+	//
+	Effort *AnthropicAPIOutputConfigParamEffort `json:"effort,omitempty,omitzero"`
+
+	// A schema to specify Claude's output format in responses. See
+	// [structured
+	// outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+	//
+	Format *AnthropicAPIJSONOutputFormatParam `json:"format,omitempty,omitzero"`
+}
+
+type AnthropicAPIOutputConfigParamEffort string
+
+const AnthropicAPIOutputConfigParamEffortHigh AnthropicAPIOutputConfigParamEffort = "high"
+const AnthropicAPIOutputConfigParamEffortLow AnthropicAPIOutputConfigParamEffort = "low"
+const AnthropicAPIOutputConfigParamEffortMax AnthropicAPIOutputConfigParamEffort = "max"
+const AnthropicAPIOutputConfigParamEffortMedium AnthropicAPIOutputConfigParamEffort = "medium"
+
+// The properties Data, MediaType, Type are required.
+type AnthropicAPIPlainTextSourceParam struct {
+	// Data configuration. See the linked native reference for semantics and
+	// availability.
+	Data string `json:"data"`
+
+	// This field can be elided, and will marshal its zero value as "text/plain".
+	//
+	MediaType interface{} `json:"media_type"`
+
+	// This field can be elided, and will marshal its zero value as "text".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Data, Type are required.
+type AnthropicAPIRedactedThinkingBlockParam struct {
+	// Data configuration. See the linked native reference for semantics and
+	// availability.
+	Data string `json:"data"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "redacted_thinking".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, Source, Title, Type are required.
+type AnthropicAPISearchResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Citations configuration. See the linked native reference for semantics and
+	// availability.
+	Citations *AnthropicAPICitationsConfigParam `json:"citations,omitempty,omitzero"`
+
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content []AnthropicAPITextBlockParam `json:"content"`
+
+	// Source configuration. See the linked native reference for semantics and
+	// availability.
+	Source string `json:"source"`
+
+	// Title configuration. See the linked native reference for semantics and
+	// availability.
+	Title string `json:"title"`
+
+	// This field can be elided, and will marshal its zero value as "search_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties ToolID, Type are required.
+type AnthropicAPIServerToolCaller20260120Param struct {
+	// Tool id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolId string `json:"tool_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_20260120".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Tool invocation generated by a server-side tool.
+//
+// The properties ToolID, Type are required.
+type AnthropicAPIServerToolCallerParam struct {
+	// Tool id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolId string `json:"tool_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "code_execution_20250825".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties ID, Input, Name, Type are required.
+type AnthropicAPIServerToolUseBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Tool invocation directly from the model.
+	//
+	Caller *AnthropicAPIServerToolUseBlockParamCallerUnion `json:"caller,omitempty,omitzero"`
+
+	// Id configuration. See the linked native reference for semantics and
+	// availability.
+	Id string `json:"id"`
+
+	// Input configuration. See the linked native reference for semantics and
+	// availability.
+	Input interface{} `json:"input"`
+
+	// Any of "web_search", "web_fetch", "code_execution", "bash_code_execution",
+	// "text_editor_code_execution", "tool_search_tool_regex",
+	// "tool_search_tool_bm25".
+	//
+	Name AnthropicAPIServerToolUseBlockParamName `json:"name"`
+
+	// This field can be elided, and will marshal its zero value as "server_tool_use".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIServer Tool Use Block Param Caller Union configuration. See the
+// linked native reference for semantics and availability.
+type AnthropicAPIServerToolUseBlockParamCallerUnion = json.RawMessage
+
+type AnthropicAPIServerToolUseBlockParamName string
+
+const AnthropicAPIServerToolUseBlockParamNameBashCodeExecution AnthropicAPIServerToolUseBlockParamName = "bash_code_execution"
+const AnthropicAPIServerToolUseBlockParamNameCodeExecution AnthropicAPIServerToolUseBlockParamName = "code_execution"
+const AnthropicAPIServerToolUseBlockParamNameTextEditorCodeExecution AnthropicAPIServerToolUseBlockParamName = "text_editor_code_execution"
+const AnthropicAPIServerToolUseBlockParamNameToolSearchToolBm25 AnthropicAPIServerToolUseBlockParamName = "tool_search_tool_bm25"
+const AnthropicAPIServerToolUseBlockParamNameToolSearchToolRegex AnthropicAPIServerToolUseBlockParamName = "tool_search_tool_regex"
+const AnthropicAPIServerToolUseBlockParamNameWebFetch AnthropicAPIServerToolUseBlockParamName = "web_fetch"
+const AnthropicAPIServerToolUseBlockParamNameWebSearch AnthropicAPIServerToolUseBlockParamName = "web_search"
+
+// The properties Text, Type are required.
+type AnthropicAPITextBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Citations configuration. See the linked native reference for semantics and
+	// availability.
+	Citations []AnthropicAPITextCitationParamUnion `json:"citations,omitempty,omitzero"`
+
+	// Text configuration. See the linked native reference for semantics and
+	// availability.
+	Text string `json:"text"`
+
+	// This field can be elided, and will marshal its zero value as "text".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIText Citation Param Union configuration. See the linked native
+// reference for semantics and availability.
+type AnthropicAPITextCitationParamUnion = json.RawMessage
+
+// The properties IsFileUpdate, Type are required.
+type AnthropicAPITextEditorCodeExecutionCreateResultBlockParam struct {
+	// Is file update configuration. See the linked native reference for semantics and
+	// availability.
+	IsFileUpdate bool `json:"is_file_update"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_code_execution_create_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The property Type is required.
+type AnthropicAPITextEditorCodeExecutionStrReplaceResultBlockParam struct {
+	// Lines configuration. See the linked native reference for semantics and
+	// availability.
+	Lines []string `json:"lines,omitempty,omitzero"`
+
+	// New lines configuration. See the linked native reference for semantics and
+	// availability.
+	NewLines *int `json:"new_lines,omitempty,omitzero"`
+
+	// New start configuration. See the linked native reference for semantics and
+	// availability.
+	NewStart *int `json:"new_start,omitempty,omitzero"`
+
+	// Old lines configuration. See the linked native reference for semantics and
+	// availability.
+	OldLines *int `json:"old_lines,omitempty,omitzero"`
+
+	// Old start configuration. See the linked native reference for semantics and
+	// availability.
+	OldStart *int `json:"old_start,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_code_execution_str_replace_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, ToolUseID, Type are required.
+type AnthropicAPITextEditorCodeExecutionToolResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content AnthropicAPITextEditorCodeExecutionToolResultBlockParamContentUnion `json:"content"`
+
+	// Tool use id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolUseId string `json:"tool_use_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_code_execution_tool_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIText Editor Code Execution Tool Result Block Param Content Union
+// configuration. See the linked native reference for semantics and availability.
+type AnthropicAPITextEditorCodeExecutionToolResultBlockParamContentUnion = json.RawMessage
+
+// The properties ErrorCode, Type are required.
+type AnthropicAPITextEditorCodeExecutionToolResultErrorParam struct {
+	// Any of "invalid_tool_input", "unavailable", "too_many_requests",
+	// "execution_time_exceeded", "file_not_found".
+	//
+	ErrorCode AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCode `json:"error_code"`
+
+	// Error message configuration. See the linked native reference for semantics and
+	// availability.
+	ErrorMessage *string `json:"error_message,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_code_execution_tool_result_error".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCode string
+
+const AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCodeExecutionTimeExceeded AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCode = "execution_time_exceeded"
+const AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCodeFileNotFound AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCode = "file_not_found"
+const AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCodeInvalidToolInput AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCode = "invalid_tool_input"
+const AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCodeTooManyRequests AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCode = "too_many_requests"
+const AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCodeUnavailable AnthropicAPITextEditorCodeExecutionToolResultErrorParamErrorCode = "unavailable"
+
+// The properties Content, FileType, Type are required.
+type AnthropicAPITextEditorCodeExecutionViewResultBlockParam struct {
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content string `json:"content"`
+
+	// Any of "text", "image", "pdf".
+	//
+	FileType AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileType `json:"file_type"`
+
+	// Num lines configuration. See the linked native reference for semantics and
+	// availability.
+	NumLines *int `json:"num_lines,omitempty,omitzero"`
+
+	// Start line configuration. See the linked native reference for semantics and
+	// availability.
+	StartLine *int `json:"start_line,omitempty,omitzero"`
+
+	// Total lines configuration. See the linked native reference for semantics and
+	// availability.
+	TotalLines *int `json:"total_lines,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_code_execution_view_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileType string
+
+const AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileTypeImage AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileType = "image"
+const AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileTypePdf AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileType = "pdf"
+const AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileTypeText AnthropicAPITextEditorCodeExecutionViewResultBlockParamFileType = "text"
+
+// The properties Signature, Thinking, Type are required.
+type AnthropicAPIThinkingBlockParam struct {
+	// Signature configuration. See the linked native reference for semantics and
+	// availability.
+	Signature string `json:"signature"`
+
+	// Thinking configuration. See the linked native reference for semantics and
+	// availability.
+	Thinking string `json:"thinking"`
+
+	// This field can be elided, and will marshal its zero value as "thinking".
+	//
+	Type interface{} `json:"type"`
+}
+
+// This struct has a constant value, construct it with
+// [NewThinkingConfigAdaptiveParam].
+type AnthropicAPIThinkingConfigAdaptiveParam struct {
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type interface{} `json:"type"`
+}
+
+// This struct has a constant value, construct it with
+// [NewThinkingConfigDisabledParam].
+type AnthropicAPIThinkingConfigDisabledParam struct {
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type interface{} `json:"type"`
+}
+
+// The properties BudgetTokens, Type are required.
+type AnthropicAPIThinkingConfigEnabledParam struct {
+	// Determines how many tokens Claude can use for its internal reasoning process.
+	// Larger budgets can enable more thorough analysis for complex problems,
+	// improving
+	// response quality.
+	//
+	// Must be ≥1024 and less than `max_tokens`.
+	//
+	// See
+	// [extended
+	// thinking](https://docs.claude.com/en/docs/build-with-claude/extended-thinking)
+	// for details.
+	//
+	BudgetTokens int `json:"budget_tokens"`
+
+	// This field can be elided, and will marshal its zero value as "enabled".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIThinking Config Param Union configuration. See the linked native
+// reference for semantics and availability.
+type AnthropicAPIThinkingConfigParamUnion = json.RawMessage
+
+// The properties Name, Type are required.
+type AnthropicAPIToolBash20250124Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Input examples configuration. See the linked native reference for semantics and
+	// availability.
+	InputExamples []AnthropicAPIToolBash20250124ParamInputExamplesElem `json:"input_examples,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "bash".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as "bash_20250124".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Input examples value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIToolBash20250124ParamInputExamplesElem map[string]interface{}
+
+// The model will use any available tools.
+//
+// The property Type is required.
+type AnthropicAPIToolChoiceAnyParam struct {
+	// Whether to disable parallel tool use.
+	//
+	// Defaults to `false`. If set to `true`, the model will output exactly one tool
+	// use.
+	//
+	DisableParallelToolUse *bool `json:"disable_parallel_tool_use,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as "any".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The model will automatically decide whether to use tools.
+//
+// The property Type is required.
+type AnthropicAPIToolChoiceAutoParam struct {
+	// Whether to disable parallel tool use.
+	//
+	// Defaults to `false`. If set to `true`, the model will output at most one tool
+	// use.
+	//
+	DisableParallelToolUse *bool `json:"disable_parallel_tool_use,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as "auto".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The model will not be allowed to use tools.
+//
+// This struct has a constant value, construct it with [NewToolChoiceNoneParam].
+type AnthropicAPIToolChoiceNoneParam struct {
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
+	Type interface{} `json:"type"`
+}
+
+// The model will use the specified tool with `tool_choice.name`.
+//
+// The properties Name, Type are required.
+type AnthropicAPIToolChoiceToolParam struct {
+	// Whether to disable parallel tool use.
+	//
+	// Defaults to `false`. If set to `true`, the model will output exactly one tool
+	// use.
+	//
+	DisableParallelToolUse *bool `json:"disable_parallel_tool_use,omitempty,omitzero"`
+
+	// The name of the tool to use.
+	//
+	Name string `json:"name"`
+
+	// This field can be elided, and will marshal its zero value as "tool".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APITool Choice Union Param configuration. See the linked native
+// reference for semantics and availability.
+type AnthropicAPIToolChoiceUnionParam = json.RawMessage
+
+// [JSON schema](https://json-schema.org/draft/2020-12) for this tool's input.
+//
+// This defines the shape of the `input` that your tool accepts and that the model
+// will produce.
+//
+// The property Type is required.
+type AnthropicAPIToolInputSchemaParam struct {
+	// Properties configuration. See the linked native reference for semantics and
+	// availability.
+	Properties interface{} `json:"properties,omitempty,omitzero"`
+
+	// Required configuration. See the linked native reference for semantics and
+	// availability.
+	Required []string `json:"required"`
+
+	// This field can be elided, and will marshal its zero value as "object".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties InputSchema, Name are required.
+type AnthropicAPIToolParam struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Description of what this tool does.
+	//
+	// Tool descriptions should be as detailed as possible. The more information that
+	// the model has about what the tool is and how to use it, the better it will
+	// perform. You can use natural language descriptions to reinforce important
+	// aspects of the tool input JSON schema.
+	//
+	Description *string `json:"description,omitempty,omitzero"`
+
+	// Enable eager input streaming for this tool. When true, tool input parameters
+	// will be streamed incrementally as they are generated, and types will be
+	// inferred
+	// on-the-fly rather than buffering the full JSON output. When false, streaming is
+	// disabled for this tool even if the fine-grained-tool-streaming beta is active.
+	// When null (default), uses the default behavior based on beta headers.
+	//
+	EagerInputStreaming *bool `json:"eager_input_streaming,omitempty,omitzero"`
+
+	// Input examples configuration. See the linked native reference for semantics and
+	// availability.
+	InputExamples []AnthropicAPIToolParamInputExamplesElem `json:"input_examples,omitempty,omitzero"`
+
+	// [JSON schema](https://json-schema.org/draft/2020-12) for this tool's input.
+	//
+	// This defines the shape of the `input` that your tool accepts and that the model
+	// will produce.
+	//
+	InputSchema AnthropicAPIToolInputSchemaParam `json:"input_schema"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	Name string `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// Any of "custom".
+	//
+	Type *AnthropicAPIToolParamType `json:"type,omitempty,omitzero"`
+}
+
+// Input examples value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIToolParamInputExamplesElem map[string]interface{}
+
+type AnthropicAPIToolParamType string
+
+const AnthropicAPIToolParamTypeCustom AnthropicAPIToolParamType = "custom"
+
+// Tool reference block that can be included in tool_result content.
+//
+// The properties ToolName, Type are required.
+type AnthropicAPIToolReferenceBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Tool name configuration. See the linked native reference for semantics and
+	// availability.
+	ToolName string `json:"tool_name"`
+
+	// This field can be elided, and will marshal its zero value as "tool_reference".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties ToolUseID, Type are required.
+type AnthropicAPIToolResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content []AnthropicAPIToolResultBlockParamContentUnion `json:"content,omitempty,omitzero"`
+
+	// Is error configuration. See the linked native reference for semantics and
+	// availability.
+	IsError *bool `json:"is_error,omitempty,omitzero"`
+
+	// Tool use id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolUseId string `json:"tool_use_id"`
+
+	// This field can be elided, and will marshal its zero value as "tool_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APITool Result Block Param Content Union configuration. See the linked
+// native reference for semantics and availability.
+type AnthropicAPIToolResultBlockParamContentUnion = json.RawMessage
+
+// The properties Name, Type are required.
+type AnthropicAPIToolSearchToolBm2520251119Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "tool_search_tool_bm25".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// Any of "tool_search_tool_bm25_20251119", "tool_search_tool_bm25".
+	//
+	Type AnthropicAPIToolSearchToolBm2520251119ParamType `json:"type"`
+}
+
+type AnthropicAPIToolSearchToolBm2520251119ParamType string
+
+const AnthropicAPIToolSearchToolBm2520251119ParamTypeToolSearchToolBm25 AnthropicAPIToolSearchToolBm2520251119ParamType = "tool_search_tool_bm25"
+const AnthropicAPIToolSearchToolBm2520251119ParamTypeToolSearchToolBm2520251119 AnthropicAPIToolSearchToolBm2520251119ParamType = "tool_search_tool_bm25_20251119"
+
+// The properties Name, Type are required.
+type AnthropicAPIToolSearchToolRegex20251119Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "tool_search_tool_regex".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// Any of "tool_search_tool_regex_20251119", "tool_search_tool_regex".
+	//
+	Type AnthropicAPIToolSearchToolRegex20251119ParamType `json:"type"`
+}
+
+type AnthropicAPIToolSearchToolRegex20251119ParamType string
+
+const AnthropicAPIToolSearchToolRegex20251119ParamTypeToolSearchToolRegex AnthropicAPIToolSearchToolRegex20251119ParamType = "tool_search_tool_regex"
+const AnthropicAPIToolSearchToolRegex20251119ParamTypeToolSearchToolRegex20251119 AnthropicAPIToolSearchToolRegex20251119ParamType = "tool_search_tool_regex_20251119"
+
+// The properties Content, ToolUseID, Type are required.
+type AnthropicAPIToolSearchToolResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content AnthropicAPIToolSearchToolResultBlockParamContentUnion `json:"content"`
+
+	// Tool use id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolUseId string `json:"tool_use_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "tool_search_tool_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APITool Search Tool Result Block Param Content Union configuration.
+// See the linked native reference for semantics and availability.
+type AnthropicAPIToolSearchToolResultBlockParamContentUnion = json.RawMessage
+
+// The properties ErrorCode, Type are required.
+type AnthropicAPIToolSearchToolResultErrorParam struct {
+	// Any of "invalid_tool_input", "unavailable", "too_many_requests",
+	// "execution_time_exceeded".
+	//
+	ErrorCode AnthropicAPIToolSearchToolResultErrorParamErrorCode `json:"error_code"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "tool_search_tool_result_error".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPIToolSearchToolResultErrorParamErrorCode string
+
+const AnthropicAPIToolSearchToolResultErrorParamErrorCodeExecutionTimeExceeded AnthropicAPIToolSearchToolResultErrorParamErrorCode = "execution_time_exceeded"
+const AnthropicAPIToolSearchToolResultErrorParamErrorCodeInvalidToolInput AnthropicAPIToolSearchToolResultErrorParamErrorCode = "invalid_tool_input"
+const AnthropicAPIToolSearchToolResultErrorParamErrorCodeTooManyRequests AnthropicAPIToolSearchToolResultErrorParamErrorCode = "too_many_requests"
+const AnthropicAPIToolSearchToolResultErrorParamErrorCodeUnavailable AnthropicAPIToolSearchToolResultErrorParamErrorCode = "unavailable"
+
+// The properties ToolReferences, Type are required.
+type AnthropicAPIToolSearchToolSearchResultBlockParam struct {
+	// Tool references configuration. See the linked native reference for semantics
+	// and availability.
+	ToolReferences []AnthropicAPIToolReferenceBlockParam `json:"tool_references"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "tool_search_tool_search_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Name, Type are required.
+type AnthropicAPIToolTextEditor20250124Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Input examples configuration. See the linked native reference for semantics and
+	// availability.
+	InputExamples []AnthropicAPIToolTextEditor20250124ParamInputExamplesElem `json:"input_examples,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "str_replace_editor".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_20250124".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Input examples value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIToolTextEditor20250124ParamInputExamplesElem map[string]interface{}
+
+// The properties Name, Type are required.
+type AnthropicAPIToolTextEditor20250429Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Input examples configuration. See the linked native reference for semantics and
+	// availability.
+	InputExamples []AnthropicAPIToolTextEditor20250429ParamInputExamplesElem `json:"input_examples,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "str_replace_based_edit_tool".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_20250429".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Input examples value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIToolTextEditor20250429ParamInputExamplesElem map[string]interface{}
+
+// The properties Name, Type are required.
+type AnthropicAPIToolTextEditor20250728Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Input examples configuration. See the linked native reference for semantics and
+	// availability.
+	InputExamples []AnthropicAPIToolTextEditor20250728ParamInputExamplesElem `json:"input_examples,omitempty,omitzero"`
+
+	// Maximum number of characters to display when viewing a file. If not specified,
+	// defaults to displaying the full file.
+	//
+	MaxCharacters *int `json:"max_characters,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as
+	// "str_replace_based_edit_tool".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "text_editor_20250728".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Input examples value configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIToolTextEditor20250728ParamInputExamplesElem map[string]interface{}
+
+// Anthropic APITool Union Param configuration. See the linked native reference for
+// semantics and availability.
+type AnthropicAPIToolUnionParam = json.RawMessage
+
+// The properties ID, Input, Name, Type are required.
+type AnthropicAPIToolUseBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Tool invocation directly from the model.
+	//
+	Caller *AnthropicAPIToolUseBlockParamCallerUnion `json:"caller,omitempty,omitzero"`
+
+	// Id configuration. See the linked native reference for semantics and
+	// availability.
+	Id string `json:"id"`
+
+	// Input configuration. See the linked native reference for semantics and
+	// availability.
+	Input interface{} `json:"input"`
+
+	// Name configuration. See the linked native reference for semantics and
+	// availability.
+	Name string `json:"name"`
+
+	// This field can be elided, and will marshal its zero value as "tool_use".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APITool Use Block Param Caller Union configuration. See the linked
+// native reference for semantics and availability.
+type AnthropicAPIToolUseBlockParamCallerUnion = json.RawMessage
+
+// The properties Type, URL are required.
+type AnthropicAPIURLImageSourceParam struct {
+	// This field can be elided, and will marshal its zero value as "url".
+	//
+	Type interface{} `json:"type"`
+
+	// Url configuration. See the linked native reference for semantics and
+	// availability.
+	Url string `json:"url"`
+}
+
+// The properties Type, URL are required.
+type AnthropicAPIURLPDFSourceParam struct {
+	// This field can be elided, and will marshal its zero value as "url".
+	//
+	Type interface{} `json:"type"`
+
+	// Url configuration. See the linked native reference for semantics and
+	// availability.
+	Url string `json:"url"`
+}
+
+// The property Type is required.
+type AnthropicAPIUserLocationParam struct {
+	// The city of the user.
+	//
+	City *string `json:"city,omitempty,omitzero"`
+
+	// The two letter
+	// [ISO country code](https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2) of the
+	// user.
+	//
+	Country *string `json:"country,omitempty,omitzero"`
+
+	// The region of the user.
+	//
+	Region *string `json:"region,omitempty,omitzero"`
+
+	// The [IANA timezone](https://nodatime.org/TimeZones) of the user.
+	//
+	Timezone *string `json:"timezone,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as "approximate".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, Type, URL are required.
+type AnthropicAPIWebFetchBlockParam struct {
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content AnthropicAPIDocumentBlockParam `json:"content"`
+
+	// ISO 8601 timestamp when the content was retrieved
+	//
+	RetrievedAt *string `json:"retrieved_at,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_fetch_result".
+	//
+	Type interface{} `json:"type"`
+
+	// Fetched content URL
+	//
+	Url string `json:"url"`
+}
+
+// The properties Name, Type are required.
+type AnthropicAPIWebFetchTool20250910Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// List of domains to allow fetching from
+	//
+	AllowedDomains []string `json:"allowed_domains,omitempty,omitzero"`
+
+	// List of domains to block fetching from
+	//
+	BlockedDomains []string `json:"blocked_domains,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Citations configuration for fetched documents. Citations are disabled by
+	// default.
+	//
+	Citations *AnthropicAPICitationsConfigParam `json:"citations,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Maximum number of tokens used by including web page text content in the
+	// context.
+	// The limit is approximate and does not apply to binary content such as PDFs.
+	//
+	MaxContentTokens *int `json:"max_content_tokens,omitempty,omitzero"`
+
+	// Maximum number of times the tool can be used in the API request.
+	//
+	MaxUses *int `json:"max_uses,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "web_fetch".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_fetch_20250910".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Name, Type are required.
+type AnthropicAPIWebFetchTool20260209Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// List of domains to allow fetching from
+	//
+	AllowedDomains []string `json:"allowed_domains,omitempty,omitzero"`
+
+	// List of domains to block fetching from
+	//
+	BlockedDomains []string `json:"blocked_domains,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Citations configuration for fetched documents. Citations are disabled by
+	// default.
+	//
+	Citations *AnthropicAPICitationsConfigParam `json:"citations,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Maximum number of tokens used by including web page text content in the
+	// context.
+	// The limit is approximate and does not apply to binary content such as PDFs.
+	//
+	MaxContentTokens *int `json:"max_content_tokens,omitempty,omitzero"`
+
+	// Maximum number of times the tool can be used in the API request.
+	//
+	MaxUses *int `json:"max_uses,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "web_fetch".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_fetch_20260209".
+	//
+	Type interface{} `json:"type"`
+}
+
+// The properties Content, ToolUseID, Type are required.
+type AnthropicAPIWebFetchToolResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Tool invocation directly from the model.
+	//
+	Caller *AnthropicAPIWebFetchToolResultBlockParamCallerUnion `json:"caller,omitempty,omitzero"`
+
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content AnthropicAPIWebFetchToolResultBlockParamContentUnion `json:"content"`
+
+	// Tool use id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolUseId string `json:"tool_use_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_fetch_tool_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIWeb Fetch Tool Result Block Param Caller Union configuration. See
+// the linked native reference for semantics and availability.
+type AnthropicAPIWebFetchToolResultBlockParamCallerUnion = json.RawMessage
+
+// Anthropic APIWeb Fetch Tool Result Block Param Content Union configuration. See
+// the linked native reference for semantics and availability.
+type AnthropicAPIWebFetchToolResultBlockParamContentUnion = json.RawMessage
+
+// The properties ErrorCode, Type are required.
+type AnthropicAPIWebFetchToolResultErrorBlockParam struct {
+	// Any of "invalid_tool_input", "url_too_long", "url_not_allowed",
+	// "url_not_accessible", "unsupported_content_type", "too_many_requests",
+	// "max_uses_exceeded", "unavailable".
+	//
+	ErrorCode AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode `json:"error_code"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_fetch_tool_result_error".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode string
+
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeInvalidToolInput AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "invalid_tool_input"
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeMaxUsesExceeded AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "max_uses_exceeded"
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeTooManyRequests AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "too_many_requests"
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeUnavailable AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "unavailable"
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeUnsupportedContentType AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "unsupported_content_type"
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeUrlNotAccessible AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "url_not_accessible"
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeUrlNotAllowed AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "url_not_allowed"
+const AnthropicAPIWebFetchToolResultErrorBlockParamErrorCodeUrlTooLong AnthropicAPIWebFetchToolResultErrorBlockParamErrorCode = "url_too_long"
+
+// The properties EncryptedContent, Title, Type, URL are required.
+type AnthropicAPIWebSearchResultBlockParam struct {
+	// Encrypted content configuration. See the linked native reference for semantics
+	// and availability.
+	EncryptedContent string `json:"encrypted_content"`
+
+	// Page age configuration. See the linked native reference for semantics and
+	// availability.
+	PageAge *string `json:"page_age,omitempty,omitzero"`
+
+	// Title configuration. See the linked native reference for semantics and
+	// availability.
+	Title string `json:"title"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_search_result".
+	//
+	Type interface{} `json:"type"`
+
+	// Url configuration. See the linked native reference for semantics and
+	// availability.
+	Url string `json:"url"`
+}
+
+// The properties Name, Type are required.
+type AnthropicAPIWebSearchTool20250305Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// If provided, only these domains will be included in results. Cannot be used
+	// alongside `blocked_domains`.
+	//
+	AllowedDomains []string `json:"allowed_domains,omitempty,omitzero"`
+
+	// If provided, these domains will never appear in results. Cannot be used
+	// alongside `allowed_domains`.
+	//
+	BlockedDomains []string `json:"blocked_domains,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Maximum number of times the tool can be used in the API request.
+	//
+	MaxUses *int `json:"max_uses,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "web_search".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_search_20250305".
+	//
+	Type interface{} `json:"type"`
+
+	// Parameters for the user's location. Used to provide more relevant search
+	// results.
+	//
+	UserLocation *AnthropicAPIUserLocationParam `json:"user_location,omitempty,omitzero"`
+}
+
+// The properties Name, Type are required.
+type AnthropicAPIWebSearchTool20260209Param struct {
+	// Any of "direct", "code_execution_20250825", "code_execution_20260120".
+	//
+	AllowedCallers []string `json:"allowed_callers,omitempty,omitzero"`
+
+	// If provided, only these domains will be included in results. Cannot be used
+	// alongside `blocked_domains`.
+	//
+	AllowedDomains []string `json:"allowed_domains,omitempty,omitzero"`
+
+	// If provided, these domains will never appear in results. Cannot be used
+	// alongside `allowed_domains`.
+	//
+	BlockedDomains []string `json:"blocked_domains,omitempty,omitzero"`
+
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// If true, tool will not be included in initial system prompt. Only loaded when
+	// returned via tool_reference from tool search.
+	//
+	DeferLoading *bool `json:"defer_loading,omitempty,omitzero"`
+
+	// Maximum number of times the tool can be used in the API request.
+	//
+	MaxUses *int `json:"max_uses,omitempty,omitzero"`
+
+	// Name of the tool.
+	//
+	// This is how the tool will be called by the model and in `tool_use` blocks.
+	//
+	// This field can be elided, and will marshal its zero value as "web_search".
+	//
+	Name interface{} `json:"name"`
+
+	// When true, guarantees schema validation on tool names and inputs
+	//
+	Strict *bool `json:"strict,omitempty,omitzero"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_search_20260209".
+	//
+	Type interface{} `json:"type"`
+
+	// Parameters for the user's location. Used to provide more relevant search
+	// results.
+	//
+	UserLocation *AnthropicAPIUserLocationParam `json:"user_location,omitempty,omitzero"`
+}
+
+// The properties ErrorCode, Type are required.
+type AnthropicAPIWebSearchToolRequestErrorParam struct {
+	// Any of "invalid_tool_input", "unavailable", "max_uses_exceeded",
+	// "too_many_requests", "query_too_long", "request_too_large".
+	//
+	ErrorCode AnthropicAPIWebSearchToolRequestErrorParamErrorCode `json:"error_code"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_search_tool_result_error".
+	//
+	Type interface{} `json:"type"`
+}
+
+type AnthropicAPIWebSearchToolRequestErrorParamErrorCode string
+
+const AnthropicAPIWebSearchToolRequestErrorParamErrorCodeInvalidToolInput AnthropicAPIWebSearchToolRequestErrorParamErrorCode = "invalid_tool_input"
+const AnthropicAPIWebSearchToolRequestErrorParamErrorCodeMaxUsesExceeded AnthropicAPIWebSearchToolRequestErrorParamErrorCode = "max_uses_exceeded"
+const AnthropicAPIWebSearchToolRequestErrorParamErrorCodeQueryTooLong AnthropicAPIWebSearchToolRequestErrorParamErrorCode = "query_too_long"
+const AnthropicAPIWebSearchToolRequestErrorParamErrorCodeRequestTooLarge AnthropicAPIWebSearchToolRequestErrorParamErrorCode = "request_too_large"
+const AnthropicAPIWebSearchToolRequestErrorParamErrorCodeTooManyRequests AnthropicAPIWebSearchToolRequestErrorParamErrorCode = "too_many_requests"
+const AnthropicAPIWebSearchToolRequestErrorParamErrorCodeUnavailable AnthropicAPIWebSearchToolRequestErrorParamErrorCode = "unavailable"
+
+// The properties Content, ToolUseID, Type are required.
+type AnthropicAPIWebSearchToolResultBlockParam struct {
+	// Create a cache control breakpoint at this content block.
+	//
+	CacheControl *AnthropicAPICacheControlEphemeralParam `json:"cache_control,omitempty,omitzero"`
+
+	// Tool invocation directly from the model.
+	//
+	Caller *AnthropicAPIWebSearchToolResultBlockParamCallerUnion `json:"caller,omitempty,omitzero"`
+
+	// Content configuration. See the linked native reference for semantics and
+	// availability.
+	Content AnthropicAPIWebSearchToolResultBlockParamContentUnion `json:"content"`
+
+	// Tool use id configuration. See the linked native reference for semantics and
+	// availability.
+	ToolUseId string `json:"tool_use_id"`
+
+	// This field can be elided, and will marshal its zero value as
+	// "web_search_tool_result".
+	//
+	Type interface{} `json:"type"`
+}
+
+// Anthropic APIWeb Search Tool Result Block Param Caller Union configuration. See
+// the linked native reference for semantics and availability.
+type AnthropicAPIWebSearchToolResultBlockParamCallerUnion = json.RawMessage
+
+// Anthropic APIWeb Search Tool Result Block Param Content Union configuration. See
+// the linked native reference for semantics and availability.
+type AnthropicAPIWebSearchToolResultBlockParamContentUnion = json.RawMessage

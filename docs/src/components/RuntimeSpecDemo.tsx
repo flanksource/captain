@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SpecRuntimeEditor, type AISpecRuntimeValue } from "@flanksource/clicky-ui/ai";
+import { RuntimeBar, runtimeSpecFields, SPEC_RUNTIME_FAMILIES, SpecRuntimeEditor, type AISpecRuntimeValue } from "@flanksource/clicky-ui/ai";
 import type { ToolMeta } from "@flanksource/clicky-ui/ai";
 import { ClickyProviders } from "./ClickyProviders";
 
@@ -87,6 +87,7 @@ export default function RuntimeSpecDemo() {
             value={value}
             onChange={setValue}
             tools={tools}
+            beforeSections={<RuntimeBar value={value} onChange={setValue} showTimeout showCost actions={{ fields: runtimeSpecFields({ value, onChange: setValue, families: SPEC_RUNTIME_FAMILIES }) }} />}
             title="Prompt runtime"
             eyebrow="docs example"
           />

@@ -45,9 +45,34 @@ Merge {{shq branch}} into {{repo}}.
 
 		Expect(req.Setup.Cwd).To(Equal("/src/wt"))
 		Expect(req.Workflow.After).To(Equal([]api.AfterStep{{
-			Cwd:      "/src/repo",
-			Commands: []string{`git -C /src/repo merge --ff-only 'topic'\''s $(rm -rf /)'`},
+			Cwd:        "/src/repo",
+			HookAction: api.HookAction{Commands: []string{`git -C /src/repo merge --ff-only 'topic'\''s $(rm -rf /)'`}},
 		}}))
 		Expect(req.Prompt.User).To(Equal(`Merge 'topic'\''s $(rm -rf /)' into /src/repo.`))
+	})
+})
+
+var _ = Describe("join helper", func() {
+	render := func(source string, files any) (string, error) {
+		req, _, err := Load(source).Render(RenderOptions{Data: map[string]any{"files": files}, Declared: true})
+		return req.Prompt.User, err
+	}
+
+	DescribeTable("joins a list variable with the separator",
+		func(files any, rendered string) {
+			got, err := render(`Review {{join files ", "}}.`, files)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(rendered))
+		},
+		Entry("typed --var list", []any{"pkg/a.go", "cmd/main.go"}, "Review pkg/a.go, cmd/main.go."),
+		Entry("lines list", []string{"pkg/a.go", "cmd/main.go"}, "Review pkg/a.go, cmd/main.go."),
+		Entry("one item", []string{"pkg/a.go"}, "Review pkg/a.go."),
+		Entry("empty", []string{}, "Review ."),
+		Entry("missing, like any unset {{var}}", nil, "Review ."),
+	)
+
+	It("fails the render when the value is not a list", func() {
+		_, err := render(`Review {{join files ", "}}.`, "pkg/a.go")
+		Expect(err).To(MatchError(ContainSubstring("join: got a string, want a list")))
 	})
 })

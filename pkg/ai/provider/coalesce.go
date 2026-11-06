@@ -25,7 +25,7 @@ func CoalesceStreamForRuntime(ctx context.Context, runtime ai.Runtime, model str
 		lastResult *ai.Event
 		errEvents  []ai.Event
 		sessionID  string
-		outcome    *ai.TerminalOutcome
+		outcome    ai.TerminalOutcomeTracker
 		outcomeErr error
 	)
 
@@ -43,17 +43,12 @@ func CoalesceStreamForRuntime(ctx context.Context, runtime ai.Runtime, model str
 				}
 				resp, err := finaliseCoalescedResponse(runtime, model, text.String(), usage, lastResult, errEvents, sessionID, start)
 				if resp != nil {
-					resp.TerminalOutcome = outcome
+					resp.TerminalOutcome = outcome.Outcome()
 				}
 				return resp, err
 			}
 			if outcomeErr == nil {
-				parsed, err := ai.TerminalOutcomeFromEvent(ev)
-				if err != nil {
-					outcomeErr = err
-				} else if parsed != nil {
-					outcome = parsed
-				}
+				outcomeErr = outcome.Observe(ev)
 			}
 			switch ev.Kind {
 			case ai.EventText:

@@ -15,7 +15,10 @@ import (
 	"github.com/flanksource/captain/pkg/ai/observation"
 	aiprovider "github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky"
+	"github.com/flanksource/clicky/task"
 	"github.com/flanksource/commons-db/shell"
+	"github.com/flanksource/commons/logger"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -292,7 +295,12 @@ func TestObservationCaptureRoutesKubernetesTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load rewritten kubeconfig: %v", err)
 	}
-	response, err := http.Get(rewritten.Clusters["captain-proxy"].Server + "/api/v1/namespaces/prod/pods?token=not-observed")
+	request, err := http.NewRequest(http.MethodGet, rewritten.Clusters["captain-proxy"].Server+"/api/v1/namespaces/prod/pods?token=not-observed", nil)
+	if err != nil {
+		t.Fatalf("build Kubernetes proxy request: %v", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+rewritten.AuthInfos["captain-proxy"].Token)
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatalf("request Kubernetes proxy: %v", err)
 	}
@@ -359,8 +367,28 @@ func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *tes
 	}
 }
 
+// restoreProcessOutput undoes, once t ends, the process-wide output that
+// observePromptAction forces — JSON formatting, fatal-only logging, a
+// discarded logger, and the flags' one-task concurrency limit — so later tests
+// format, log and schedule as they would alone.
+func restoreProcessOutput(t *testing.T) {
+	t.Helper()
+	flags, output := *clicky.Flags, logger.GetOutput()
+	root := logger.StandardLogger()
+	level := root.GetLevel()
+	t.Cleanup(func() {
+		*clicky.Flags = flags
+		clicky.UseFormatter(clicky.FormatOptions{})
+		logger.SetLogger(root)
+		root.SetLogLevel(level)
+		logger.SetOutput(output)
+		task.SetMaxConcurrent(0)
+	})
+}
+
 func TestObservationSetupFailuresDoNotConstructProvider(t *testing.T) {
 	isolateSavedAI(t)
+	restoreProcessOutput(t)
 	providerBuilt := false
 	api.RegisterProvider(api.RuntimeOf(api.OpenAI, api.ModeCLI), func(ai.Config) (ai.Provider, error) {
 		providerBuilt = true

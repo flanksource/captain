@@ -46,7 +46,7 @@ func streamWith(t *testing.T, inner *streamingProvider) []ai.Event {
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
 	}
-	events, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRetry))
+	events, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRepair))
 	if err != nil {
 		t.Fatalf("ExecuteStream: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestValidationStream_RetryRepairsAnAnswerTheProviderRejected(t *testing.T) 
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
 	}
-	stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRetry))
+	stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), capRequest(api.SchemaStrictnessRepair))
 	if err != nil {
 		t.Fatalf("ExecuteStream: %v", err)
 	}
@@ -145,6 +145,31 @@ func TestValidationStream_RetryRepairsAnAnswerTheProviderRejected(t *testing.T) 
 	}
 	if repair := inner.requests[1].Prompt.User; !strings.Contains(repair, rejectedJSON) || !strings.Contains(repair, "Invalid type") {
 		t.Errorf("the repair prompt must carry the rejected answer and its errors, got %q", repair)
+	}
+}
+
+func TestValidationStream_ForwardsTypeSafeQuestionsUnvalidated(t *testing.T) {
+	inner := &streamingProvider{results: []string{`{"value":{"product":"Group Life"}}`}}
+	p, err := WithSchemaValidation()(inner)
+	if err != nil {
+		t.Fatalf("WithSchemaValidation: %v", err)
+	}
+	req := ai.Request{Prompt: api.Prompt{
+		User: "classify", OutputSchemaType: api.SchemaTypeTypeSafe,
+		TypeSafeQuestions: json.RawMessage(`{"product":{"type":"choice","instructions":"Which?","criteria":{"a":"A","unknown":"U"}}}`),
+	}}
+	events, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("a TypeSafe request has no JSON Schema to validate and must stream as-is: %v", err)
+	}
+	var results []ai.Event
+	for ev := range events {
+		if ev.Kind == ai.EventResult {
+			results = append(results, ev)
+		}
+	}
+	if len(results) != 1 || len(inner.requests) != 1 {
+		t.Fatalf("want one forwarded turn with one result, got %d turns, %d results", len(inner.requests), len(results))
 	}
 }
 

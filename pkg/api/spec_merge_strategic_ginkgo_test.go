@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 
+	"github.com/flanksource/commons-db/workspace"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -18,7 +20,8 @@ var _ = Describe("Strategic merge of workflow commits", func() {
 		Expect(json.Unmarshal([]byte(encoded), &spec)).To(Succeed())
 		return spec
 	}
-	lifecycleRun := Commit{On: CommitOnRun, Stage: CommitStageWorktree, Gates: CommitGatesFull}
+	secretGates := []workspace.GateSpec{{Name: workspace.SecretNamesGateName}}
+	lifecycleRun := Commit{On: CommitOnRun, Stage: CommitStageWorktree, Gates: secretGates}
 
 	DescribeTable("merges an override's stanzas into the base's by phase",
 		func(base []Commit, override Spec, want []Commit) {
@@ -29,15 +32,15 @@ var _ = Describe("Strategic merge of workflow commits", func() {
 		Entry("a decoded bare phase keeps the inherited staging and gates",
 			[]Commit{lifecycleRun}, decoded(`{"workflow":{"commits":[{"on":"run"}]}}`), []Commit{lifecycleRun}),
 		Entry("a stanza that leaves its phase implicit meets one that names run",
-			[]Commit{{Stage: CommitStageWorktree}}, commits(Commit{On: CommitOnRun, Gates: CommitGatesFull}), []Commit{lifecycleRun}),
+			[]Commit{{Stage: CommitStageWorktree}}, commits(Commit{On: CommitOnRun, Gates: secretGates}), []Commit{lifecycleRun}),
 		Entry("a decoded stanza meets a base stanza that leaves its phase implicit",
-			[]Commit{{Stage: CommitStageWorktree}}, decoded(`{"workflow":{"commits":[{"on":"run","gates":"full"}]}}`), []Commit{lifecycleRun}),
+			[]Commit{{Stage: CommitStageWorktree}}, decoded(`{"workflow":{"commits":[{"on":"run","gates":[{"name":"secret-names"}]}]}}`), []Commit{lifecycleRun}),
 		Entry("a message changes only the message",
 			[]Commit{lifecycleRun}, commits(Commit{On: CommitOnRun, Message: "apply"}),
-			[]Commit{{On: CommitOnRun, Stage: CommitStageWorktree, Gates: CommitGatesFull, Message: "apply"}}),
+			[]Commit{{On: CommitOnRun, Stage: CommitStageWorktree, Gates: secretGates, Message: "apply"}}),
 		Entry("a decoded message changes only the message",
 			[]Commit{lifecycleRun}, decoded(`{"workflow":{"commits":[{"on":"run","message":"apply"}]}}`),
-			[]Commit{{On: CommitOnRun, Stage: CommitStageWorktree, Gates: CommitGatesFull, Message: "apply"}}),
+			[]Commit{{On: CommitOnRun, Stage: CommitStageWorktree, Gates: secretGates, Message: "apply"}}),
 		Entry("distinct phases are both kept, the override's first",
 			[]Commit{{On: CommitOnTurn, Mode: CommitModeCommit}}, commits(Commit{On: CommitOnRun}),
 			[]Commit{{On: CommitOnRun}, {On: CommitOnTurn, Mode: CommitModeCommit}}),
@@ -58,12 +61,12 @@ var _ = Describe("Strategic merge of workflow commits", func() {
 	)
 
 	It("resolves implicit phases on copies, leaving both operands as authored", func() {
-		base, override := commits(Commit{Stage: CommitStageWorktree}), commits(Commit{Gates: CommitGatesFull})
+		base, override := commits(Commit{Stage: CommitStageWorktree}), commits(Commit{Gates: secretGates})
 
 		base.Merge(override)
 
 		Expect(base.Workflow.Commits).To(Equal([]Commit{{Stage: CommitStageWorktree}}))
-		Expect(override.Workflow.Commits).To(Equal([]Commit{{Gates: CommitGatesFull}}))
+		Expect(override.Workflow.Commits).To(Equal([]Commit{{Gates: secretGates}}))
 	})
 
 	It("re-addresses an inherited explicit marker to its stanza's merged position", func() {

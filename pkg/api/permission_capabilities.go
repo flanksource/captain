@@ -133,6 +133,9 @@ type PermissionCapabilities struct {
 	// skills are enforced by omission before reaching any provider. One Support per kind would
 	// report "supported" for a request that is silently ignored.
 	Resources map[ResourceKind]map[ResourceMode]Support `json:"resources"`
+	// Access is what permissions.access compiles to on this runtime; see
+	// CompileAccess, which these cells are pinned against.
+	Access map[AccessLevel]Support `json:"access"`
 	// Tools is the runtime's built-in tool vocabulary — the names a per-tool
 	// policy can legitimately mention for ProvenanceAgent.
 	Tools []string `json:"tools,omitempty"`
@@ -167,6 +170,14 @@ func (c PermissionCapabilities) ResourceSupport(kind ResourceKind, mode Resource
 	return Support{Kind: SupportUnsupported}
 }
 
+// AccessSupport returns the cell for one access level.
+func (c PermissionCapabilities) AccessSupport(level AccessLevel) Support {
+	if s, ok := c.Access[level]; ok {
+		return s
+	}
+	return Support{Kind: SupportUnsupported}
+}
+
 // PermissionCapabilitiesFor returns the declared surface for a runtime. An
 // unknown runtime gets a fully-unsupported row rather than a zero value, so a
 // caller that forgets to check still fails closed.
@@ -178,7 +189,20 @@ func PermissionCapabilitiesFor(runtime Runtime) PermissionCapabilities {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
+		Access:       access(unsupported("unknown runtime: no access compiler")),
 	}
+}
+
+// ToolPolicyRuntimes lists the runtimes whose agent built-ins honour a tool
+// deny, in canonical order, for refusal text.
+func ToolPolicyRuntimes() []Runtime {
+	var out []Runtime
+	for _, runtime := range PermissionCapabilityRuntimes() {
+		if PermissionCapabilitiesFor(runtime).ToolPolicySupport(ProvenanceAgent, ToolPolicyDeny).Honoured() {
+			out = append(out, runtime)
+		}
+	}
+	return out
 }
 
 // PermissionCapabilityRuntimes lists the runtimes the table declares, in
@@ -309,6 +333,46 @@ func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support 
 	}
 }
 
+// access builds the permissions.access row. full adds nothing anywhere, so it is
+// native everywhere a compiler exists; read-only is the cell that differs.
+func access(readOnly Support) map[AccessLevel]Support {
+	full := native("")
+	if readOnly.Kind == SupportUnsupported {
+		full = readOnly
+	}
+	return map[AccessLevel]Support{AccessReadOnly: readOnly, AccessFull: full}
+}
+
+// apiAccess: the API mode runs no built-in file tools, so read-only already
+// holds; caller tools stay governed by toolPolicy, outside the access contract.
+func apiAccess() map[AccessLevel]Support {
+	return access(nativeNote("", "no built-in file tools to restrict; caller tools stay governed by toolPolicy"))
+}
+
+// claudeAccess: the tool dialect, compiled to per-tool denies.
+func claudeAccess() map[AccessLevel]Support {
+	return access(nativeNote("--disallowedTools",
+		"denies every edit, write and shell carrier plus the tools that act outside the agent's process (sub-agents and teams, "+
+			"SendMessage to peer sessions, RemoteTrigger, CronCreate/CronDelete, Enter/ExitWorktree), and disables third-party MCP servers"))
+}
+
+// codexAccess: the sandbox dialect. Codex reads through its shell, so the shell
+// stays, confined by the read-only sandbox, and approval never removes the
+// escalation path a broker could otherwise grant.
+func codexAccess() map[AccessLevel]Support {
+	return access(Support{Kind: SupportNative, Effects: PermissionEffects{
+		Sandbox: string(CodexSandboxReadOnly), Approval: string(CodexApprovalNever),
+		Note: "the shell stays as codex's read path, confined by the read-only sandbox; third-party MCP servers are disabled; " +
+			"execpolicy allow rules, which run commands outside the sandbox, are kept out with --ignore-rules on exec and an isolated CODEX_HOME on the app-server and cmux",
+	}})
+}
+
+// geminiAccess: the approval dialect, which the gemini client enforces itself.
+func geminiAccess() map[AccessLevel]Support {
+	return access(approxFlag("--approval-mode plan",
+		"plan mode is enforced by the gemini client rather than an OS sandbox, and gemini has no per-run MCP override"))
+}
+
 // claudeModes is the posture row shared by every claude transport: the enum was
 // modelled on `claude --permission-mode`, so all six map one-to-one.
 //
@@ -403,26 +467,31 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
+		Access:       apiAccess(),
 	},
 	RuntimeOf(OpenAI, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
+		Access:       apiAccess(),
 	},
 	RuntimeOf(Google, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
+		Access:       apiAccess(),
 	},
 	RuntimeOf(DeepSeek, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
 		Resources:    resources(false, false),
+		Access:       apiAccess(),
 	},
 	RuntimeOf(Jev, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
+		Access:       apiAccess(),
 	},
 
 	// --- claude transports: the enum's native home.
@@ -434,6 +503,7 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// loads skills.
 		Resources: resources(true, true),
 		Tools:     claudeBuiltinTools,
+		Access:    claudeAccess(),
 	},
 	RuntimeOf(Anthropic, ModeAgent): {
 		Modes:        claudeModes("permissionMode=", true),
@@ -443,6 +513,7 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// server is the only one that survives mcp.disabled.
 		Resources: resources(true, false),
 		Tools:     claudeBuiltinTools,
+		Access:    claudeAccess(),
 	},
 	RuntimeOf(Anthropic, ModeCmux): {
 		Modes:        claudeModes("--permission-mode ", true),
@@ -451,6 +522,7 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// server, or an empty --mcp-config when there are no caller tools.
 		Resources: resources(true, false),
 		Tools:     claudeBuiltinTools,
+		Access:    claudeAccess(),
 	},
 
 	// --- codex transports: posture is a sandbox/approval pair, never a mode.
@@ -461,6 +533,7 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// server, or with an empty table when there are no caller tools.
 		Resources: resources(true, false),
 		Tools:     codexBuiltinTools,
+		Access:    codexAccess(),
 	},
 	RuntimeOf(OpenAI, ModeAgent): {
 		Modes: codexModes(true),
@@ -472,6 +545,7 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// server in mcp_servers, or an empty map when there are no caller tools.
 		Resources: resources(true, false),
 		Tools:     codexBuiltinTools,
+		Access:    codexAccess(),
 	},
 	RuntimeOf(OpenAI, ModeCmux): {
 		Modes:        codexModes(false),
@@ -479,6 +553,7 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		// Same mcp_servers override as codex-cli.
 		Resources: resources(true, false),
 		Tools:     codexBuiltinTools,
+		Access:    codexAccess(),
 	},
 
 	// --- gemini CLI: an approval-mode flag and nothing else. The provider
@@ -488,5 +563,6 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
 		Resources:    resources(false, false),
 		Tools:        geminiBuiltinTools,
+		Access:       geminiAccess(),
 	},
 }

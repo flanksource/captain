@@ -48,7 +48,7 @@ func newResolvedProvider(cfg Config) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return withModelErrorRecommendations(withEffortValidation(p, cfg.Model.Effort)), nil
+	return withModelErrorRecommendations(withAccess(withEffortValidation(p, cfg.Model.Effort))), nil
 }
 
 // suggestModelName appends the closest catalog model ids to an unresolvable-model

@@ -3,16 +3,62 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/flanksource/captain/pkg/ai"
 )
 
-// heldEvent is an event that arrived while the renderer was suspended.
+// heldEvent is an event, or out-of-band lines, that arrived while the renderer
+// was suspended. Both are held in one queue so they replay in arrival order.
 type heldEvent struct {
 	iteration int
 	event     ai.Event
+	lines     string
+}
+
+// Writer returns the writer for output that is not an event — log lines, a
+// child process's stderr. Whole lines are committed above the in-place turn,
+// and while an approval form owns the terminal they are held with the events,
+// so nothing is drawn over the form or through the turn being streamed.
+func (r *EventRenderer) Writer() io.Writer { return outOfBandWriter{r} }
+
+type outOfBandWriter struct{ r *EventRenderer }
+
+func (w outOfBandWriter) Write(p []byte) (int, error) {
+	r := w.r
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.outOfBand.Write(p)
+	buffered := r.outOfBand.String()
+	end := strings.LastIndexByte(buffered, '\n')
+	if end < 0 {
+		return len(p), nil
+	}
+	r.outOfBand.Reset()
+	r.outOfBand.WriteString(buffered[end+1:])
+	if r.suspended > 0 {
+		r.held = append(r.held, heldEvent{lines: buffered[:end+1]})
+		return len(p), nil
+	}
+	r.writeOutOfBand(buffered[:end+1])
+	return len(p), r.err
+}
+
+// writeOutOfBand commits lines without corrupting the in-place line: it is
+// erased first, and the pending turn is redrawn beneath what was written.
+func (r *EventRenderer) writeOutOfBand(lines string) {
+	redraw := r.pendingDrawn && r.pending != nil
+	if r.progressDrawn || r.pendingDrawn {
+		r.progressDrawn = false
+		r.writeRaw("\r" + ansi.EraseEntireLine)
+	}
+	r.write(lines)
+	if redraw {
+		r.writePending()
+	}
 }
 
 // Handle renders one event, or holds it while the renderer is suspended.
@@ -33,6 +79,12 @@ func (r *EventRenderer) Flush() error {
 	defer r.mu.Unlock()
 	if r.suspended > 0 {
 		return errors.Join(r.err, fmt.Errorf("event renderer flushed while suspended, holding %d events", len(r.held)))
+	}
+	if r.outOfBand.Len() > 0 {
+		partial := r.outOfBand.String()
+		r.outOfBand.Reset()
+		r.flushPending()
+		r.writeOutOfBand(partial + "\n")
 	}
 	return r.flush()
 }
@@ -69,6 +121,10 @@ func (r *EventRenderer) resume() {
 	held := r.held
 	r.held = nil
 	for _, item := range held {
+		if item.lines != "" {
+			r.writeOutOfBand(item.lines)
+			continue
+		}
 		r.handle(item.iteration, item.event)
 	}
 	// Replay redraws are throttled, so the erased turn may still be blank.

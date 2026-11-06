@@ -24,7 +24,7 @@ func (s *remoteSandboxStub) Close() error { s.closes++; return nil }
 
 type remoteExecutorStub struct{ err error }
 
-func (s remoteExecutorStub) Execute(context.Context, api.Spec) (*api.Response, error) {
+func (s remoteExecutorStub) Execute(context.Context, api.Spec, api.RemoteExecOptions) (*api.Response, error) {
 	return nil, s.err
 }
 

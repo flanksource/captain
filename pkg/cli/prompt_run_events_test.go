@@ -125,6 +125,9 @@ func TestPromptRunAccumulator_MarksFailedToolResult(t *testing.T) {
 	if last.State != session.ToolStateOutputError {
 		t.Fatalf("failed tool state = %q, want output-error", last.State)
 	}
+	if last.ErrorText != "boom" {
+		t.Fatalf("failed tool errorText = %q, want the tool's error text", last.ErrorText)
+	}
 }
 
 func TestPromptRunAccumulator_EmitsErrorFrame(t *testing.T) {

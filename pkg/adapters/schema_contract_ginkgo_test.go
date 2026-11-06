@@ -60,10 +60,11 @@ var _ = ginkgo.Describe("Adapter schema contract", func() {
 	ginkgo.It("embeds every schema for runtime viewers in canonical order", func() {
 		documents, err := Schemas()
 		Expect(err).NotTo(HaveOccurred())
-		Expect(documents).To(HaveLen(len(expectedSchemaPaths())))
-
 		actual := make([]string, 0, len(documents))
 		for _, document := range documents {
+			if document.Kind != "execution" {
+				continue
+			}
 			path := filepath.Join(document.Provider, document.Mode+".schema.json")
 			actual = append(actual, path)
 			raw, err := os.ReadFile(path)
@@ -105,7 +106,7 @@ var _ = ginkgo.Describe("Adapter schema contract", func() {
 	})
 
 	ginkgo.It("round trips native JSON names through every generated root DTO", func() {
-		assertJSONRoundTrip[AnthropicAPIOptions](map[string]any{"model": "claude-sonnet-5", "max_tokens": 2048, "messages": []any{map[string]any{"role": "user"}}, "stream": true, "metadata": map[string]any{"user_id": "tenant-x"}})
+		assertJSONRoundTrip[AnthropicAPIOptions](map[string]any{"model": "claude-sonnet-5", "max_tokens": 2048, "messages": []any{map[string]any{"role": "user", "content": []any{map[string]any{"type": "text", "text": "Inspect the example"}}}}, "stream": true, "metadata": map[string]any{"user_id": "tenant-x"}})
 		assertJSONRoundTrip[AnthropicAgentOptions](map[string]any{"model": "claude-sonnet-5", "includePartialMessages": true, "agent": "reviewer"})
 		assertJSONRoundTrip[AnthropicCLIOptions](map[string]any{"model": "claude-sonnet-5", "print": true, "agent": "reviewer"})
 		assertJSONRoundTrip[OpenAIAPIOptions](map[string]any{"model": "gpt-5.6", "input": "hello", "stream": true, "background": true})
@@ -160,9 +161,9 @@ var _ = ginkgo.Describe("Adapter schema contract", func() {
 
 	ginkgo.It("generates named permission profiles as strings", func() {
 		for _, field := range []reflect.StructField{
-			generatedField(reflect.TypeFor[ThreadStart](), "Permissions"),
-			generatedField(reflect.TypeFor[ThreadResume](), "Permissions"),
-			generatedField(reflect.TypeFor[TurnStart](), "Permissions"),
+			generatedField(reflect.TypeFor[OpenAIAgentOptionsThreadStart](), "Permissions"),
+			generatedField(reflect.TypeFor[OpenAIAgentOptionsThreadResume](), "Permissions"),
+			generatedField(reflect.TypeFor[OpenAIAgentOptionsTurnStart](), "Permissions"),
 		} {
 			Expect(field.Type.Kind()).To(Equal(reflect.Pointer), field.Name)
 			Expect(field.Type.Elem().Kind()).To(Equal(reflect.String), field.Name)
@@ -246,7 +247,7 @@ func walkLeafOptions(schema map[string]any, prefix string, visit func(string, ma
 		field, ok := properties[name].(map[string]any)
 		Expect(ok).To(BeTrue(), "%s/%s must be an object", prefix, name)
 		path := prefix + "/" + name
-		if len(objectFieldOrEmpty(field, "properties")) > 0 {
+		if field["x-captain-option"] == nil && len(objectFieldOrEmpty(field, "properties")) > 0 {
 			walkLeafOptions(field, path, visit)
 			continue
 		}

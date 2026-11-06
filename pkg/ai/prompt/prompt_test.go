@@ -212,6 +212,7 @@ func TestRender_RuntimeFixtureExamples(t *testing.T) {
 		"testdata/fixtures/codex-cmux.prompt":              {runtime: api.RuntimeOf(api.OpenAI, api.ModeCmux), model: "gpt-5-codex"},
 		"testdata/fixtures/deepseek.prompt":                {runtime: api.RuntimeOf(api.DeepSeek, api.ModeAPI), model: "deepseek-reasoner"},
 		"testdata/fixtures/jev.prompt":                     {runtime: api.RuntimeOf(api.Jev, api.ModeAPI), model: "jev-latest"},
+		"testdata/fixtures/jev-hooks.prompt":               {runtime: api.RuntimeOf(api.Jev, api.ModeAPI), model: "jev-latest"},
 		"testdata/fixtures/codex-cli.prompt":               {runtime: api.RuntimeOf(api.OpenAI, api.ModeCLI), model: "gpt-5-codex"},
 		"testdata/fixtures/gemini-api.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeAPI), model: "gemini-2.5-pro"},
 		"testdata/fixtures/gemini-cli.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeCLI), model: "gemini-2.5-pro"},
@@ -249,12 +250,16 @@ func TestRender_RuntimeFixtureExamples(t *testing.T) {
 				"patch":       "+registerJev()",
 			}
 		}
-		req, cfg, err := tmpl.Render(RenderOptions{Data: data})
+		options := RenderOptions{Data: data}
+		if path == "testdata/fixtures/jev-hooks.prompt" {
+			options = RenderOptions{Data: map[string]any{"file": "KEY-1.md", "issue": "Annuity quote fails"}, Dir: "testdata/fixtures"}
+		}
+		req, cfg, err := tmpl.Render(options)
 		require.NoError(t, err)
 		require.NoError(t, req.Validate())
 
 		assert.Equal(t, path, req.Prompt.Source)
-		if path != "testdata/fixtures/jev.prompt" {
+		if !strings.HasPrefix(path, "testdata/fixtures/jev") {
 			assert.Contains(t, req.Prompt.User, "summarize the change")
 		}
 		assert.Equal(t, want.model, req.Model.Name)

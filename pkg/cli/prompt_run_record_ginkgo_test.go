@@ -64,7 +64,7 @@ var _ = Describe("recording a captain prompt run", func() {
 		rendered.ID = encodePromptID("local", "test-source", "fix-bug.prompt")
 		providerSessionID := uuid.NewString()
 		Expect(recordCompletedRun(ctx, promptRecordingInput{Rendered: rendered, RunID: "run-1"},
-			answeredRun(rendered, agentRun, providerSessionID, "done"))).To(Succeed())
+			answeredRun(rendered, agentRun, providerSessionID, "done"))).Error().To(Succeed())
 
 		transcript, err := db.GetSessionByIdentity(ctx, providerSessionID, "claude", "", "")
 		Expect(err).NotTo(HaveOccurred())
@@ -110,7 +110,7 @@ var _ = Describe("recording a captain prompt run", func() {
 		rendered.Input.SessionID = providerSessionID
 
 		Expect(recordCompletedRun(ctx, promptRecordingInput{Rendered: rendered, RunID: "resume-1"},
-			answeredRun(rendered, agentRun, providerSessionID, "continued"))).To(Succeed())
+			answeredRun(rendered, agentRun, providerSessionID, "continued"))).Error().To(Succeed())
 
 		runs := runsOn(db, resumed.ID)
 		Expect(runs).To(HaveLen(1))
@@ -126,7 +126,7 @@ var _ = Describe("recording a captain prompt run", func() {
 		done.Iterations = promptrun.IterationRecords(promptrun.Result{Loop: loopWith(2, base, nil), Verdicts: verdicts}, true)
 		sessionID := uuid.New()
 
-		Expect(recordCompletedRun(ctx, promptRecordingInput{Rendered: rendered, RunID: "stopped", SessionID: sessionID}, done)).To(Succeed())
+		Expect(recordCompletedRun(ctx, promptRecordingInput{Rendered: rendered, RunID: "stopped", SessionID: sessionID}, done)).Error().To(Succeed())
 
 		runs := runsOn(db, sessionID)
 		Expect(runs).To(HaveLen(1))
@@ -151,7 +151,7 @@ var _ = Describe("recording a captain prompt run", func() {
 		done.Iterations = promptrun.IterationRecords(promptrun.Result{Loop: loopWith(2, base, nil), Verdicts: verdicts}, false)
 		sessionID := uuid.New()
 
-		err := recordCompletedRun(ctx, promptRecordingInput{Rendered: rendered, RunID: "partial", SessionID: sessionID}, done)
+		_, err := recordCompletedRun(ctx, promptRecordingInput{Rendered: rendered, RunID: "partial", SessionID: sessionID}, done)
 		Expect(err).To(MatchError(ContainSubstring("iteration 2")))
 
 		runs := runsOn(db, sessionID)

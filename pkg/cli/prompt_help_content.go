@@ -6,53 +6,78 @@ type promptHelpField struct {
 }
 
 const promptHelpExample = `---
+# Catalog metadata shown by captain prompt list.
 name: Release notes
 description: Summarize a change as structured release notes
+
+# Default target: mode:model[:effort]. Modes: api, cli, agent, cmux.
 model: agent:sonnet
-effort: high
+effort: high # Reasoning effort; support depends on the selected runtime.
+# Ordered alternatives when the primary model has an eligible failure.
 fallbacks:
   - api:gemini-3.5-flash:high
+
+# Per-call generation options; these override equivalent top-level fields.
 config:
-  maxOutputTokens: 2000
+  maxOutputTokens: 2000 # Overrides budget.maxTokens.
   temperature: 0.2
+
+# Template variables: pass change with -V change='Describe your change'.
 input:
   schema:
     type: object
     required: [change]
     properties:
       change: {type: string}
+      audience: {type: string}
   default:
-    audience: operators
+    audience: operators # Used when no audience variable is supplied.
+
+# Structured response contract, separate from the template input schema.
 output:
   schema:
     type: object
     required: [summary]
     properties:
       summary: {type: string}
+
+# Optional parallel targets; omit to run only the default model above.
+# Repeated -M flags replace these defaults at execution time.
 runtimes:
   - agent:sonnet:high
   - model: gemini-3.5-flash
     mode: api
     effort: high
+
+# Run limits; zero cost means no spend ceiling, zero turns uses the default.
 budget:
-  cost: 0.50
-  maxTokens: 2000
-  maxTurns: 4
-  timeout: 20m
+  cost: 0.50 # USD.
+  maxTokens: 2000 # Per-call output limit; config.maxOutputTokens wins.
+  maxTurns: 4 # Agent turns, not model tokens.
+  timeout: 20m # Overall run duration.
+
+# Permission posture and native tool filters, independent of the sandbox.
+# Unsupported restrictions fail before dispatch.
 permissions:
   mode: acceptEdits
   tools:
     Read: allow
-    Edit: ask
+    Edit: allow
+
+# Control ambient instructions; other memory settings remain unchanged.
 memory:
   skipUser: true
+
+# Prepare the execution directory before running the prompt.
 setup:
   cwd: .
+
+# Optional sandbox backend and file submission policy.
 sandbox:
   backend: srt
   policy:
-    paths: ["pkg/**", "!secrets/**"]
-    maxAttempts: 2
+    paths: ["pkg/**", "!secrets/**"] # ! excludes a path pattern.
+    maxAttempts: 2 # Maximum submit attempts.
 ---
 {{role "system"}}
 Write concise release notes for {{audience}}.
@@ -63,6 +88,7 @@ Summarize this change:
 
 func promptDotpromptHelpFields() []promptHelpField {
 	return []promptHelpField{
+		{"presets[]", "Runtime preset ids or names selected beneath this prompt; --preset replaces the selection and --no-presets clears it. Explicit order controls final layer precedence."},
 		{"name, description", "Human-readable prompt catalog metadata."},
 		{"model", "Default model selector. Compact selectors may include runtime mode and effort, for example agent:sonnet:high."},
 		{"config.maxOutputTokens", "Maximum output tokens for each model call; takes precedence over budget.maxTokens when both are present."},
@@ -88,7 +114,7 @@ func promptSpecHelpFields() []promptHelpField {
 		{"prompt.appendSystem", "Text appended to the runtime's default system prompt."},
 		{"prompt.source", "Diagnostic source label; Captain normally fills this from the .prompt path."},
 		{"prompt.schemaJSON", "Raw JSON Schema in the native run spec. In .prompt files, prefer output.schema."},
-		{"prompt.schemaStrictness", "Schema failure policy: runtime default, none, warning, error, or retry."},
+		{"prompt.schemaStrictness", "Schema failure policy: runtime default, none, warning, error, or repair (retry is a compatibility alias)."},
 		{"prompt.metadata", "Arbitrary string-to-string diagnostic metadata."},
 		{"prompt.attachments[]", "Ordered multimodal inputs. Each has exactly one source (id, path, or url), plus optional filename, mediaType, size, and sha256 metadata."},
 		{"messages[].role", "Role for one provider-neutral history entry: system, user, assistant, or tool."},
@@ -104,8 +130,9 @@ func promptSpecHelpFields() []promptHelpField {
 		{"memory.skipSkills, memory.skipHooks, memory.skipMemory", "Disable skills, hooks, or auto-memory/agent instruction files."},
 		{"memory.bare", "Skip hooks, skills, memory, and ambient settings together."},
 		{"permissions.mode", "Permission posture, independent of the sandbox: default, plan, acceptEdits, auto, bypassPermissions, or dontAsk."},
+		{"permissions.access", "Portable read-only or full access intent, compiled into the selected runtime's native restrictions. Caller tools remain governed by toolPreferences."},
 		{"permissions.presets[]", "Named safety bundles: edit or bare."},
-		{"permissions.tools.<tool>", "Per-tool policy: auto, ask, allow, or deny. Captain fails if the selected runtime cannot enforce it."},
+		{"permissions.tools.<tool>", "Declarative tool filter: auto, allow, or deny. ask cannot be enforced by native tool filters; per-call approval uses the broker. Unsupported restrictions fail before dispatch."},
 		{"permissions.mcp.disabled", "Disable all MCP servers."},
 		{"permissions.mcp.servers[]", "Optional allowlist of configured MCP servers."},
 		{"permissions.mcp.<server>", "Enable or disable one configured MCP server."},

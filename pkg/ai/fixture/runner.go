@@ -15,8 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flanksource/captain/pkg/ai/fixture/kubeproxy"
 	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
+	"github.com/flanksource/captain/pkg/credproxy"
+	"github.com/flanksource/captain/pkg/credproxy/kubeproxy"
 
 	// Side-effect import: pkg/ai's init populates the pricing registry with the
 	// built-in model catalog so resolveCost works offline (no OpenRouter fetch
@@ -155,12 +156,16 @@ func setupKubernetesProxy(f *Fixture, opts Options) (*kubeproxy.Proxy, string, s
 	if !f.CaptureKubernetesProxy {
 		return nil, "", "", func() {}, nil
 	}
-	p, err := kubeproxy.Start(f.Kubeconfig)
+	token, err := credproxy.NewSecret()
+	if err != nil {
+		return nil, "", "", func() {}, err
+	}
+	p, err := kubeproxy.Start(kubeproxy.Options{Kubeconfig: f.Kubeconfig, Token: token})
 	if err != nil {
 		return nil, "", "", func() {}, fmt.Errorf("starting kubernetes proxy: %w", err)
 	}
 	proxyDir := filepath.Join(opts.ArtifactDir, ".proxy")
-	kc, err := p.WriteKubeconfig(proxyDir)
+	kc, err := kubeproxy.WriteKubeconfig(proxyDir, p.Endpoint())
 	if err != nil {
 		p.Close()
 		return nil, "", "", func() {}, fmt.Errorf("writing proxy kubeconfig: %w", err)

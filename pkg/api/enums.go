@@ -25,18 +25,19 @@ const (
 	SchemaStrictnessDisabled SchemaStrictness = "none"
 	SchemaStrictnessWarning  SchemaStrictness = "warning"
 	SchemaStrictnessError    SchemaStrictness = "error"
-	SchemaStrictnessRetry    SchemaStrictness = "retry"
+	SchemaStrictnessRepair   SchemaStrictness = "repair"
+	SchemaStrictnessRetry    SchemaStrictness = SchemaStrictnessRepair
 )
 
 // AllSchemaStrictness lists the non-empty strictness modes.
 func AllSchemaStrictness() []SchemaStrictness {
-	return []SchemaStrictness{SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry}
+	return []SchemaStrictness{SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRepair}
 }
 
 // Valid reports whether s is a recognised strictness mode (including none/"").
 func (s SchemaStrictness) Valid() bool {
 	switch s {
-	case SchemaStrictnessNone, SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry:
+	case SchemaStrictnessNone, SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRepair, "retry":
 		return true
 	default:
 		return false
@@ -48,7 +49,7 @@ func (s SchemaStrictness) Validate() error {
 	if s.Valid() {
 		return nil
 	}
-	return fmt.Errorf("invalid schemaStrictness %q; want one of: none, warning, error, retry", s)
+	return fmt.Errorf("invalid schemaStrictness %q; want one of: none, warning, error, repair (retry is an alias)", s)
 }
 
 // VerifyScope narrows a workflow's verification to the changed files vs the
@@ -220,6 +221,31 @@ func (m PermissionMode) Valid() bool {
 		}
 	}
 	return false
+}
+
+// AccessLevel is the portable access contract (permissions.access). It states
+// what the agent may do to the workspace once, and CompileAccess turns it into
+// each runtime's own dialect: per-tool denies on claude, a sandbox and approval
+// policy on codex, an approval mode on gemini. Unset leaves every runtime as it
+// was.
+type AccessLevel string
+
+const (
+	// AccessReadOnly may read the workspace but not create, modify or delete
+	// files, spawn sub-agents, use third-party MCP servers, or gain write access
+	// by approval.
+	AccessReadOnly AccessLevel = "read-only"
+	// AccessFull adds nothing: it states that no access restriction applies,
+	// which overrides a read-only intent inherited from an earlier layer.
+	AccessFull AccessLevel = "full"
+)
+
+// AllAccessLevels lists the access levels in canonical order.
+func AllAccessLevels() []AccessLevel { return []AccessLevel{AccessReadOnly, AccessFull} }
+
+// Valid reports whether a is a recognised access level (including "").
+func (a AccessLevel) Valid() bool {
+	return a == "" || a == AccessReadOnly || a == AccessFull
 }
 
 // Preset is a named bundle of safety defaults applied before per-tool rules.

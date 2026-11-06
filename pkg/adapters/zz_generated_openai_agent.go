@@ -4,122 +4,333 @@ package adapters
 
 import "encoding/json"
 
-// Parameters sent in the Codex app-server initialize request.
-type Initialize struct {
-	// Experimental protocol capabilities supported by the client.
-	Capabilities *json.RawMessage `json:"capabilities,omitempty,omitzero"`
+// A path that is guaranteed to be absolute and normalized (though it is not
+// guaranteed to be canonicalized or exist on the filesystem).
+//
+// IMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set
+// using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization
+// will fail unless the path being deserialized is already absolute.
+type OpenAIAgentAbsolutePathBuf string
 
-	// Name, title, and version identifying the app-server client.
-	ClientInfo *json.RawMessage `json:"clientInfo,omitempty,omitzero"`
+// Open AIAgent Additional Context Entry configuration. See the linked native
+// reference for semantics and availability.
+type OpenAIAgentAdditionalContextEntry struct {
+	// Kind configuration. See the linked native reference for semantics and
+	// availability.
+	Kind OpenAIAgentAdditionalContextKind `json:"kind"`
+
+	// Value configuration. See the linked native reference for semantics and
+	// availability.
+	Value string `json:"value"`
 }
+
+type OpenAIAgentAdditionalContextKind string
+
+const OpenAIAgentAdditionalContextKindApplication OpenAIAgentAdditionalContextKind = "application"
+const OpenAIAgentAdditionalContextKindUntrusted OpenAIAgentAdditionalContextKind = "untrusted"
+
+// Open AIAgent Agent Message Input Content configuration. See the linked native
+// reference for semantics and availability.
+type OpenAIAgentAgentMessageInputContent = json.RawMessage
+
+type OpenAIAgentApprovalsReviewer string
+
+const OpenAIAgentApprovalsReviewerAutoReview OpenAIAgentApprovalsReviewer = "auto_review"
+const OpenAIAgentApprovalsReviewerGuardianSubagent OpenAIAgentApprovalsReviewer = "guardian_subagent"
+const OpenAIAgentApprovalsReviewerUser OpenAIAgentApprovalsReviewer = "user"
+
+// Open AIAgent Ask For Approval configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentAskForApproval = json.RawMessage
+
+// Open AIAgent Byte Range configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentByteRange struct {
+	// End configuration. See the linked native reference for semantics and
+	// availability.
+	End int `json:"end"`
+
+	// Start configuration. See the linked native reference for semantics and
+	// availability.
+	Start int `json:"start"`
+}
+
+// Location used to resolve a selected capability root.
+type OpenAIAgentCapabilityRootLocation = json.RawMessage
+
+// Open AIAgent Client Info configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentClientInfo struct {
+	// Name configuration. See the linked native reference for semantics and
+	// availability.
+	Name string `json:"name"`
+
+	// Title configuration. See the linked native reference for semantics and
+	// availability.
+	Title OpenAIAgentClientInfoTitle `json:"title,omitempty,omitzero"`
+
+	// Version configuration. See the linked native reference for semantics and
+	// availability.
+	Version string `json:"version"`
+}
+
+// Title configuration. See the linked native reference for semantics and
+// availability.
+type OpenAIAgentClientInfoTitle *string
+
+// Collaboration mode for a Codex session.
+type OpenAIAgentCollaborationMode struct {
+	// Mode configuration. See the linked native reference for semantics and
+	// availability.
+	Mode OpenAIAgentModeKind `json:"mode"`
+
+	// Settings configuration. See the linked native reference for semantics and
+	// availability.
+	Settings OpenAIAgentSettings `json:"settings"`
+}
+
+// Reasoning settings interpreted by the backend for the routed model.
+type OpenAIAgentConfigurationReasoning struct {
+	// Effort configuration. See the linked native reference for semantics and
+	// availability.
+	Effort OpenAIAgentReasoningEffort `json:"effort"`
+}
+
+// Open AIAgent Content Item configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentContentItem = json.RawMessage
+
+type OpenAIAgentCyberAccessProgram string
+
+const OpenAIAgentCyberAccessProgramDaybreakBlue OpenAIAgentCyberAccessProgram = "daybreakBlue"
+const OpenAIAgentCyberAccessProgramDaybreakRed OpenAIAgentCyberAccessProgram = "daybreakRed"
+const OpenAIAgentCyberAccessProgramStandard OpenAIAgentCyberAccessProgram = "standard"
+
+// Open AIAgent Dynamic Tool Namespace Tool configuration. See the linked native
+// reference for semantics and availability.
+type OpenAIAgentDynamicToolNamespaceTool = json.RawMessage
+
+// Open AIAgent Dynamic Tool Spec configuration. See the linked native reference
+// for semantics and availability.
+type OpenAIAgentDynamicToolSpec = json.RawMessage
+
+// Open AIAgent Function Call Output Body configuration. See the linked native
+// reference for semantics and availability.
+type OpenAIAgentFunctionCallOutputBody = json.RawMessage
+
+// Responses API compatible content items that can be returned by a tool call. This
+// is a subset of ContentItem with the types we support as function call outputs.
+type OpenAIAgentFunctionCallOutputContentItem = json.RawMessage
+
+type OpenAIAgentImageDetail string
+
+const OpenAIAgentImageDetailAuto OpenAIAgentImageDetail = "auto"
+const OpenAIAgentImageDetailHigh OpenAIAgentImageDetail = "high"
+const OpenAIAgentImageDetailLow OpenAIAgentImageDetail = "low"
+const OpenAIAgentImageDetailOriginal OpenAIAgentImageDetail = "original"
+
+// Client-declared capabilities negotiated during initialize.
+type OpenAIAgentInitializeCapabilities struct {
+	// Opt into receiving experimental API methods and fields.
+	ExperimentalApi bool `json:"experimentalApi,omitempty,omitzero"`
+
+	// Use explicit gateway OAuth login instead of automatic browser authorization.
+	// Applies to this app-server's gateway runtime; later connections cannot undo it.
+	ExplicitGatewayOauth *bool `json:"explicitGatewayOauth,omitempty,omitzero"`
+
+	// MCP extension settings declared by the app-server client.
+	Extensions *OpenAIAgentInitializeCapabilitiesExtensions `json:"extensions,omitempty,omitzero"`
+
+	// Legacy opt-in for the `openai/form` MCP extension.
+	//
+	// New clients should declare `openai/form` in [`Self::extensions`].
+	McpServerOpenaiFormElicitation *bool `json:"mcpServerOpenaiFormElicitation,omitempty,omitzero"`
+
+	// Exact notification method names that should be suppressed for this connection
+	// (for example `thread/started`).
+	OptOutNotificationMethods *OpenAIAgentInitializeCapabilitiesOptOutNotificationMethods `json:"optOutNotificationMethods,omitempty,omitzero"`
+
+	// Opt into `attestation/generate` requests for upstream `x-oai-attestation`.
+	RequestAttestation bool `json:"requestAttestation,omitempty,omitzero"`
+}
+
+// MCP extension settings declared by the app-server client.
+type OpenAIAgentInitializeCapabilitiesExtensions map[string]interface{}
+
+// Exact notification method names that should be suppressed for this connection
+// (for example `thread/started`).
+type OpenAIAgentInitializeCapabilitiesOptOutNotificationMethods []string
+
+// Internal Responses API passthrough metadata copied into underlying chat
+// messages.
+//
+// Responses API strongly types this payload. Do not modify it without first
+// getting API approval and making the corresponding Responses API change.
+type OpenAIAgentInternalChatMessageMetadataPassthrough struct {
+	// Turn id configuration. See the linked native reference for semantics and
+	// availability.
+	TurnId OpenAIAgentInternalChatMessageMetadataPassthroughTurnId `json:"turn_id,omitempty,omitzero"`
+}
+
+// Turn id configuration. See the linked native reference for semantics and
+// availability.
+type OpenAIAgentInternalChatMessageMetadataPassthroughTurnId *string
+
+// Open AIAgent Legacy App Path String configuration. See the linked native
+// reference for semantics and availability.
+type OpenAIAgentLegacyAppPathString string
+
+// Open AIAgent Local Shell Action configuration. See the linked native reference
+// for semantics and availability.
+type OpenAIAgentLocalShellAction = json.RawMessage
+
+type OpenAIAgentLocalShellStatus string
+
+const OpenAIAgentLocalShellStatusCompleted OpenAIAgentLocalShellStatus = "completed"
+const OpenAIAgentLocalShellStatusInProgress OpenAIAgentLocalShellStatus = "in_progress"
+const OpenAIAgentLocalShellStatusIncomplete OpenAIAgentLocalShellStatus = "incomplete"
+
+// Classifies assistant text as commentary, a partial answer, or a terminal answer.
+//
+// Providers do not emit this consistently, so callers must treat `None` as "phase
+// unknown" and keep compatibility behavior for legacy models.
+type OpenAIAgentMessagePhase = json.RawMessage
+
+type OpenAIAgentModeKind string
+
+const OpenAIAgentModeKindDefault OpenAIAgentModeKind = "default"
+const OpenAIAgentModeKindPlan OpenAIAgentModeKind = "plan"
+
+// Controls the effective multi-agent delegation instructions for a turn. `custom`
+// means the configured mode hint defines the policy instead of a built-in policy.
+type OpenAIAgentMultiAgentMode = json.RawMessage
+
+type OpenAIAgentNetworkAccess string
+
+const OpenAIAgentNetworkAccessEnabled OpenAIAgentNetworkAccess = "enabled"
+const OpenAIAgentNetworkAccessRestricted OpenAIAgentNetworkAccess = "restricted"
 
 // Native Codex app-server initialize, thread, and turn arguments used by Captain's
 // OpenAI agent runtime.
 type OpenAIAgentOptions struct {
 	// Parameters sent in the Codex app-server initialize request.
-	Initialize *Initialize `json:"initialize,omitempty,omitzero"`
+	Initialize *OpenAIAgentOptionsInitialize `json:"initialize,omitempty,omitzero"`
 
 	// Parameters used to resume an existing Codex app-server thread.
-	ThreadResume *ThreadResume `json:"threadResume,omitempty,omitzero"`
+	ThreadResume *OpenAIAgentOptionsThreadResume `json:"threadResume,omitempty,omitzero"`
 
 	// Parameters used to start a new Codex app-server thread.
-	ThreadStart *ThreadStart `json:"threadStart,omitempty,omitzero"`
+	ThreadStart *OpenAIAgentOptionsThreadStart `json:"threadStart,omitempty,omitzero"`
 
 	// Parameters used to start a turn on an active Codex app-server thread.
-	TurnStart *TurnStart `json:"turnStart,omitempty,omitzero"`
+	TurnStart *OpenAIAgentOptionsTurnStart `json:"turnStart,omitempty,omitzero"`
 }
 
-type OpenAIAgentOptionsThreadResumeApprovalsReviewer string
+// Parameters sent in the Codex app-server initialize request.
+type OpenAIAgentOptionsInitialize struct {
+	// Experimental protocol capabilities supported by the client.
+	Capabilities *json.RawMessage `json:"capabilities,omitempty,omitzero"`
 
-const OpenAIAgentOptionsThreadResumeApprovalsReviewerAutoReview OpenAIAgentOptionsThreadResumeApprovalsReviewer = "auto_review"
-const OpenAIAgentOptionsThreadResumeApprovalsReviewerGuardianSubagent OpenAIAgentOptionsThreadResumeApprovalsReviewer = "guardian_subagent"
-const OpenAIAgentOptionsThreadResumeApprovalsReviewerUser OpenAIAgentOptionsThreadResumeApprovalsReviewer = "user"
-
-type OpenAIAgentOptionsThreadResumeSandbox string
-
-const OpenAIAgentOptionsThreadResumeSandboxDangerFullAccess OpenAIAgentOptionsThreadResumeSandbox = "danger-full-access"
-const OpenAIAgentOptionsThreadResumeSandboxReadOnly OpenAIAgentOptionsThreadResumeSandbox = "read-only"
-const OpenAIAgentOptionsThreadResumeSandboxWorkspaceWrite OpenAIAgentOptionsThreadResumeSandbox = "workspace-write"
-
-type OpenAIAgentOptionsThreadStartApprovalsReviewer string
-
-const OpenAIAgentOptionsThreadStartApprovalsReviewerAutoReview OpenAIAgentOptionsThreadStartApprovalsReviewer = "auto_review"
-const OpenAIAgentOptionsThreadStartApprovalsReviewerGuardianSubagent OpenAIAgentOptionsThreadStartApprovalsReviewer = "guardian_subagent"
-const OpenAIAgentOptionsThreadStartApprovalsReviewerUser OpenAIAgentOptionsThreadStartApprovalsReviewer = "user"
-
-type OpenAIAgentOptionsThreadStartSandbox string
-
-const OpenAIAgentOptionsThreadStartSandboxDangerFullAccess OpenAIAgentOptionsThreadStartSandbox = "danger-full-access"
-const OpenAIAgentOptionsThreadStartSandboxReadOnly OpenAIAgentOptionsThreadStartSandbox = "read-only"
-const OpenAIAgentOptionsThreadStartSandboxWorkspaceWrite OpenAIAgentOptionsThreadStartSandbox = "workspace-write"
-
-type OpenAIAgentOptionsTurnStartApprovalsReviewer string
-
-const OpenAIAgentOptionsTurnStartApprovalsReviewerAutoReview OpenAIAgentOptionsTurnStartApprovalsReviewer = "auto_review"
-const OpenAIAgentOptionsTurnStartApprovalsReviewerGuardianSubagent OpenAIAgentOptionsTurnStartApprovalsReviewer = "guardian_subagent"
-const OpenAIAgentOptionsTurnStartApprovalsReviewerUser OpenAIAgentOptionsTurnStartApprovalsReviewer = "user"
+	// Name, title, and version identifying the app-server client.
+	ClientInfo OpenAIAgentClientInfo `json:"clientInfo"`
+}
 
 // Parameters used to resume an existing Codex app-server thread.
-type ThreadResume struct {
+type OpenAIAgentOptionsThreadResume struct {
 	// Approval policy override applied while resuming the thread.
 	ApprovalPolicy *json.RawMessage `json:"approvalPolicy,omitempty,omitzero"`
 
 	// Reviewer override applied to the resumed thread.
-	ApprovalsReviewer *OpenAIAgentOptionsThreadResumeApprovalsReviewer `json:"approvalsReviewer,omitempty,omitzero"`
+	ApprovalsReviewer *json.RawMessage `json:"approvalsReviewer,omitempty,omitzero"`
 
 	// Replacement base instructions applied to the resumed thread.
-	BaseInstructions *string `json:"baseInstructions,omitempty,omitzero"`
+	BaseInstructions OpenAIAgentOptionsThreadResumeBaseInstructions `json:"baseInstructions,omitempty,omitzero"`
 
 	// Codex configuration overrides reconstructed for the resumed thread.
-	Config *json.RawMessage `json:"config,omitempty,omitzero"`
+	Config *OpenAIAgentOptionsThreadResumeConfig `json:"config,omitempty,omitzero"`
 
 	// Working directory applied when the thread is resumed.
-	Cwd *string `json:"cwd,omitempty,omitzero"`
+	Cwd OpenAIAgentOptionsThreadResumeCwd `json:"cwd,omitempty,omitzero"`
 
 	// Developer instructions attached while resuming a thread.
-	DeveloperInstructions *string `json:"developerInstructions,omitempty,omitzero"`
+	DeveloperInstructions OpenAIAgentOptionsThreadResumeDeveloperInstructions `json:"developerInstructions,omitempty,omitzero"`
 
 	// Turn identifiers omitted when loading the resumed thread.
-	ExcludeTurns []string `json:"excludeTurns,omitempty,omitzero"`
+	ExcludeTurns *bool `json:"excludeTurns,omitempty,omitzero"`
 
 	// Replacement conversation history supplied while resuming.
-	History *json.RawMessage `json:"history,omitempty,omitzero"`
+	History *OpenAIAgentOptionsThreadResumeHistory `json:"history,omitempty,omitzero"`
 
 	// Pagination request controlling the initial resumed-turn page.
 	InitialTurnsPage *json.RawMessage `json:"initialTurnsPage,omitempty,omitzero"`
 
 	// Model override applied to the resumed thread.
-	Model *string `json:"model,omitempty,omitzero"`
+	Model OpenAIAgentOptionsThreadResumeModel `json:"model,omitempty,omitzero"`
 
 	// Model-provider override applied to the resumed thread.
-	ModelProvider *string `json:"modelProvider,omitempty,omitzero"`
+	ModelProvider OpenAIAgentOptionsThreadResumeModelProvider `json:"modelProvider,omitempty,omitzero"`
 
 	// Filesystem path of the Codex rollout to resume.
-	Path *string `json:"path,omitempty,omitzero"`
+	Path OpenAIAgentOptionsThreadResumePath `json:"path,omitempty,omitzero"`
 
 	// Named Codex permission-profile identifier applied to the resumed thread; it
 	// cannot be combined with sandbox.
-	Permissions *string `json:"permissions,omitempty,omitzero"`
+	Permissions OpenAIAgentOptionsThreadResumePermissions `json:"permissions,omitempty,omitzero"`
 
 	// Response personality override applied to the resumed thread.
-	Personality *string `json:"personality,omitempty,omitzero"`
+	Personality *json.RawMessage `json:"personality,omitempty,omitzero"`
 
 	// Replacement runtime workspace roots for the resumed thread; paths must be
 	// absolute.
-	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty,omitzero"`
+	RuntimeWorkspaceRoots *OpenAIAgentOptionsThreadResumeRuntimeWorkspaceRoots `json:"runtimeWorkspaceRoots,omitempty,omitzero"`
 
 	// Sandbox override applied while resuming the thread.
-	Sandbox *OpenAIAgentOptionsThreadResumeSandbox `json:"sandbox,omitempty,omitzero"`
+	Sandbox *json.RawMessage `json:"sandbox,omitempty,omitzero"`
 
 	// Processing tier override applied to the resumed thread.
-	ServiceTier *string `json:"serviceTier,omitempty,omitzero"`
+	ServiceTier OpenAIAgentOptionsThreadResumeServiceTier `json:"serviceTier,omitempty,omitzero"`
 
 	// Codex thread identifier to resume.
-	ThreadId *string `json:"threadId,omitempty,omitzero"`
+	ThreadId string `json:"threadId"`
 }
 
+// Replacement base instructions applied to the resumed thread.
+type OpenAIAgentOptionsThreadResumeBaseInstructions *string
+
+// Codex configuration overrides reconstructed for the resumed thread.
+type OpenAIAgentOptionsThreadResumeConfig map[string]interface{}
+
+// Working directory applied when the thread is resumed.
+type OpenAIAgentOptionsThreadResumeCwd *string
+
+// Developer instructions attached while resuming a thread.
+type OpenAIAgentOptionsThreadResumeDeveloperInstructions *string
+
+// Replacement conversation history supplied while resuming.
+type OpenAIAgentOptionsThreadResumeHistory []OpenAIAgentResponseItem
+
+// Model override applied to the resumed thread.
+type OpenAIAgentOptionsThreadResumeModel *string
+
+// Model-provider override applied to the resumed thread.
+type OpenAIAgentOptionsThreadResumeModelProvider *string
+
+// Filesystem path of the Codex rollout to resume.
+type OpenAIAgentOptionsThreadResumePath *string
+
+// Named Codex permission-profile identifier applied to the resumed thread; it
+// cannot be combined with sandbox.
+type OpenAIAgentOptionsThreadResumePermissions *string
+
+// Replacement runtime workspace roots for the resumed thread; paths must be
+// absolute.
+type OpenAIAgentOptionsThreadResumeRuntimeWorkspaceRoots []OpenAIAgentAbsolutePathBuf
+
+// Processing tier override applied to the resumed thread.
+type OpenAIAgentOptionsThreadResumeServiceTier *string
+
 // Parameters used to start a new Codex app-server thread.
-type ThreadStart struct {
+type OpenAIAgentOptionsThreadStart struct {
 	// Whether Codex may fall back to a different provider model.
 	AllowProviderModelFallback *bool `json:"allowProviderModelFallback,omitempty,omitzero"`
 
@@ -127,162 +338,472 @@ type ThreadStart struct {
 	ApprovalPolicy *json.RawMessage `json:"approvalPolicy,omitempty,omitzero"`
 
 	// Reviewer implementation used to evaluate approval requests.
-	ApprovalsReviewer *OpenAIAgentOptionsThreadStartApprovalsReviewer `json:"approvalsReviewer,omitempty,omitzero"`
+	ApprovalsReviewer *json.RawMessage `json:"approvalsReviewer,omitempty,omitzero"`
 
 	// Replacement base instruction text for the Codex thread.
-	BaseInstructions *string `json:"baseInstructions,omitempty,omitzero"`
+	BaseInstructions OpenAIAgentOptionsThreadStartBaseInstructions `json:"baseInstructions,omitempty,omitzero"`
 
 	// Codex configuration overrides derived from Captain sandbox and caller-tool
 	// settings.
-	Config *json.RawMessage `json:"config,omitempty,omitzero"`
+	Config *OpenAIAgentOptionsThreadStartConfig `json:"config,omitempty,omitzero"`
 
 	// Initial working directory for the Codex thread.
-	Cwd *string `json:"cwd,omitempty,omitzero"`
+	Cwd OpenAIAgentOptionsThreadStartCwd `json:"cwd,omitempty,omitzero"`
 
 	// Initial Daybreak choice for a persistent Codex thread; not supported for
 	// ephemeral threads.
-	DaybreakEnabled *bool `json:"daybreakEnabled,omitempty,omitzero"`
+	DaybreakEnabled OpenAIAgentOptionsThreadStartDaybreakEnabled `json:"daybreakEnabled,omitempty,omitzero"`
 
 	// Developer instruction text attached to the Codex thread.
-	DeveloperInstructions *string `json:"developerInstructions,omitempty,omitzero"`
+	DeveloperInstructions OpenAIAgentOptionsThreadStartDeveloperInstructions `json:"developerInstructions,omitempty,omitzero"`
 
 	// Tool definitions registered dynamically with the Codex thread.
-	DynamicTools *json.RawMessage `json:"dynamicTools,omitempty,omitzero"`
+	DynamicTools *OpenAIAgentOptionsThreadStartDynamicTools `json:"dynamicTools,omitempty,omitzero"`
 
 	// Named execution environments available to the Codex thread.
-	Environments *json.RawMessage `json:"environments,omitempty,omitzero"`
+	Environments *OpenAIAgentOptionsThreadStartEnvironments `json:"environments,omitempty,omitzero"`
 
 	// Whether Codex avoids persisting the thread to disk.
-	Ephemeral *bool `json:"ephemeral,omitempty,omitzero"`
+	Ephemeral OpenAIAgentOptionsThreadStartEphemeral `json:"ephemeral,omitempty,omitzero"`
 
 	// Whether raw protocol events are included in item streams.
 	ExperimentalRawEvents *bool `json:"experimentalRawEvents,omitempty,omitzero"`
 
 	// Codex policy controlling which history is retained.
-	HistoryMode *string `json:"historyMode,omitempty,omitzero"`
+	HistoryMode *json.RawMessage `json:"historyMode,omitempty,omitzero"`
 
 	// Protocol test field reserved by the experimental app-server schema.
-	MockExperimentalField *string `json:"mockExperimentalField,omitempty,omitzero"`
+	MockExperimentalField OpenAIAgentOptionsThreadStartMockExperimentalField `json:"mockExperimentalField,omitempty,omitzero"`
 
 	// Model identifier used to start the Codex thread.
-	Model *string `json:"model,omitempty,omitzero"`
+	Model OpenAIAgentOptionsThreadStartModel `json:"model,omitempty,omitzero"`
 
 	// Codex model-provider implementation selected for the thread.
-	ModelProvider *string `json:"modelProvider,omitempty,omitzero"`
+	ModelProvider OpenAIAgentOptionsThreadStartModelProvider `json:"modelProvider,omitempty,omitzero"`
 
 	// Codex multi-agent coordination mode for the thread.
-	MultiAgentMode *string `json:"multiAgentMode,omitempty,omitzero"`
+	MultiAgentMode *json.RawMessage `json:"multiAgentMode,omitempty,omitzero"`
 
 	// Named Codex permission-profile identifier for the thread; it cannot be combined
 	// with sandbox.
-	Permissions *string `json:"permissions,omitempty,omitzero"`
+	Permissions OpenAIAgentOptionsThreadStartPermissions `json:"permissions,omitempty,omitzero"`
 
 	// Named Codex response personality for the thread.
-	Personality *string `json:"personality,omitempty,omitzero"`
+	Personality *json.RawMessage `json:"personality,omitempty,omitzero"`
 
 	// Codex project identifier associated with the thread.
-	ProjectId *string `json:"projectId,omitempty,omitzero"`
+	ProjectId OpenAIAgentOptionsThreadStartProjectId `json:"projectId,omitempty,omitzero"`
 
 	// Replacement runtime workspace roots for the Codex thread; paths must be
 	// absolute.
-	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty,omitzero"`
+	RuntimeWorkspaceRoots *OpenAIAgentOptionsThreadStartRuntimeWorkspaceRoots `json:"runtimeWorkspaceRoots,omitempty,omitzero"`
 
 	// Named Codex sandbox mode for the thread.
-	Sandbox *OpenAIAgentOptionsThreadStartSandbox `json:"sandbox,omitempty,omitzero"`
+	Sandbox *json.RawMessage `json:"sandbox,omitempty,omitzero"`
 
 	// Filesystem roots selected for capability discovery.
-	SelectedCapabilityRoots []string `json:"selectedCapabilityRoots,omitempty,omitzero"`
+	SelectedCapabilityRoots *OpenAIAgentOptionsThreadStartSelectedCapabilityRoots `json:"selectedCapabilityRoots,omitempty,omitzero"`
 
 	// Service identity attached to the Codex thread.
-	ServiceName *string `json:"serviceName,omitempty,omitzero"`
+	ServiceName OpenAIAgentOptionsThreadStartServiceName `json:"serviceName,omitempty,omitzero"`
 
 	// Processing tier selected for the Codex thread.
-	ServiceTier *string `json:"serviceTier,omitempty,omitzero"`
+	ServiceTier OpenAIAgentOptionsThreadStartServiceTier `json:"serviceTier,omitempty,omitzero"`
 
 	// Source label describing how the session was launched.
-	SessionStartSource *string `json:"sessionStartSource,omitempty,omitzero"`
+	SessionStartSource *json.RawMessage `json:"sessionStartSource,omitempty,omitzero"`
 
 	// Native source label attached to the Codex thread.
-	ThreadSource *string `json:"threadSource,omitempty,omitzero"`
+	ThreadSource *json.RawMessage `json:"threadSource,omitempty,omitzero"`
 }
 
+// Replacement base instruction text for the Codex thread.
+type OpenAIAgentOptionsThreadStartBaseInstructions *string
+
+// Codex configuration overrides derived from Captain sandbox and caller-tool
+// settings.
+type OpenAIAgentOptionsThreadStartConfig map[string]interface{}
+
+// Initial working directory for the Codex thread.
+type OpenAIAgentOptionsThreadStartCwd *string
+
+// Initial Daybreak choice for a persistent Codex thread; not supported for
+// ephemeral threads.
+type OpenAIAgentOptionsThreadStartDaybreakEnabled *bool
+
+// Developer instruction text attached to the Codex thread.
+type OpenAIAgentOptionsThreadStartDeveloperInstructions *string
+
+// Tool definitions registered dynamically with the Codex thread.
+type OpenAIAgentOptionsThreadStartDynamicTools []OpenAIAgentDynamicToolSpec
+
+// Named execution environments available to the Codex thread.
+type OpenAIAgentOptionsThreadStartEnvironments []OpenAIAgentTurnEnvironmentParams
+
+// Whether Codex avoids persisting the thread to disk.
+type OpenAIAgentOptionsThreadStartEphemeral *bool
+
+// Protocol test field reserved by the experimental app-server schema.
+type OpenAIAgentOptionsThreadStartMockExperimentalField *string
+
+// Model identifier used to start the Codex thread.
+type OpenAIAgentOptionsThreadStartModel *string
+
+// Codex model-provider implementation selected for the thread.
+type OpenAIAgentOptionsThreadStartModelProvider *string
+
+// Named Codex permission-profile identifier for the thread; it cannot be combined
+// with sandbox.
+type OpenAIAgentOptionsThreadStartPermissions *string
+
+// Codex project identifier associated with the thread.
+type OpenAIAgentOptionsThreadStartProjectId *string
+
+// Replacement runtime workspace roots for the Codex thread; paths must be
+// absolute.
+type OpenAIAgentOptionsThreadStartRuntimeWorkspaceRoots []OpenAIAgentAbsolutePathBuf
+
+// Filesystem roots selected for capability discovery.
+type OpenAIAgentOptionsThreadStartSelectedCapabilityRoots []OpenAIAgentSelectedCapabilityRoot
+
+// Service identity attached to the Codex thread.
+type OpenAIAgentOptionsThreadStartServiceName *string
+
+// Processing tier selected for the Codex thread.
+type OpenAIAgentOptionsThreadStartServiceTier *string
+
 // Parameters used to start a turn on an active Codex app-server thread.
-type TurnStart struct {
+type OpenAIAgentOptionsTurnStart struct {
 	// Extra context attached to the turn outside the user input list.
-	AdditionalContext *string `json:"additionalContext,omitempty,omitzero"`
+	AdditionalContext *OpenAIAgentOptionsTurnStartAdditionalContext `json:"additionalContext,omitempty,omitzero"`
 
 	// Approval-policy override for the turn.
 	ApprovalPolicy *json.RawMessage `json:"approvalPolicy,omitempty,omitzero"`
 
 	// Reviewer override used for approvals in this turn.
-	ApprovalsReviewer *OpenAIAgentOptionsTurnStartApprovalsReviewer `json:"approvalsReviewer,omitempty,omitzero"`
+	ApprovalsReviewer *json.RawMessage `json:"approvalsReviewer,omitempty,omitzero"`
 
 	// Client-assigned identifier for the turn's user message.
-	ClientUserMessageId *string `json:"clientUserMessageId,omitempty,omitzero"`
+	ClientUserMessageId OpenAIAgentOptionsTurnStartClientUserMessageId `json:"clientUserMessageId,omitempty,omitzero"`
 
 	// Codex collaboration mode applied for the turn.
 	CollaborationMode *json.RawMessage `json:"collaborationMode,omitempty,omitzero"`
 
 	// Working-directory override for the turn.
-	Cwd *string `json:"cwd,omitempty,omitzero"`
+	Cwd OpenAIAgentOptionsTurnStartCwd `json:"cwd,omitempty,omitzero"`
 
 	// Codex cyber-access program configuration for the turn.
 	CyberAccessProgram *json.RawMessage `json:"cyberAccessProgram,omitempty,omitzero"`
 
 	// Replacement list of plugin identifiers disabled for the thread; an empty list
 	// clears it.
-	DisabledPluginIds []string `json:"disabledPluginIds,omitempty,omitzero"`
+	DisabledPluginIds *OpenAIAgentOptionsTurnStartDisabledPluginIds `json:"disabledPluginIds,omitempty,omitzero"`
 
 	// Reasoning effort used for this Codex turn.
-	Effort *string `json:"effort,omitempty,omitzero"`
+	Effort *json.RawMessage `json:"effort,omitempty,omitzero"`
 
 	// Execution environments made available for this turn.
-	Environments *json.RawMessage `json:"environments,omitempty,omitzero"`
+	Environments *OpenAIAgentOptionsTurnStartEnvironments `json:"environments,omitempty,omitzero"`
 
 	// Text and local-image items supplied for the Codex turn.
-	Input *json.RawMessage `json:"input,omitempty,omitzero"`
+	Input []OpenAIAgentUserInput `json:"input"`
 
 	// Model identifier used for this Codex turn.
-	Model *string `json:"model,omitempty,omitzero"`
+	Model OpenAIAgentOptionsTurnStartModel `json:"model,omitempty,omitzero"`
 
 	// Codex multi-agent coordination mode for this turn.
-	MultiAgentMode *string `json:"multiAgentMode,omitempty,omitzero"`
+	MultiAgentMode *json.RawMessage `json:"multiAgentMode,omitempty,omitzero"`
 
 	// JSON Schema constraining the final turn response.
-	OutputSchema *json.RawMessage `json:"outputSchema,omitempty,omitzero"`
+	OutputSchema interface{} `json:"outputSchema,omitempty,omitzero"`
+
+	// ID of the turn that caused this new turn to start.
+	//
+	// Set this when starting work on behalf of another turn, such as delegated work
+	// in a different thread. Leave unset for work started directly by the user.
+	// Ignored when this request adds input to an active turn.
+	ParentTurnId OpenAIAgentOptionsTurnStartParentTurnId `json:"parentTurnId,omitempty,omitzero"`
 
 	// Named Codex permission-profile identifier for this turn and subsequent turns;
 	// it cannot be combined with sandboxPolicy.
-	Permissions *string `json:"permissions,omitempty,omitzero"`
+	Permissions OpenAIAgentOptionsTurnStartPermissions `json:"permissions,omitempty,omitzero"`
 
 	// Response personality override for this turn.
-	Personality *string `json:"personality,omitempty,omitzero"`
+	Personality *json.RawMessage `json:"personality,omitempty,omitzero"`
 
 	// Client metadata forwarded to the underlying Responses API call.
-	ResponsesapiClientMetadata *json.RawMessage `json:"responsesapiClientMetadata,omitempty,omitzero"`
+	ResponsesapiClientMetadata *OpenAIAgentOptionsTurnStartResponsesapiClientMetadata `json:"responsesapiClientMetadata,omitempty,omitzero"`
+
+	// Merge entries into the ResponsesAPI turn metadata without removing existing
+	// entries. Applied after `responsesapiClientMetadata` if both are provided;
+	// reserved keys remain protected.
+	ResponsesapiClientMetadataPatch *OpenAIAgentOptionsTurnStartResponsesapiClientMetadataPatch `json:"responsesapiClientMetadataPatch,omitempty,omitzero"`
+
+	// ID of the first turn in the chain of work that led to this new turn.
+	//
+	// When setting `parentTurnId`, set this to the parent turn's `rootTurnId` when
+	// known. This keeps descendant work attributed to the original turn. If omitted,
+	// the new turn becomes its own root. Ignored when this request adds input to an
+	// active turn.
+	RootTurnId OpenAIAgentOptionsTurnStartRootTurnId `json:"rootTurnId,omitempty,omitzero"`
 
 	// Replacement runtime workspace roots for this turn and subsequent turns; paths
 	// must be absolute.
-	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots,omitempty,omitzero"`
+	RuntimeWorkspaceRoots *OpenAIAgentOptionsTurnStartRuntimeWorkspaceRoots `json:"runtimeWorkspaceRoots,omitempty,omitzero"`
 
 	// Detailed sandbox policy override for this turn.
 	SandboxPolicy *json.RawMessage `json:"sandboxPolicy,omitempty,omitzero"`
 
 	// Processing tier selected for this turn.
-	ServiceTier *string `json:"serviceTier,omitempty,omitzero"`
+	ServiceTier OpenAIAgentOptionsTurnStartServiceTier `json:"serviceTier,omitempty,omitzero"`
 
 	// Whether a service tier applies only to this turn.
-	ServiceTierForTurn *bool `json:"serviceTierForTurn,omitempty,omitzero"`
+	ServiceTierForTurn OpenAIAgentOptionsTurnStartServiceTierForTurn `json:"serviceTierForTurn,omitempty,omitzero"`
 
 	// Reasoning-summary mode requested for the turn.
-	Summary *string `json:"summary,omitempty,omitzero"`
+	Summary *json.RawMessage `json:"summary,omitempty,omitzero"`
 
 	// Active Codex thread receiving the turn.
-	ThreadId *string `json:"threadId,omitempty,omitzero"`
+	ThreadId string `json:"threadId"`
 
 	// Out-of-band tool output supplied with the turn-start request.
 	ToolOutput *json.RawMessage `json:"toolOutput,omitempty,omitzero"`
 
 	// Source describing what triggered the Codex turn.
-	TurnTrigger *string `json:"turnTrigger,omitempty,omitzero"`
+	TurnTrigger OpenAIAgentOptionsTurnStartTurnTrigger `json:"turnTrigger,omitempty,omitzero"`
 }
+
+// Extra context attached to the turn outside the user input list.
+type OpenAIAgentOptionsTurnStartAdditionalContext map[string]OpenAIAgentAdditionalContextEntry
+
+// Client-assigned identifier for the turn's user message.
+type OpenAIAgentOptionsTurnStartClientUserMessageId *string
+
+// Working-directory override for the turn.
+type OpenAIAgentOptionsTurnStartCwd *string
+
+// Replacement list of plugin identifiers disabled for the thread; an empty list
+// clears it.
+type OpenAIAgentOptionsTurnStartDisabledPluginIds []string
+
+// Execution environments made available for this turn.
+type OpenAIAgentOptionsTurnStartEnvironments []OpenAIAgentTurnEnvironmentParams
+
+// Model identifier used for this Codex turn.
+type OpenAIAgentOptionsTurnStartModel *string
+
+// ID of the turn that caused this new turn to start.
+//
+// Set this when starting work on behalf of another turn, such as delegated work in
+// a different thread. Leave unset for work started directly by the user. Ignored
+// when this request adds input to an active turn.
+type OpenAIAgentOptionsTurnStartParentTurnId *string
+
+// Named Codex permission-profile identifier for this turn and subsequent turns; it
+// cannot be combined with sandboxPolicy.
+type OpenAIAgentOptionsTurnStartPermissions *string
+
+// Client metadata forwarded to the underlying Responses API call.
+type OpenAIAgentOptionsTurnStartResponsesapiClientMetadata map[string]string
+
+// Merge entries into the ResponsesAPI turn metadata without removing existing
+// entries. Applied after `responsesapiClientMetadata` if both are provided;
+// reserved keys remain protected.
+type OpenAIAgentOptionsTurnStartResponsesapiClientMetadataPatch map[string]string
+
+// ID of the first turn in the chain of work that led to this new turn.
+//
+// When setting `parentTurnId`, set this to the parent turn's `rootTurnId` when
+// known. This keeps descendant work attributed to the original turn. If omitted,
+// the new turn becomes its own root. Ignored when this request adds input to an
+// active turn.
+type OpenAIAgentOptionsTurnStartRootTurnId *string
+
+// Replacement runtime workspace roots for this turn and subsequent turns; paths
+// must be absolute.
+type OpenAIAgentOptionsTurnStartRuntimeWorkspaceRoots []OpenAIAgentAbsolutePathBuf
+
+// Processing tier selected for this turn.
+type OpenAIAgentOptionsTurnStartServiceTier *string
+
+// Whether a service tier applies only to this turn.
+type OpenAIAgentOptionsTurnStartServiceTierForTurn *string
+
+// Source describing what triggered the Codex turn.
+type OpenAIAgentOptionsTurnStartTurnTrigger *string
+
+type OpenAIAgentPersonality string
+
+const OpenAIAgentPersonalityFriendly OpenAIAgentPersonality = "friendly"
+const OpenAIAgentPersonalityNone OpenAIAgentPersonality = "none"
+const OpenAIAgentPersonalityPragmatic OpenAIAgentPersonality = "pragmatic"
+
+// A non-empty reasoning effort value advertised by the model.
+type OpenAIAgentReasoningEffort string
+
+// Open AIAgent Reasoning Item Content configuration. See the linked native
+// reference for semantics and availability.
+type OpenAIAgentReasoningItemContent = json.RawMessage
+
+// Open AIAgent Reasoning Item Reasoning Summary configuration. See the linked
+// native reference for semantics and availability.
+type OpenAIAgentReasoningItemReasoningSummary = json.RawMessage
+
+// A summary of the reasoning performed by the model. This can be useful for
+// debugging and understanding the model's reasoning process. See
+// https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries
+type OpenAIAgentReasoningSummary = json.RawMessage
+
+// Open AIAgent Response Item configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentResponseItem = json.RawMessage
+
+// Open AIAgent Responses API Web Search Action configuration. See the linked
+// native reference for semantics and availability.
+type OpenAIAgentResponsesApiWebSearchAction = json.RawMessage
+
+type OpenAIAgentSandboxMode string
+
+const OpenAIAgentSandboxModeDangerFullAccess OpenAIAgentSandboxMode = "danger-full-access"
+const OpenAIAgentSandboxModeReadOnly OpenAIAgentSandboxMode = "read-only"
+const OpenAIAgentSandboxModeWorkspaceWrite OpenAIAgentSandboxMode = "workspace-write"
+
+// Open AIAgent Sandbox Policy configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentSandboxPolicy = json.RawMessage
+
+// A user-selected root that can expose one or more runtime capabilities.
+type OpenAIAgentSelectedCapabilityRoot struct {
+	// Stable identifier supplied by the capability selection platform.
+	Id string `json:"id"`
+
+	// Where the selected root can be resolved.
+	Location json.RawMessage `json:"location"`
+}
+
+// Settings for a collaboration mode.
+type OpenAIAgentSettings struct {
+	// Developer instructions configuration. See the linked native reference for
+	// semantics and availability.
+	DeveloperInstructions OpenAIAgentSettingsDeveloperInstructions `json:"developer_instructions,omitempty,omitzero"`
+
+	// Model configuration. See the linked native reference for semantics and
+	// availability.
+	Model string `json:"model"`
+
+	// Reasoning effort configuration. See the linked native reference for semantics
+	// and availability.
+	ReasoningEffort *json.RawMessage `json:"reasoning_effort,omitempty,omitzero"`
+}
+
+// Developer instructions configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentSettingsDeveloperInstructions *string
+
+type OpenAIAgentSortDirection string
+
+const OpenAIAgentSortDirectionAsc OpenAIAgentSortDirection = "asc"
+const OpenAIAgentSortDirectionDesc OpenAIAgentSortDirection = "desc"
+
+// Open AIAgent Text Element configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentTextElement struct {
+	// Byte range in the parent `text` buffer that this element occupies.
+	ByteRange OpenAIAgentTextElementByteRange `json:"byteRange"`
+
+	// Optional human-readable placeholder for the element, displayed in the UI.
+	Placeholder OpenAIAgentTextElementPlaceholder `json:"placeholder,omitempty,omitzero"`
+}
+
+// Byte range in the parent `text` buffer that this element occupies.
+type OpenAIAgentTextElementByteRange struct {
+	// End configuration. See the linked native reference for semantics and
+	// availability.
+	End int `json:"end"`
+
+	// Start configuration. See the linked native reference for semantics and
+	// availability.
+	Start int `json:"start"`
+}
+
+// Optional human-readable placeholder for the element, displayed in the UI.
+type OpenAIAgentTextElementPlaceholder *string
+
+type OpenAIAgentThreadHistoryMode string
+
+const OpenAIAgentThreadHistoryModeLegacy OpenAIAgentThreadHistoryMode = "legacy"
+const OpenAIAgentThreadHistoryModePaginated OpenAIAgentThreadHistoryMode = "paginated"
+
+// Open AIAgent Thread Resume Initial Turns Page Params configuration. See the
+// linked native reference for semantics and availability.
+type OpenAIAgentThreadResumeInitialTurnsPageParams struct {
+	// How much item detail to include for each returned turn; defaults to summary.
+	ItemsView *json.RawMessage `json:"itemsView,omitempty,omitzero"`
+
+	// Optional turn page size.
+	Limit OpenAIAgentThreadResumeInitialTurnsPageParamsLimit `json:"limit,omitempty,omitzero"`
+
+	// Optional turn pagination direction; defaults to descending.
+	SortDirection *json.RawMessage `json:"sortDirection,omitempty,omitzero"`
+}
+
+// Optional turn page size.
+type OpenAIAgentThreadResumeInitialTurnsPageParamsLimit *int
+
+// Open AIAgent Thread Source configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentThreadSource string
+
+type OpenAIAgentThreadStartSource string
+
+const OpenAIAgentThreadStartSourceClear OpenAIAgentThreadStartSource = "clear"
+const OpenAIAgentThreadStartSourceStartup OpenAIAgentThreadStartSource = "startup"
+
+// Open AIAgent Turn Environment Params configuration. See the linked native
+// reference for semantics and availability.
+type OpenAIAgentTurnEnvironmentParams struct {
+	// Cwd configuration. See the linked native reference for semantics and
+	// availability.
+	Cwd OpenAIAgentLegacyAppPathString `json:"cwd"`
+
+	// Environment Id configuration. See the linked native reference for semantics and
+	// availability.
+	EnvironmentId string `json:"environmentId"`
+
+	// Environment-native runtime workspace roots. Omitted defaults to `cwd`.
+	RuntimeWorkspaceRoots *OpenAIAgentTurnEnvironmentParamsRuntimeWorkspaceRoots `json:"runtimeWorkspaceRoots,omitempty,omitzero"`
+}
+
+// Environment-native runtime workspace roots. Omitted defaults to `cwd`.
+type OpenAIAgentTurnEnvironmentParamsRuntimeWorkspaceRoots []OpenAIAgentLegacyAppPathString
+
+// Open AIAgent Turn Items View configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentTurnItemsView = json.RawMessage
+
+// Open AIAgent Turn Tool Output configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentTurnToolOutput struct {
+	// Name configuration. See the linked native reference for semantics and
+	// availability.
+	Name string `json:"name"`
+
+	// Namespace configuration. See the linked native reference for semantics and
+	// availability.
+	Namespace OpenAIAgentTurnToolOutputNamespace `json:"namespace,omitempty,omitzero"`
+
+	// Output configuration. See the linked native reference for semantics and
+	// availability.
+	Output OpenAIAgentFunctionCallOutputBody `json:"output"`
+
+	// Requests retention of this output in the thread's model history.
+	Retain *bool `json:"retain,omitempty,omitzero"`
+}
+
+// Namespace configuration. See the linked native reference for semantics and
+// availability.
+type OpenAIAgentTurnToolOutputNamespace *string
+
+// Open AIAgent User Input configuration. See the linked native reference for
+// semantics and availability.
+type OpenAIAgentUserInput = json.RawMessage

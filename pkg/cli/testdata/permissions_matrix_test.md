@@ -72,6 +72,20 @@ MCP is one-directional today: it can only be switched off. Skills are enabled on
 | every runtime drops a disabled skill | --format json | json.runtimes.all(r, r.permissions.resources.skills["disabled"].kind == "native") |
 | plugins are inert in both directions | --provider anthropic --mode cli --format json | json.runtimes[0].permissions.resources.plugins["enabled"].kind == "unsupported" && json.runtimes[0].permissions.resources.plugins["disabled"].kind == "unsupported" |
 
+## Portable access
+
+`permissions.access` is compiled to each runtime's own dialect: per-tool denies
+on claude, a read-only sandbox that never asks on codex, and the plan approval
+mode on gemini, which the gemini client enforces itself.
+
+| Name | flags | CEL Validation |
+|------|-------|----------------|
+| rows cover both access levels | | stdout.contains("access read-only") && stdout.contains("access full") |
+| claude compiles read-only to tool denies | --provider anthropic --mode agent --format json | json.runtimes[0].permissions.access["read-only"].kind == "native" && json.runtimes[0].permissions.access["read-only"].effects.flag == "--disallowedTools" |
+| codex compiles read-only to a sandbox that never asks | --provider openai --mode agent --format json | json.runtimes[0].permissions.access["read-only"].effects.sandbox == "read-only" && json.runtimes[0].permissions.access["read-only"].effects.approval == "never" |
+| gemini approximates read-only with plan mode | --provider google --mode cli --format json | json.runtimes[0].permissions.access["read-only"].kind == "approximated" && json.runtimes[0].permissions.access["read-only"].effects.flag == "--approval-mode plan" |
+| full adds nothing anywhere | --format json | json.runtimes.all(r, r.permissions.access["full"].kind == "native") |
+
 ## Built-in tool vocabulary
 
 The permission catalog served Claude's tool names for every runtime. codex has

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/tracing"
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -65,6 +66,8 @@ type HookContext struct {
 	// turns reaches the same renderers as what the model does during them. Set by
 	// Runner.Run; nil in a hand-built context, which Notify tolerates.
 	emit func(ai.Event)
+	// trace is the run's root span. Set by Runner.Run.
+	trace *tracing.Run
 }
 
 // Notify reports one thing this hook did, in the run's own voice. It reaches the
