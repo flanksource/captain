@@ -104,7 +104,7 @@ var _ = Describe("AIRuntimeOptions --perms", func() {
 		f := newPermsFixture()
 		_, err := f.resolve(AIRuntimeOptions{Perms: []string{"Read-only", "nope"}}, nil)
 		Expect(err).To(MatchError(ContainSubstring(`"nope"`)))
-		Expect(err).To(MatchError(ContainSubstring("available perms: " + hostPermName + ", Edit, Plan, Read-only")))
+		Expect(err).To(MatchError(ContainSubstring("available perms: " + hostPermName + ", Edit, Lint, Plan, Read-only")))
 		Expect(err).To(MatchError(runtimeprofiles.ErrNotFound))
 	})
 

@@ -91,7 +91,7 @@ var _ = Describe("Default runtime catalog", func() {
 		catalog, err := NewDefaultCatalog(ctx, DefaultCatalogOptions{Cwd: cwd, Config: &cfg})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(catalog.Sources()).To(HaveLen(6))
-		Expect(catalog.ListPresets(ctx)).To(HaveLen(4), "the configured preset plus the three built-ins")
+		Expect(catalog.ListPresets(ctx)).To(HaveLen(5), "the configured preset plus the four built-ins")
 	})
 
 	It("registers the built-ins last and lets a repo preset override one by name", func(ctx SpecContext) {

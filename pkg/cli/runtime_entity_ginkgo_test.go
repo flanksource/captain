@@ -165,7 +165,7 @@ var _ = Describe("runtime entities over file sources", func() {
 		for _, record := range listed {
 			names = append(names, string(record.Source.Kind)+":"+record.Name)
 		}
-		Expect(names).To(Equal([]string{"file:Zeta", "builtin:Edit", "builtin:Plan", "builtin:Read-only"}))
+		Expect(names).To(Equal([]string{"file:Zeta", "builtin:Edit", "builtin:Lint", "builtin:Plan", "builtin:Read-only"}))
 		Expect(listRuntimePresets(f.ctx, RuntimePresetListOptions{Source: "builtin"})).To(HaveLen(4))
 
 		err = deleteRuntimePreset(f.ctx, "plan")
