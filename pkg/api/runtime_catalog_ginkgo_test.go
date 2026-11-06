@@ -48,7 +48,7 @@ var _ = Describe("RuntimeCatalog", func() {
 		for i, f := range families {
 			names[i] = f.Family
 		}
-		Expect(names).To(ConsistOf("claude", "codex", "gemini", "deepseek", "jev"))
+		Expect(names).To(ConsistOf("claude", "codex", "gemini", "deepseek", "jev", "bash"))
 
 		// Runtime.Provider is the provider key ("google"), which is what the
 		// catalog buckets on and what runtimesOf reads. The family label ("gemini")

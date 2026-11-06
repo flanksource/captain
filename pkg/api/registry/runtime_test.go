@@ -102,6 +102,7 @@ func TestDefaultModeIsAgentWhereServed(t *testing.T) {
 		Google:    ModeAPI,
 		DeepSeek:  ModeAPI,
 		Jev:       ModeAPI,
+		Bash:      ModeAPI,
 	}
 	for _, p := range Providers() {
 		if p.DefaultMode != want[p] {

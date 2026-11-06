@@ -228,7 +228,7 @@ func TestRunWhoamiServesEveryAxisUniverse(t *testing.T) {
 	if len(axes.Efforts) != len(api.AllEfforts()) {
 		t.Errorf("axes.Efforts = %v, want every effort tier", axes.Efforts)
 	}
-	if !reflect.DeepEqual(axes.Providers, []string{"anthropic", "openai", "google", "deepseek", "jev"}) {
+	if !reflect.DeepEqual(axes.Providers, []string{"anthropic", "openai", "google", "deepseek", "jev", "bash"}) {
 		t.Errorf("axes.Providers = %v", axes.Providers)
 	}
 }

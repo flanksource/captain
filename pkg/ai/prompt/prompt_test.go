@@ -212,6 +212,7 @@ func TestRender_RuntimeFixtureExamples(t *testing.T) {
 		"testdata/fixtures/codex-cmux.prompt":              {runtime: api.RuntimeOf(api.OpenAI, api.ModeCmux), model: "gpt-5-codex"},
 		"testdata/fixtures/deepseek.prompt":                {runtime: api.RuntimeOf(api.DeepSeek, api.ModeAPI), model: "deepseek-reasoner"},
 		"testdata/fixtures/jev.prompt":                     {runtime: api.RuntimeOf(api.Jev, api.ModeAPI), model: "jev-latest"},
+		"testdata/fixtures/bash.prompt":                    {runtime: api.RuntimeOf(api.Bash, api.ModeAPI), model: "bash"},
 		"testdata/fixtures/codex-cli.prompt":               {runtime: api.RuntimeOf(api.OpenAI, api.ModeCLI), model: "gpt-5-codex"},
 		"testdata/fixtures/gemini-api.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeAPI), model: "gemini-2.5-pro"},
 		"testdata/fixtures/gemini-cli.prompt":              {runtime: api.RuntimeOf(api.Google, api.ModeCLI), model: "gemini-2.5-pro"},

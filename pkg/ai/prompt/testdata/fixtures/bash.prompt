@@ -1,0 +1,6 @@
+---
+model: bash
+mode: api
+---
+{{role "user"}}
+git log --oneline -5 && echo "next: {{task}}"

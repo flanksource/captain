@@ -2,6 +2,7 @@ package provider
 
 import (
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/provider/bash"
 	"github.com/flanksource/captain/pkg/ai/provider/claudeagent"
 	"github.com/flanksource/captain/pkg/ai/provider/cmux"
 	"github.com/flanksource/captain/pkg/ai/provider/genkit"
@@ -27,6 +28,9 @@ func init() {
 	})
 	ai.RegisterProvider(ai.RuntimeOf(ai.Jev, ai.ModeAPI), func(cfg ai.Config) (ai.Provider, error) {
 		return jev.New(cfg)
+	})
+	ai.RegisterProvider(ai.RuntimeOf(ai.Bash, ai.ModeAPI), func(cfg ai.Config) (ai.Provider, error) {
+		return bash.New(cfg)
 	})
 
 	// cmux drives an interactive claude/codex TUI inside a tmux/cmux surface,
