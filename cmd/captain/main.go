@@ -93,7 +93,7 @@ func newRootCommand() *cobra.Command {
 		Dirty:   dirty,
 	})
 
-	clicky.BindAllFlagsToCommand(rootCmd, "format")
+	clicky.BindAllFlagsToCommand(rootCmd, "format", "tasks")
 	cli.BindDatabaseFlags(rootCmd.PersistentFlags())
 	cli.BindTelemetryFlags(rootCmd.PersistentFlags())
 	// Bind commons' -P/--properties flag so per-subsystem log levels and HTTP
