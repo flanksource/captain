@@ -36,7 +36,7 @@ var _ = Describe("Prompt list lookup locations", func() {
 		Expect(out).To(ContainSubstring(filepath.Join(home, "prompts")))
 	})
 
-	It("shows configured and host sources instead of an inactive project fallback", func() {
+	It("shows configured and host sources alongside the workspace source", func() {
 		configPath, err := captainconfig.Path()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.Mkdir(filepath.Join(filepath.Dir(configPath), "configured-prompts"), 0o700)).To(Succeed())
@@ -48,7 +48,7 @@ var _ = Describe("Prompt list lookup locations", func() {
 		Expect(out).To(ContainSubstring("**Lookup locations**"))
 		Expect(out).To(ContainSubstring(filepath.Join(filepath.Dir(configPath), "configured-prompts")))
 		Expect(out).To(ContainSubstring("host-prompts"))
-		Expect(out).NotTo(ContainSubstring(filepath.Join(".captain", "prompts")))
+		Expect(out).To(ContainSubstring(filepath.Join(".captain", "prompts")))
 	})
 
 	DescribeTable("keeps machine output and file exports free of a terminal footer", func(opts clicky.FormatOptions) {
