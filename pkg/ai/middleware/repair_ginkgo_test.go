@@ -4,18 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestSchemaRepair(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Schema Repair Suite")
-}
 
 const rejectedMarkdown = "I recorded 11 findings in `report.mdx`.\n\n- **Goals:** define a baseline.\n- **Owners:** name the team."
 
