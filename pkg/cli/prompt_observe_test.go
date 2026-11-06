@@ -16,6 +16,7 @@ import (
 	aiprovider "github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky"
+	"github.com/flanksource/clicky/task"
 	"github.com/flanksource/commons-db/shell"
 	"github.com/flanksource/commons/logger"
 	"k8s.io/client-go/tools/clientcmd"
@@ -367,8 +368,9 @@ func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *tes
 }
 
 // restoreProcessOutput undoes, once t ends, the process-wide output that
-// observePromptAction forces — JSON formatting, fatal-only logging and a
-// discarded logger — so later tests format and log as they would alone.
+// observePromptAction forces — JSON formatting, fatal-only logging, a
+// discarded logger, and the flags' one-task concurrency limit — so later tests
+// format, log and schedule as they would alone.
 func restoreProcessOutput(t *testing.T) {
 	t.Helper()
 	flags, output := *clicky.Flags, logger.GetOutput()
@@ -380,6 +382,7 @@ func restoreProcessOutput(t *testing.T) {
 		logger.SetLogger(root)
 		root.SetLogLevel(level)
 		logger.SetOutput(output)
+		task.SetMaxConcurrent(0)
 	})
 }
 
