@@ -140,7 +140,7 @@ type transcriptListItem struct {
 	detail clickyapi.Textable
 }
 
-func (i transcriptListItem) String() string { return i.text.String() + "\n" }
+func (i transcriptListItem) String() string { return i.text.String() }
 func (i transcriptListItem) ANSI() string   { return i.text.ANSI() }
 
 func (i transcriptListItem) HTML() string {
