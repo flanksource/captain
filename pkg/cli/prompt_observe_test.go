@@ -15,7 +15,9 @@ import (
 	"github.com/flanksource/captain/pkg/ai/observation"
 	aiprovider "github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky"
 	"github.com/flanksource/commons-db/shell"
+	"github.com/flanksource/commons/logger"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -364,8 +366,26 @@ func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *tes
 	}
 }
 
+// restoreProcessOutput undoes, once t ends, the process-wide output that
+// observePromptAction forces — JSON formatting, fatal-only logging and a
+// discarded logger — so later tests format and log as they would alone.
+func restoreProcessOutput(t *testing.T) {
+	t.Helper()
+	flags, output := *clicky.Flags, logger.GetOutput()
+	root := logger.StandardLogger()
+	level := root.GetLevel()
+	t.Cleanup(func() {
+		*clicky.Flags = flags
+		clicky.UseFormatter(clicky.FormatOptions{})
+		logger.SetLogger(root)
+		root.SetLogLevel(level)
+		logger.SetOutput(output)
+	})
+}
+
 func TestObservationSetupFailuresDoNotConstructProvider(t *testing.T) {
 	isolateSavedAI(t)
+	restoreProcessOutput(t)
 	providerBuilt := false
 	api.RegisterProvider(api.RuntimeOf(api.OpenAI, api.ModeCLI), func(ai.Config) (ai.Provider, error) {
 		providerBuilt = true
