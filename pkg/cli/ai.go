@@ -15,6 +15,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/pricing"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/collections"
+	"github.com/flanksource/captain/pkg/promptrun"
 )
 
 func executePromptRequest(parent context.Context, req ai.Request, cfg ai.Config, timeout time.Duration, noStream bool) (any, error) {
@@ -152,15 +153,8 @@ func buildProvider(ctx context.Context, req *ai.Request, cfg ai.Config) (ai.Prov
 	// run happens on another machine, so no local setup checkout, no CLI
 	// process, no streaming. Resolved before setup.Apply because the sandbox
 	// is itself a workspace isolator — a local checkout would double-isolate.
-	if remote, err := remoteExecProviderFor(req, cfg); err != nil {
-		return nil, cleanup, err
-	} else if remote != nil {
-		wrapped, err := middleware.Wrap(remote, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
-		if err != nil {
-			closeProvider(remote)
-			return nil, cleanup, err
-		}
-		return bufferedOnlyProvider{Provider: wrapped}, cleanup, nil
+	if remote, err := promptrun.RemoteProvider(req, cfg); err != nil || remote != nil {
+		return remote, cleanup, err
 	}
 	prepared, err := setup.Apply(ctx, req, "")
 	if err != nil {

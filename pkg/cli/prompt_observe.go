@@ -13,6 +13,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/clicky"
 	clickyrpc "github.com/flanksource/clicky/rpc"
 	"github.com/flanksource/commons/logger"
@@ -162,7 +163,7 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 			result.Availability = failure.availability
 			result.Execution = api.ObservationExecution{State: "not_started", Error: failure.observationError}
 			snapshot := recorder.Snapshot()
-			applyObservationSnapshot(&result, snapshot, false, relocatesRun(cfg))
+			applyObservationSnapshot(&result, snapshot, false, promptrun.Relocates(cfg))
 			capture.Apply(&result, snapshot.Tools)
 			return checkedObservation(result)
 		}
@@ -171,7 +172,7 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	defer cleanup()
 	defer closeProvider(provider)
 
-	remote := relocatesRun(cfg)
+	remote := promptrun.Relocates(cfg)
 	stream := runtime.Streaming && !opts.NoStream && !req.Prompt.HasSchema() && !remote
 	run := executeObservationProvider(runCtx, provider, req, stream, recorder)
 	duration := run.durationMS

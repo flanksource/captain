@@ -67,6 +67,19 @@ func TestResolveSandboxSelection_Precedence(t *testing.T) {
 		}
 	})
 
+	t.Run("a named substrate backend resolves with its options", func(t *testing.T) {
+		saved := captainconfig.SandboxDefaults{Backends: map[string]captainconfig.SandboxBackend{
+			"beta-substrate": {Kind: "substrate", Options: map[string]any{"envAPI": "env.example:443"}},
+		}}
+		got, err := resolveSandboxSelection(sandboxSelectionOptions{Selector: "beta-substrate", Saved: saved})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Kind != registry.SandboxSubstrate || got.Name != "beta-substrate" || got.Options["envAPI"] != "env.example:443" {
+			t.Fatalf("selection = %+v, want the beta-substrate backend", got)
+		}
+	})
+
 	t.Run("an unknown selector fails loud", func(t *testing.T) {
 		_, err := resolveSandboxSelection(sandboxSelectionOptions{Selector: "nope", Saved: defaults})
 		if err == nil || !strings.Contains(err.Error(), `unknown sandbox "nope"`) {

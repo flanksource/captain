@@ -41,9 +41,12 @@ func validateConstructionConfig(in Input) error {
 		if err := selection.Dispatch.Validate(); err != nil {
 			return err
 		}
+		if runsWhole(*selection) && in.Config.CanUseTool != nil {
+			return fmt.Errorf("promptrun: sandbox %q runs the whole run in an environment of its own, which asks its approvals through Config.OnApproval; set that instead of the deprecated CanUseTool", selection.Kind)
+		}
 	}
 	if declared := in.Resolved.Spec.Sandbox; declared != nil {
-		if selection == nil && (declared.Mode == api.SandboxDocker || declared.Mode == api.SandboxGitAgent) {
+		if selection == nil && (declared.Mode == api.SandboxDocker || declared.Mode == api.SandboxGitAgent || declared.Mode == api.SandboxSubstrate) {
 			return fmt.Errorf("sandbox mode %q requires a resolved Config.SandboxSelection before running", declared.Mode)
 		}
 		if selection != nil && declared.Mode != selection.Kind {

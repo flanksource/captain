@@ -32,7 +32,7 @@ type AIProviderOptions struct {
 	APIKey  string `flag:"api-key" help:"API key (env: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, GOOGLE_API_KEY, DEEPSEEK_API_KEY)" category:"Model runtime"`
 	APIURL  string `flag:"api-url" help:"Override the provider endpoint, e.g. a 'captain ai mock' URL. Required for the openai cli mode, which ignores OPENAI_BASE_URL when a ChatGPT credential is stored" category:"Model runtime"`
 	Budget  string `flag:"budget" help:"Max spend in USD, 0=unlimited" category:"Model runtime"`
-	Sandbox string `flag:"sandbox" help:"Sandbox for the run: off|native|docker|git-agent, or a configured Docker/Git Agent backend" category:"Model permissions"`
+	Sandbox string `flag:"sandbox" help:"Sandbox for the run: off|native|docker|git-agent|substrate, or a configured Docker, Git Agent or substrate backend" category:"Model permissions"`
 }
 
 // SandboxSelector trims the public sandbox mode or configured backend selector.

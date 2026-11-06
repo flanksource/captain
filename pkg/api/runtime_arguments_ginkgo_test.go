@@ -24,7 +24,7 @@ var _ = Describe("Runtime argument mappings", func() {
 		codexMode := runtimeSchemaProperty(api.RuntimeSchemaFor(api.OpenAI, api.ModeCLI), "sandbox", "mode")
 		Expect(codexMode["x-icon"]).To(Equal("shield"))
 		Expect(codexMode["enum"]).To(Equal(apiEnumValues([]api.SandboxKind{
-			api.SandboxOff, api.SandboxNative, api.SandboxDocker, api.SandboxGitAgent,
+			api.SandboxOff, api.SandboxNative, api.SandboxDocker, api.SandboxGitAgent, api.SandboxSubstrate,
 		})))
 		Expect(codexMode["x-clicky-arguments"]).To(ContainElement(map[string]any{
 			"name": "--sandbox", "implementation": "mapped",
@@ -142,11 +142,11 @@ var _ = Describe("Runtime argument mappings", func() {
 		))
 	})
 
-	It("publishes common API fields with only the off sandbox mode", func() {
+	It("publishes common API fields with the sandboxes an API run can use: none, or a whole run on substrate", func() {
 		schema := api.RuntimeSchemaFor(api.OpenAI, api.ModeAPI)
 		Expect(func() { runtimeSchemaProperty(schema, "model") }).NotTo(Panic())
 		Expect(func() { runtimeSchemaProperty(schema, "prompt", "user") }).NotTo(Panic())
-		Expect(runtimeSchemaProperty(schema, "sandbox", "mode")["enum"]).To(Equal([]any{"off"}))
+		Expect(runtimeSchemaProperty(schema, "sandbox", "mode")["enum"]).To(Equal([]any{"off", "substrate"}))
 		Expect(func() { runtimeSchemaProperty(schema, "permissions", "mode") }).To(Panic())
 	})
 

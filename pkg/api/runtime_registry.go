@@ -93,6 +93,13 @@ func NewProvider(cfg Config) (Provider, error) {
 		if err := descriptor.ValidateMode(mode); err != nil {
 			return nil, err
 		}
+		if descriptor.Has(registry.CapabilityRemoteRun) {
+			name := cfg.SandboxSelection.Name
+			if name == "" {
+				name = string(cfg.SandboxSelection.Kind)
+			}
+			return nil, fmt.Errorf("sandbox %q (%s) runs whole runs in an environment of its own, which only promptrun.Run hands it; a provider built here would run unsandboxed", name, cfg.SandboxSelection.Kind)
+		}
 	}
 	if err := requireRuntimeBinary(provider, mode); err != nil {
 		return nil, err

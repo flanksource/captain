@@ -25,7 +25,9 @@ func SandboxHelp() api.Text {
 		AddText("  captain sandbox git-agent", "text-green-400").
 		AddText(" — enroll and serve remote coding agents", "text-gray-500").NewLine().
 		AddText("  captain sandbox credentials", "text-green-400").
-		AddText(" — mirror agent CLI logins to sandbox destinations", "text-gray-500").NewLine().NewLine().
+		AddText(" — mirror agent CLI logins to sandbox destinations", "text-gray-500").NewLine().
+		AddText("  captain sandbox substrate sweep", "text-green-400").
+		AddText(" — delete the environments a substrate backend's runs left behind", "text-gray-500").NewLine().NewLine().
 		AddText("See also:", "font-bold text-blue-400").NewLine().
 		AddText("  captain container", "text-green-400").
 		AddText("            — build container images with preset support", "text-gray-500").NewLine()

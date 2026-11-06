@@ -23,10 +23,12 @@ const (
 	SandboxNative      = registry.SandboxNative
 	SandboxDocker      = registry.SandboxDocker
 	SandboxGitAgent    = registry.SandboxGitAgent
+	SandboxSubstrate   = registry.SandboxSubstrate
 	SandboxSRTInternal = registry.SandboxSRTInternal
 
 	CapabilityWrapCommand      = registry.CapabilityWrapCommand
 	CapabilityRemoteExec       = registry.CapabilityRemoteExec
+	CapabilityRemoteRun        = registry.CapabilityRemoteRun
 	CapabilityIsolateWorkspace = registry.CapabilityIsolateWorkspace
 	CapabilityEgressProxy      = registry.CapabilityEgressProxy
 

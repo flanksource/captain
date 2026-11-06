@@ -80,6 +80,11 @@ var _ = Describe("SandboxRef", func() {
 		Expect(schema.OneOf[1].AnyOf[1].Required).To(Equal([]string{"backend"}))
 	})
 
+	It("takes a named backend for substrate, but git-agent's agent and dispatch only for git-agent", func() {
+		Expect(SandboxRef{Mode: SandboxSubstrate, Backend: "beta-substrate"}.ValidateStructure()).To(Succeed())
+		Expect(SandboxRef{Mode: SandboxSubstrate, Agent: "worker-01"}.ValidateStructure()).To(MatchError(`sandbox agent/dispatch settings require git-agent mode, got "substrate"`))
+	})
+
 	It("rejects a negative dispatch attempt bound", func() {
 		err := SandboxRef{
 			Mode: SandboxGitAgent, Dispatch: &SandboxDispatchPolicy{MaxAttempts: -1},

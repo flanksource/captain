@@ -409,7 +409,8 @@ func (r *Runner[T]) recordEvent(hc *HookContext, ev ai.Event) {
 		phase = observe.PhaseTool
 	}
 	if phase != "" && observe.ObservingProvider() {
-		observe.PublishProvider(observe.ProviderEvent{Phase: phase, Iter: hc.Iteration, Model: r.Provider.GetModel(), Backend: r.Provider.GetRuntime().String(), Event: &ev})
+		published := ev
+		observe.PublishProvider(observe.ProviderEvent{Phase: phase, Iter: hc.Iteration, Model: r.Provider.GetModel(), Backend: r.Provider.GetRuntime().String(), Event: &published})
 	}
 	ws := hc.Workspace()
 	switch ev.Kind {

@@ -18,7 +18,9 @@ package promptrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -57,18 +59,34 @@ type Input struct {
 	// remote-executing sandbox that materialises the checkout on its own side,
 	// or a test double. Run then adds no setup hook. Nil means Run constructs
 	// the provider from Config and prepares Request.Setup through the setup
-	// plugin, in-process.
+	// plugin, in-process — unless Config.SandboxSelection executes remotely, in
+	// which case Run takes RemoteProvider as if the caller had passed it, or runs
+	// whole runs, in which case Run hands the run to its RemoteRunner.
 	Provider ai.Provider
-	// Relocated builds the provider of a run that executes on another machine
-	// (a git-agent sandbox). Unlike Provider it is called with the run's final
-	// Config — inline tools and the approval broker bound — because the run's
-	// caller tools are served from here while the agent runs there. Like
-	// Provider, it owns the workspace: Run adds no setup hook.
-	Relocated func(ai.Config) (ai.Provider, error)
 	// Hooks are the caller's own agent hooks — a host's commit pipeline, an
 	// environment stamp. They sit after the workflow's checks and before setup,
 	// so a Post hook of theirs at PhaseRun still sees a live worktree.
 	Hooks []any
+	// HostData is what Hooks are built from, for a run a sandbox runs whole in an
+	// environment of its own, where live hooks can't go: the host's own program
+	// there rebuilds them from it. A host sets both, and the run uses whichever
+	// fits where it executes.
+	HostData json.RawMessage
+	// EnvironmentOutput receives the output of a whole run's environment, its
+	// program's own log, for a caller that shows it; nil leaves it to the
+	// sandbox, which keeps a log of its own.
+	EnvironmentOutput io.Writer
+	// OnTranscript receives a whole run's transcript files as its agent writes
+	// them in its environment, each whole as it is now: source is the agent
+	// (claude, codex) and name the file's path under that agent's transcript
+	// directory. nil leaves them to the sandbox, which keeps them where the
+	// agent would here. A local run's transcripts are already here.
+	OnTranscript func(source, name string, data []byte)
+	// HostCalls answer, by name, what the host's own program in a whole run's
+	// environment asks of the host: things only the caller can do, such as
+	// pushing to a PR with credentials the environment never holds. A call of a
+	// name with no answer is refused.
+	HostCalls map[string]func(ctx context.Context, data json.RawMessage) (json.RawMessage, error)
 	// CallerOwnsCommits hands committing to Hooks: Run builds no commit hook of
 	// its own from Workflow.Commits, and leaves the declaration on the request so
 	// the recorded spec still says what the run commits and validation of that
@@ -172,6 +190,23 @@ func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error)
 	if err := bindToolApprovals(&in); err != nil {
 		return Result{}, false, err
 	}
+	if in.Record != nil && in.Record.Admitted != nil {
+		if err := in.Record.Admitted(); err != nil {
+			return Result{}, false, fmt.Errorf("promptrun: the host refused the admitted run: %w", err)
+		}
+	}
+	if runner, closeRunner, err := remoteRunner(in); err != nil {
+		return Result{}, false, err
+	} else if runner != nil {
+		defer closeRunner()
+		result, err := runRemotely(ctx, in, runner, admission.model, rec)
+		return ended(ctx, result, err)
+	}
+	releaseRemote, err := relocate(&in)
+	if err != nil {
+		return Result{}, false, err
+	}
+	defer releaseRemote()
 	provider, release, err := buildProvider(in)
 	if err != nil {
 		return Result{}, false, err
@@ -203,18 +238,24 @@ func execute(ctx context.Context, in Input, rec *Recorder) (Result, bool, error)
 	}
 	out, runErr := runner.Run(ctx)
 	result, resultErr := newResult(out, identity, time.Since(start))
-	if ctx.Err() != nil {
-		// A stream the stop closed can end the turn before the loop sees the
-		// context: the run still did not complete, and must not read as done.
-		if runErr == nil {
-			runErr = fmt.Errorf("promptrun: run stopped: %w", context.Cause(ctx))
-		}
-		return result, true, runErr
+	if ctx.Err() == nil && runErr == nil {
+		runErr = resultErr
 	}
-	if runErr != nil {
-		return result, false, runErr
+	return ended(ctx, result, runErr)
+}
+
+// ended is how a run that returned result and err ended, and whether it was
+// stopped: it was when its context ended.
+func ended(ctx context.Context, result Result, err error) (Result, bool, error) {
+	if ctx.Err() == nil {
+		return result, false, err
 	}
-	return result, false, resultErr
+	// A stream the stop closed can end the turn before the loop sees the
+	// context: the run still did not complete, and must not read as done.
+	if err == nil {
+		err = fmt.Errorf("promptrun: run stopped: %w", context.Cause(ctx))
+	}
+	return result, true, err
 }
 
 // runHooks is Hooks plus, for a recorded run, the recorder: its progress tap
@@ -224,9 +265,24 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 	if rec == nil {
 		return Hooks(ctx, *in, provider)
 	}
-	rec.prepare(executingRuntime(provider, model), model, in.Resolved.Spec, in.Config.SessionID)
-	if err := rec.offerTools(in.Config.Tools, in.Resolved.Spec); err != nil {
+	if err := recordOn(in, rec, executingRuntime(provider, model), model); err != nil {
 		return nil, err
+	}
+	in.recorder = rec
+	hooks, err := Hooks(ctx, *in, provider)
+	if err != nil {
+		return nil, err
+	}
+	return append(hooks, rec.hook()), nil
+}
+
+// recordOn readies rec to file the run in describes, served by runtime: the
+// caller tools it offers, its transcript, and its verification progress, which
+// rec files ahead of the caller's tap.
+func recordOn(in *Input, rec *Recorder, runtime api.Runtime, model api.Model) error {
+	rec.prepare(runtime, model, in.Resolved.Spec, in.Config.SessionID)
+	if err := rec.offerTools(in.Config.Tools, in.Resolved.Spec); err != nil {
+		return err
 	}
 	rec.transcribeAPIRun()
 	callerProgress := in.Verify.Progress
@@ -236,12 +292,7 @@ func runHooks(ctx context.Context, in *Input, provider ai.Provider, model api.Mo
 			callerProgress(report)
 		}
 	}
-	in.recorder = rec
-	hooks, err := Hooks(ctx, *in, provider)
-	if err != nil {
-		return nil, err
-	}
-	return append(hooks, rec.hook()), nil
+	return nil
 }
 
 // executingRuntime is the runtime that actually serves the run: the provider's
@@ -342,11 +393,7 @@ func buildProvider(in Input) (ai.Provider, func(), error) {
 	if in.Resolved.Spec.NoCache {
 		cfg.NoCache = true
 	}
-	newProvider := middleware.NewProvider
-	if in.Relocated != nil {
-		newProvider = in.Relocated
-	}
-	provider, err := newProvider(cfg)
+	provider, err := middleware.NewProvider(cfg)
 	if err != nil {
 		return nil, release, err
 	}

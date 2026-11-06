@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -12,54 +11,30 @@ import (
 	"github.com/flanksource/captain/pkg/sandbox/adapter"
 )
 
-type remoteSandboxStub struct{ closes int }
+// relocatingSandboxStub is a remote-exec adapter that answers the run itself,
+// so a test can tell a relocated run from one built as a local provider.
+type relocatingSandboxStub struct{ executed int }
 
-func (s *remoteSandboxStub) Kind() api.SandboxKind { return registry.SandboxGitAgent }
-func (s *remoteSandboxStub) Prepare(context.Context, *api.Spec) (*api.SandboxSession, error) {
+func (s *relocatingSandboxStub) Kind() api.SandboxKind { return registry.SandboxGitAgent }
+func (s *relocatingSandboxStub) Prepare(context.Context, *api.Spec) (*api.SandboxSession, error) {
 	return &api.SandboxSession{}, nil
 }
-func (s *remoteSandboxStub) Close() error { s.closes++; return nil }
-
-type remoteExecutorStub struct{ err error }
-
-func (s remoteExecutorStub) Execute(context.Context, api.Spec, api.RemoteExecOptions) (*api.Response, error) {
-	return nil, s.err
+func (s *relocatingSandboxStub) Close() error              { return nil }
+func (s *relocatingSandboxStub) IsolatesWorkspace() bool   { return true }
+func (s *relocatingSandboxStub) ProvidesEgressProxy() bool { return true }
+func (s *relocatingSandboxStub) Execute(context.Context, api.Spec, api.RemoteExecOptions) (*api.Response, error) {
+	s.executed++
+	return &api.Response{Text: "done remotely"}, nil
 }
 
-// A remote-executing selection must replace provider execution. Without this
-// the run silently falls through to the model provider and the sandbox is a
-// no-op — which is indistinguishable from success until a dispatch never
-// arrives.
-func TestRemoteExecProviderForRoutesGitAgent(t *testing.T) {
-	req := &ai.Request{}
-	cfg := ai.Config{
-		SandboxSelection: &api.SandboxConfig{
-			Kind: registry.SandboxGitAgent,
-			Name: "git-agent",
-			Options: map[string]any{
-				"agents": map[string]any{
-					"worker-01": map[string]any{
-						"fingerprint":     "SHA256:key",
-						"url":             "ssh://captain@127.0.0.1:7502/repo.git",
-						"hostFingerprint": "SHA256:host",
-					},
-				},
-			},
-		},
-	}
-	provider, err := remoteExecProviderFor(req, cfg)
-	if err != nil {
-		t.Fatalf("remoteExecProviderFor: %v", err)
-	}
-	if provider == nil {
-		t.Fatal("a git-agent selection must produce a remote-executing provider, not fall through to the model")
-	}
-	if _, isRemote := provider.(*remoteExecProvider); !isRemote {
-		t.Fatalf("provider = %T, want *remoteExecProvider", provider)
-	}
-}
+// `captain ai` builds its provider outside promptrun, so it must take the
+// remote branch itself: a git-agent selection is served by the adapter, never
+// by a local, streaming provider.
+func TestBuildProviderRelocatesRemoteSandboxes(t *testing.T) {
+	stub := &relocatingSandboxStub{}
+	api.RegisterSandbox(registry.SandboxGitAgent, func(api.SandboxConfig) (api.Sandbox, error) { return stub, nil })
+	t.Cleanup(func() { api.RegisterSandbox(registry.SandboxGitAgent, adapter.GitAgent) })
 
-func TestBuildProviderWrapsRemoteWithoutAdvertisingStreaming(t *testing.T) {
 	req := &ai.Request{}
 	cfg := ai.Config{SandboxSelection: &api.SandboxConfig{Kind: registry.SandboxGitAgent}}
 	provider, cleanup, err := buildProvider(context.Background(), req, cfg)
@@ -69,10 +44,14 @@ func TestBuildProviderWrapsRemoteWithoutAdvertisingStreaming(t *testing.T) {
 	defer cleanup()
 	defer closeProvider(provider)
 	if _, ok := provider.(ai.StreamingProvider); ok {
-		t.Fatalf("wrapped remote provider %T advertises unsupported streaming", provider)
+		t.Fatalf("remote provider %T advertises unsupported streaming", provider)
 	}
-	if _, ok := api.ProviderAs[*remoteExecProvider](provider); !ok {
-		t.Fatalf("wrapped provider %T hides the remote provider", provider)
+	resp, err := provider.Execute(context.Background(), *req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Text != "done remotely" || stub.executed != 1 {
+		t.Fatalf("response %q after %d remote executions; want the adapter to serve the run once", resp.Text, stub.executed)
 	}
 }
 
@@ -118,37 +97,4 @@ func TestRemoteAwareTimeout(t *testing.T) {
 			}
 		}
 	})
-}
-
-func TestRemoteExecProviderForLeavesLocalSandboxesAlone(t *testing.T) {
-	for _, selection := range []*api.SandboxConfig{
-		nil,
-		{Kind: registry.SandboxNative},
-		{Kind: registry.SandboxDocker},
-	} {
-		provider, err := remoteExecProviderFor(&ai.Request{}, ai.Config{SandboxSelection: selection})
-		if err != nil {
-			t.Fatalf("selection %v: %v", selection, err)
-		}
-		if provider != nil {
-			t.Fatalf("selection %v produced %T; only remote-exec kinds replace the provider", selection, provider)
-		}
-	}
-}
-
-func TestRemoteExecProviderCloseIsIdempotentAfterFailure(t *testing.T) {
-	sandbox := &remoteSandboxStub{}
-	provider := &remoteExecProvider{executor: remoteExecutorStub{err: errors.New("failed")}, sandbox: sandbox}
-	if _, err := provider.Execute(context.Background(), ai.Request{}); err == nil {
-		t.Fatal("Execute returned nil error")
-	}
-	if err := provider.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := provider.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if sandbox.closes != 1 {
-		t.Fatalf("sandbox closed %d times, want once", sandbox.closes)
-	}
 }

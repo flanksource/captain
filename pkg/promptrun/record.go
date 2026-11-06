@@ -50,6 +50,11 @@ type Recording struct {
 	// admission transaction; an error rolls back the sessions and the run, and
 	// nothing is dispatched.
 	Link func(ctx context.Context, tx *database.DB, run *database.PromptRun) error
+	// Admitted tells the host its admitted run is about to be dispatched, once
+	// the run passed preflight and before a provider is built or a sandbox
+	// handed the run, wherever the run executes. An error fails the run, which
+	// is recorded as failed, and nothing is dispatched.
+	Admitted func() error
 	// Outcome classifies the finished run; nil means DefaultOutcome. A host
 	// whose prompt answers in an envelope of its own (an "ask" status in its
 	// structured output) maps that here.

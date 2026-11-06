@@ -145,7 +145,9 @@ func New(options Options) (*Runtime, error) {
 		"1.0.0",
 		server.WithToolCapabilities(false),
 		server.WithToolFilter(runtime.filterTools),
-		server.WithInputSchemaValidation(),
+		// No server.WithInputSchemaValidation: a provider's tool-use ID rides in the input, which
+		// a schema forbidding other properties would refuse. The handler validates the input
+		// once it has taken the ID out.
 	)
 	for _, definition := range definitions {
 		runtime.definitions[definition.Name] = definition

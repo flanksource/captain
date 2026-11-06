@@ -3,11 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/middleware"
 	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/clicky/task"
 	"github.com/google/uuid"
@@ -38,8 +36,7 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 	}
 	admitted := announceAdmittedSession(t, stream, rec, rendered.Model)
 	req := rendered.Input
-	relocated, err := preparePromptRun(ctx, &req, rendered.Config)
-	if err != nil {
+	if err := preparePromptRun(ctx, &req, rendered.Config); err != nil {
 		_, recordErr := recordCompleted(ctx, rec, unstartedRun(rendered, err))
 		return failRun(t, stream, errors.Join(err, recordErr))
 	}
@@ -65,13 +62,12 @@ func runPromptWorkflow(t *task.Task, rendered PromptRenderResult, timeout time.D
 		}
 	}
 	result, err := promptrun.Run(ctx, promptrun.Input{
-		Resolved:  promptResolution(rendered, req),
-		Config:    rendered.Config,
-		Relocated: relocated,
-		OnEvent:   onEvent,
-		Timeout:   timeout,
-		NoStream:  noStream,
-		Record:    rec,
+		Resolved: promptResolution(rendered, req),
+		Config:   rendered.Config,
+		OnEvent:  onEvent,
+		Timeout:  timeout,
+		NoStream: noStream,
+		Record:   rec,
 	})
 	stream.setRunMetadata(result.SessionID, firstNonEmpty(result.Model, rendered.Model))
 	if err != nil {
@@ -130,21 +126,14 @@ func stoppedAsStopped(stream *runStream) func(promptrun.Result, error, bool) (pr
 }
 
 // preparePromptRun is everything this process must do to the request before the
-// shared seam sees it: warn on a model name that looks mistyped, resolve the
-// prompt's attachments against the local store, and — when the resolved sandbox
-// executes elsewhere — return the factory for the provider that owns the whole
-// run. A nil factory means the run executes here.
-func preparePromptRun(ctx context.Context, req *ai.Request, cfg ai.Config) (func(ai.Config) (ai.Provider, error), error) {
+// shared seam sees it: warn on a model name that looks mistyped and resolve the
+// prompt's attachments against the local store. A resolved sandbox that executes
+// elsewhere is promptrun's to relocate the run to.
+func preparePromptRun(ctx context.Context, req *ai.Request, cfg ai.Config) error {
 	for _, c := range cfg.Model.Candidates() {
 		warnIfLikelyModelTypo(c.Name)
 	}
-	if err := resolvePromptAttachments(ctx, req); err != nil {
-		return nil, err
-	}
-	if !relocatesRun(cfg) {
-		return nil, nil
-	}
-	return func(final ai.Config) (ai.Provider, error) { return remoteWorkflowProvider(req, final) }, nil
+	return resolvePromptAttachments(ctx, req)
 }
 
 // completedRunSummary is the finished run as the CLI prints it and the stream
@@ -185,27 +174,6 @@ func completedRunSummary(runID string, rendered PromptRenderResult, result promp
 		StructuredOutput: structured,
 		Error:            failure,
 	}, nil
-}
-
-// remoteWorkflowProvider is the whole-run relocation branch: the resolved
-// sandbox executes remotely, so the run happens on another machine and comes
-// back whole. The provider owns the workspace (promptrun adds no setup hook)
-// and never streams. cfg is the run's final config, so the caller tools it
-// serves to the remote agent include the prompt's inline tools.
-func remoteWorkflowProvider(req *ai.Request, cfg ai.Config) (ai.Provider, error) {
-	remote, err := remoteExecProviderFor(req, cfg)
-	if err != nil {
-		return nil, err
-	}
-	if remote == nil {
-		return nil, fmt.Errorf("sandbox %q relocates the run but built no remote provider", cfg.SandboxSelection.Kind)
-	}
-	wrapped, err := middleware.Wrap(remote, middleware.WithTracing(), middleware.WithLogging(), middleware.WithJevConversion(), middleware.WithSchemaValidation(cfg))
-	if err != nil {
-		closeProvider(remote)
-		return nil, err
-	}
-	return bufferedOnlyProvider{Provider: wrapped}, nil
 }
 
 func failRun(t *task.Task, stream *runStream, err error) (PromptRunSummary, error) {

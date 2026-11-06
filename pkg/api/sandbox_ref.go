@@ -147,8 +147,8 @@ func (r SandboxRef) ValidateStructure() error {
 	if r.Policy != nil && r.Mode != SandboxNative {
 		return fmt.Errorf("native policy requires sandbox mode native, got %q", r.Mode)
 	}
-	if r.Backend != "" && r.Mode != "" && r.Mode != SandboxDocker && r.Mode != SandboxGitAgent {
-		return fmt.Errorf("sandbox backend is only valid for docker or git-agent mode, got %q", r.Mode)
+	if r.Backend != "" && r.Mode != "" && r.Mode != SandboxDocker && r.Mode != SandboxGitAgent && r.Mode != SandboxSubstrate {
+		return fmt.Errorf("sandbox backend is only valid for docker, git-agent or substrate mode, got %q", r.Mode)
 	}
 	if (r.Agent != "" || r.Dispatch != nil) && r.Mode != "" && r.Mode != SandboxGitAgent {
 		return fmt.Errorf("sandbox agent/dispatch settings require git-agent mode, got %q", r.Mode)

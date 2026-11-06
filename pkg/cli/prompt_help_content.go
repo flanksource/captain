@@ -154,7 +154,7 @@ func promptSpecHelpFields() []promptHelpField {
 		{"setup.checkout.worktree.keep", "Keep the worktree after the run."},
 		{"setup.checkout.worktree.uncommitted", "clone or skip staged, unstaged, and untracked source changes without mutating the source tree."},
 		{"setup.checkout.worktree.ignored", "clone or skip gitignored content such as dependency and build directories."},
-		{"sandbox", "Scalar backend name, or an object. Bare adapters are none, srt, container, and git-agent."},
+		{"sandbox", "Scalar backend name, or an object. Bare adapters are off, native, docker, git-agent, and substrate."},
 		{"sandbox.backend, sandbox.agent", "Configured sandbox/bare adapter and optional pinned git-agent worker."},
 		{"sandbox.policy.paths[]", "Gitignore-style allow/deny paths; ! negates a pattern."},
 		{"sandbox.policy.maxAttempts", "Maximum submit attempts; zero inherits the configured sandbox policy."},

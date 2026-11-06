@@ -113,6 +113,12 @@ export const docSections: DocSection[] = [
         description: "The durable tool-approval broker (pkg/ai/approval.Broker).",
         status: "ready",
       },
+      {
+        label: "Runs on Agent Substrate",
+        href: "/agents/substrate/",
+        description: "The substrate sandbox: a whole run in an agent-substrate environment of its own.",
+        status: "ready",
+      },
     ],
   },
   {

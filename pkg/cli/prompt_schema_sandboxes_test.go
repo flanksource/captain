@@ -89,6 +89,13 @@ func TestBuildSandboxCatalogProjectsDescriptorCapabilitiesAndModes(t *testing.T)
 		t.Error("git-agent description is empty; the editor renders it as help text")
 	}
 
+	// A whole run's environment serves every mode its image can: an API-mode run calls its model
+	// from there, its key injected on the way out, and its tools back on the caller.
+	substrate := catalogKind(t, catalog, "substrate")
+	if want := []string{"api", "cli", "agent"}; !reflect.DeepEqual(substrate.Modes, want) {
+		t.Errorf("substrate modes = %v, want %v", substrate.Modes, want)
+	}
+
 	off := catalogKind(t, catalog, "off")
 	if len(off.Capabilities) != 0 {
 		t.Errorf("off capabilities = %v, want empty", off.Capabilities)

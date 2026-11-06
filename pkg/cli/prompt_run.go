@@ -213,8 +213,9 @@ func executeSyncRunSingleDirect(ctx context.Context, t *task.Task, rendered Prom
 	// A configured workflow or inline tools must go through the runner-backed
 	// path: the direct provider call below never constructs verify/commit/judge
 	// hooks or binds inline tools, so taking it would complete the run with the
-	// declared checks skipped and the declared tools missing.
-	if requiresRunner(rendered.Input) {
+	// declared checks skipped and the declared tools missing. So must a run on a
+	// sandbox that runs whole runs, which only that path hands over.
+	if requiresRunner(rendered.Input) || promptrun.RunsWhole(rendered.Config) {
 		return executeSyncWorkflowRun(t, rendered, opts.NoStream, binding)
 	}
 	r, err := executeDirectPrompt(ctx, rendered, opts)

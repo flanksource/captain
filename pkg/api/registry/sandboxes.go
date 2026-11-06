@@ -55,6 +55,21 @@ var (
 		ToolPlacements: []ToolPlacement{ToolPlacementSupervisor, ToolPlacementSidecar},
 	}
 
+	SubstrateSandbox = &Sandbox{
+		Kind:        SandboxSubstrate,
+		Description: "Run the whole run in an agent-substrate environment of its own",
+		Capabilities: []SandboxCapability{
+			CapabilityRemoteRun,
+			CapabilityIsolateWorkspace,
+			CapabilityEgressProxy,
+		},
+		// ModeAPI too, unlike git-agent: the whole run happens in the environment,
+		// which calls its model from there with the key injected on the way out,
+		// and its tools back on the caller. No ModeCmux: the environment has no
+		// terminal multiplexer to drive.
+		Modes: []RuntimeMode{ModeAPI, ModeCLI, ModeAgent},
+	}
+
 	internalSRTSandbox = &Sandbox{
 		Kind:         SandboxSRTInternal,
 		Description:  "Confine Git Agent receive hooks with sandbox-runtime",
@@ -67,5 +82,5 @@ var (
 // source of truth behind SandboxFor, ParseSandboxKind, and the help/error
 // strings. "none" is first because it is the default.
 func AllSandboxes() []*Sandbox {
-	return []*Sandbox{OffSandbox, NativeSandbox, DockerSandbox, GitAgentSandbox}
+	return []*Sandbox{OffSandbox, NativeSandbox, DockerSandbox, GitAgentSandbox, SubstrateSandbox}
 }
