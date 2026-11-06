@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 	"github.com/flanksource/captain/pkg/credproxy"
 	"github.com/flanksource/captain/pkg/credproxy/kubeproxy"
-	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 
 	// Side-effect import: pkg/ai's init populates the pricing registry with the
 	// built-in model catalog so resolveCost works offline (no OpenRouter fetch

@@ -11,11 +11,11 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/fixture"
-	"github.com/flanksource/captain/pkg/credproxy"
-	"github.com/flanksource/captain/pkg/credproxy/kubeproxy"
 	"github.com/flanksource/captain/pkg/ai/fixture/mcpproxy"
 	"github.com/flanksource/captain/pkg/ai/observation"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/credproxy"
+	"github.com/flanksource/captain/pkg/credproxy/kubeproxy"
 	"github.com/flanksource/captain/pkg/promptrun"
 )
 

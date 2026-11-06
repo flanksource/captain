@@ -39,7 +39,7 @@ func (v emittingVerifier) Verify(hc *HookContext) (VerifyResult, error) {
 
 type failingPreRun struct{}
 
-func (failingPreRun) Name() string               { return "setup" }
+func (failingPreRun) Name() string              { return "setup" }
 func (failingPreRun) PreRun(*HookContext) error { return errors.New("checkout failed") }
 
 var _ = Describe("Runner tracing", func() {
