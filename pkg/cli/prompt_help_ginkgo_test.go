@@ -22,6 +22,10 @@ func unescapeMarkdown(markdown string) string {
 
 var _ = Describe("prompt help", func() {
 	BeforeEach(func() {
+		// UseFlags (e.g. forceObservationOutput in other specs) leaves a
+		// process-wide NoColor default that clicky.Format merges in.
+		DeferCleanup(clicky.UseFormatter, clicky.Flags.FormatOptions)
+		clicky.UseFormatter(clicky.FormatOptions{})
 		GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "1")
 		GinkgoT().Setenv("NO_COLOR", "")
 		GinkgoT().Setenv("TERM", "xterm-256color")
@@ -42,10 +46,6 @@ var _ = Describe("prompt help", func() {
 	}
 
 	It("renders colored terminal help for a human session", func() {
-		// UseFlags (e.g. forceObservationOutput in other specs) leaves a
-		// process-wide NoColor default that clicky.Format merges in.
-		DeferCleanup(clicky.UseFormatter, clicky.Flags.FormatOptions)
-		clicky.UseFormatter(clicky.FormatOptions{})
 		GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "1")
 		GinkgoT().Setenv("NO_COLOR", "")
 		GinkgoT().Setenv("COLOR", "")
