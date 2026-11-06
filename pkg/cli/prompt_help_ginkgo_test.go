@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 
 	"github.com/flanksource/clicky"
@@ -9,6 +10,15 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 )
+
+// markdownEscape matches a CommonMark backslash escape of ASCII punctuation.
+var markdownEscape = regexp.MustCompile("\\\\([!-/:-@[-`{-~])")
+
+// unescapeMarkdown is the text a Markdown reader sees, so help assertions name
+// what is documented rather than how the renderer escaped it.
+func unescapeMarkdown(markdown string) string {
+	return markdownEscape.ReplaceAllString(markdown, "$1")
+}
 
 var _ = Describe("prompt help", func() {
 	BeforeEach(func() {
@@ -78,6 +88,7 @@ var _ = Describe("prompt help", func() {
 
 	It("documents the complete prompt-file authoring contract", func() {
 		output, err := renderPromptHelp(promptCommand(), promptHelpRenderOptions{LLMSession: true})
+		output = unescapeMarkdown(output)
 
 		Expect(err).NotTo(HaveOccurred())
 		for _, required := range []string{
@@ -133,6 +144,7 @@ var _ = Describe("prompt help", func() {
 
 	It("documents prompt lookup locations in list help", func() {
 		output, err := renderPromptHelp(&cobra.Command{Use: "list"}, promptHelpRenderOptions{LLMSession: true})
+		output = unescapeMarkdown(output)
 
 		Expect(err).NotTo(HaveOccurred())
 		for _, location := range []string{"Prompt lookup locations", "~/.captain.yaml", "prompts.dirs", ".captain/prompts", "~/.config/captain/prompts", "$XDG_CONFIG_HOME/captain/prompts"} {

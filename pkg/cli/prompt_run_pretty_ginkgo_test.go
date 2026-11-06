@@ -105,7 +105,7 @@ var _ = Describe("Jev prompt response", func() {
 			ContainSubstring("Low 0%, Medium 75%, High 25%"),
 			ContainSubstring("no 10%, yes 90%"),
 		))
-		Expect(pretty.HTML()).To(And(ContainSubstring("new gridjs.Grid"), ContainSubstring("1.25 / 2")))
+		Expect(pretty.HTML()).To(And(ContainSubstring("<table"), ContainSubstring("1.25 / 2")))
 	})
 
 	Context("a batched run's block", func() {
