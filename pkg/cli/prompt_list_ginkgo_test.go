@@ -82,6 +82,7 @@ var _ = Describe("Prompt list lookup locations", func() {
 		if child {
 			target = list
 		}
+		target.SetContext(context.Background())
 		err := target.RunE(target, nil)
 		if runErr == nil {
 			Expect(err).NotTo(HaveOccurred())
