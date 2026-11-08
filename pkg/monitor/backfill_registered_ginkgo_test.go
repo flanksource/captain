@@ -1,6 +1,8 @@
 package monitor
 
 import (
+	"time"
+
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/commons-db/dbtest"
 	. "github.com/onsi/ginkgo/v2"
@@ -39,7 +41,7 @@ var _ = Describe("backfill over registered transcripts", Ordered, func() {
 		path := "/Users/dev/.claude/projects/-worktree-shell-9f3a/0199e2aa-0000-7000-8000-000000000001.jsonl"
 		register(ctx, "0199e2aa-0000-7000-8000-000000000001", path)
 
-		roots, _ := monitor.transcriptScanSet(ctx)
+		roots, _ := monitor.transcriptScanSet(ctx, time.Now())
 		Expect(roots).To(ContainElement(transcriptRef{source: "claude", path: path}))
 	})
 
