@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,9 +65,74 @@ func TestDiscoverTranscriptsSkipsSystemTempClaudeProjects(t *testing.T) {
 		require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o644))
 	}
 
-	roots, agents := discoverTranscripts()
+	roots, agents := discoverTranscripts(time.Time{})
 	require.Equal(t, []transcriptRef{{source: "claude", path: normalRoot}}, roots)
 	require.Equal(t, []transcriptRef{{source: "claude", path: normalAgent}}, agents)
+}
+
+func TestDiscoverTranscriptsKeepsOnlyThoseModifiedSince(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	now := time.Now().Truncate(time.Second)
+	lastWeek := now.Add(-7 * 24 * time.Hour)
+	project := filepath.Join(home, ".claude", "projects", claude.NormalizePath("/Users/dev/src/project"))
+	codexDay := filepath.Join(home, ".codex", "sessions", "2026", "07", "13")
+	written := map[string]time.Time{
+		filepath.Join(project, "old.jsonl"):                         lastWeek,
+		filepath.Join(project, "new.jsonl"):                         now,
+		filepath.Join(project, "old", "subagents", "agent-a.jsonl"): lastWeek,
+		filepath.Join(project, "new", "subagents", "agent-b.jsonl"): now,
+		filepath.Join(codexDay, "rollout-old.jsonl"):                lastWeek,
+		filepath.Join(codexDay, "rollout-resumed.jsonl"):            now,
+	}
+	for path, modTime := range written {
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte("{}\n"), 0o644))
+		require.NoError(t, os.Chtimes(path, modTime, modTime))
+	}
+
+	roots, agents := discoverTranscripts(now.Add(-time.Hour))
+
+	assert.ElementsMatch(t, []transcriptRef{
+		{source: "claude", path: filepath.Join(project, "new.jsonl")},
+		{source: "codex", path: filepath.Join(codexDay, "rollout-resumed.jsonl")},
+	}, roots)
+	assert.Equal(t, []transcriptRef{{source: "claude", path: filepath.Join(project, "new", "subagents", "agent-b.jsonl")}}, agents)
+}
+
+func TestBackfillSince(t *testing.T) {
+	newest := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	older := newest.Add(-3 * time.Hour)
+	current := func(modTime *time.Time) database.SessionSourceState {
+		return database.SessionSourceState{ParserVersion: parserVersion, ObservedModTime: modTime}
+	}
+	for name, tc := range map[string]struct {
+		sources map[string]database.SessionSourceState
+		want    time.Time
+	}{
+		"nothing ingested scans everything": {nil, time.Time{}},
+		"a day before the newest ingested transcript": {
+			map[string]database.SessionSourceState{"a": current(&older), "b": current(&newest), "c": current(nil)},
+			newest.Add(-backfillWatermarkLag),
+		},
+		"an older parser version scans everything": {
+			map[string]database.SessionSourceState{
+				"a": current(&newest),
+				"b": {ParserVersion: parserVersion - 1, ObservedModTime: &older},
+			},
+			time.Time{},
+		},
+		"no recorded mtimes scans everything": {
+			map[string]database.SessionSourceState{"a": current(nil)},
+			time.Time{},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, backfillSince(tc.sources))
+		})
+	}
 }
 
 func TestDiscoverTranscriptsSkipsCodexAutoReviewSessions(t *testing.T) {
@@ -83,7 +150,7 @@ func TestDiscoverTranscriptsSkipsCodexAutoReviewSessions(t *testing.T) {
 		"{\"type\":\"session_meta\",\"payload\":{\"id\":\"review-1\",\"cwd\":\"/repo\"}}\n"+
 			"{\"type\":\"turn_context\",\"payload\":{\"model\":\"codex-auto-review\",\"effort\":\"low\"}}\n"), 0o644))
 
-	roots, agents := discoverTranscripts()
+	roots, agents := discoverTranscripts(time.Time{})
 	assert.Contains(t, roots, transcriptRef{source: "codex", path: userSession})
 	assert.NotContains(t, roots, transcriptRef{source: "codex", path: reviewSession})
 	assert.Empty(t, agents)

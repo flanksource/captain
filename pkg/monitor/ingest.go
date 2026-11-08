@@ -79,6 +79,12 @@ func (ing *ingestor) sourceState(path string) (database.SessionSourceState, bool
 	return state, ok
 }
 
+func (ing *ingestor) backfillSince() time.Time {
+	ing.mu.Lock()
+	defer ing.mu.Unlock()
+	return backfillSince(ing.sources)
+}
+
 func (ing *ingestor) recordSourceState(state database.SessionSourceState) {
 	ing.mu.Lock()
 	ing.sources[state.Path] = state

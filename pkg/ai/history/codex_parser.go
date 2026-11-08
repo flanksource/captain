@@ -3,7 +3,6 @@ package history
 import (
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -408,20 +407,13 @@ func FindCodexSessionFiles() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var files []string
-	for _, sessionsDir := range roots {
-		if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
-			continue
-		}
-		err = filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && strings.HasSuffix(path, ".jsonl") {
-				files = append(files, path)
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	rollouts, err := walkCodexRollouts(roots, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(rollouts))
+	for _, rollout := range rollouts {
+		files = append(files, rollout.Path)
 	}
 	return files, nil
 }
