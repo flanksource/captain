@@ -8,9 +8,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai/history"
 	"github.com/flanksource/captain/pkg/claude"
+	"github.com/flanksource/captain/pkg/database"
 )
 
 type transcriptRef struct {
@@ -18,16 +20,29 @@ type transcriptRef struct {
 	path   string
 }
 
-// backfill is the incremental scan over every known transcript: files whose
-// mtime/size/parser version match their bookkeeping row are skipped, changed
-// ones are re-ingested with a bounded worker pool. Root transcripts are
-// ingested before agent transcripts so children always find their parent.
+// backfillWatermarkLag is how far before the newest ingested transcript's mtime
+// a backfill still considers files. The live hook and fsnotify paths ingest
+// active sessions independently of backfill progress, so the newest mtime can
+// run ahead of an interrupted import; the lag bounds what that can skip.
+const backfillWatermarkLag = 24 * time.Hour
+
+// backfill is the incremental scan over the transcripts modified since the
+// watermark (backfillSince): files whose mtime/size/parser version match their
+// bookkeeping row are skipped, changed ones are re-ingested with a bounded
+// worker pool. Root transcripts are ingested before agent transcripts so
+// children always find their parent.
 func (m *Monitor) backfill(ctx context.Context, ingestor *ingestor) {
 	if err := ingestor.refreshSourceStates(ctx); err != nil {
 		log.Warnf("refresh transcript bookkeeping: %v", err)
 		return
 	}
-	roots, agents := m.transcriptScanSet(ctx)
+	since := ingestor.backfillSince()
+	if since.IsZero() {
+		log.Infof("backfill scans every transcript")
+	} else {
+		log.Infof("backfill scans transcripts modified since %s", since.Format(time.RFC3339))
+	}
+	roots, agents := m.transcriptScanSet(ctx, since)
 	ingestChanged(ctx, ingestor, roots)
 	ingestChanged(ctx, ingestor, agents)
 	// Remote task history rides the same pass: it is cheap when no mailbox
@@ -36,10 +51,31 @@ func (m *Monitor) backfill(ctx context.Context, ingestor *ingestor) {
 	m.ingestGitAgentTasks(ctx)
 }
 
+// backfillSince is the earliest mtime a backfill considers: a day before the
+// newest ingested transcript. It is zero, meaning every transcript, when
+// nothing has been ingested yet or a row predates the current parser version,
+// since then every transcript needs parsing again.
+func backfillSince(sources map[string]database.SessionSourceState) time.Time {
+	var newest time.Time
+	for _, state := range sources {
+		if state.ParserVersion != parserVersion {
+			return time.Time{}
+		}
+		if state.ObservedModTime != nil && state.ObservedModTime.After(newest) {
+			newest = *state.ObservedModTime
+		}
+	}
+	if newest.IsZero() {
+		return time.Time{}
+	}
+	return newest.Add(-backfillWatermarkLag)
+}
+
 // transcriptScanSet is everything one recon pass considers: what the filesystem
-// offers, plus what has been registered by session id and the filesystem did not.
-func (m *Monitor) transcriptScanSet(ctx context.Context) (roots, agents []transcriptRef) {
-	roots, agents = discoverTranscripts()
+// offers as modified since since, plus what has been registered by session id
+// and the filesystem did not.
+func (m *Monitor) transcriptScanSet(ctx context.Context, since time.Time) (roots, agents []transcriptRef) {
+	roots, agents = discoverTranscripts(since)
 	return append(roots, m.registeredTranscripts(ctx, roots, agents)...), agents
 }
 
@@ -73,39 +109,33 @@ func (m *Monitor) registeredTranscripts(ctx context.Context, discovered ...[]tra
 	return extra
 }
 
-func discoverTranscripts() (roots, agents []transcriptRef) {
+// discoverTranscripts lists the transcripts modified since since; zero lists
+// every one. The mtime filter runs before the filters below, which read the
+// filesystem or the transcript itself.
+func discoverTranscripts(since time.Time) (roots, agents []transcriptRef) {
+	found, err := history.FindTranscripts(history.TranscriptQuery{ModifiedSince: since})
+	if err != nil {
+		log.Warnf("discover transcripts: %v", err)
+		return nil, nil
+	}
 	projectsDir := claude.GetProjectsDir()
-	if rootFiles, err := claude.FindSessionFiles(projectsDir, "", true); err == nil {
-		for _, path := range rootFiles {
-			if isEphemeralClaudeTranscript(projectsDir, path) {
-				continue
-			}
-			roots = append(roots, transcriptRef{source: "claude", path: path})
+	for _, transcript := range found {
+		ref := transcriptRef{source: transcript.Source, path: transcript.Path}
+		switch {
+		case transcript.Source == history.TranscriptSourceClaude && isEphemeralClaudeTranscript(projectsDir, transcript.Path):
+		case transcript.Source == history.TranscriptSourceCodex && isCodexAutoReview(transcript.Path):
+		case transcript.Kind == history.TranscriptAgent:
+			agents = append(agents, ref)
+		default:
+			roots = append(roots, ref)
 		}
-	} else {
-		log.Warnf("discover claude transcripts: %v", err)
-	}
-	if codexFiles, err := history.FindCodexSessionFiles(); err == nil {
-		for _, path := range codexFiles {
-			if ignored, _ := history.IsCodexAutoReviewSession(path); ignored {
-				continue
-			}
-			roots = append(roots, transcriptRef{source: "codex", path: path})
-		}
-	} else {
-		log.Warnf("discover codex transcripts: %v", err)
-	}
-	if agentFiles, err := claude.FindAgentTranscripts(projectsDir, "", true); err == nil {
-		for _, path := range agentFiles {
-			if isEphemeralClaudeTranscript(projectsDir, path) {
-				continue
-			}
-			agents = append(agents, transcriptRef{source: "claude", path: path})
-		}
-	} else {
-		log.Warnf("discover claude agent transcripts: %v", err)
 	}
 	return roots, agents
+}
+
+func isCodexAutoReview(path string) bool {
+	ignored, _ := history.IsCodexAutoReviewSession(path)
+	return ignored
 }
 
 // isEphemeralClaudeTranscript excludes projects created below a system temp
