@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 
@@ -141,6 +144,28 @@ var _ = Describe("permission catalog", func() {
 			Expect(catalog.MCP).To(BeEmpty())
 			Expect(catalog.Skills).To(BeEmpty())
 			Expect(catalog.Plugins).To(BeEmpty())
+		})
+	})
+
+	Describe("PermissionCatalogHandler", func() {
+		serve := func(query string) *httptest.ResponseRecorder {
+			recorder := httptest.NewRecorder()
+			PermissionCatalogHandler(workspace).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/?"+query, nil))
+			return recorder
+		}
+
+		It("serves the chosen runtime's tools", func() {
+			recorder := serve("provider=anthropic&mode=cli")
+			Expect(recorder.Code).To(Equal(http.StatusOK), recorder.Body.String())
+			var catalog api.PermissionCatalog
+			Expect(json.Unmarshal(recorder.Body.Bytes(), &catalog)).To(Succeed())
+			Expect(catalogIDs(catalog.Tools)).To(ContainElements("Read", "Bash"))
+		})
+
+		It("refuses a request without a provider", func() {
+			recorder := serve("mode=cli")
+			Expect(recorder.Code).To(Equal(http.StatusBadRequest))
+			Expect(recorder.Body.String()).To(ContainSubstring("provider must be one of"))
 		})
 	})
 

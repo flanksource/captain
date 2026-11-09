@@ -150,6 +150,11 @@ type AIPromptOptions struct {
 
 	Vars string `flag:"vars" clicky:"cli-file-read" help:"JSON object of template variables (or @file.json)"`
 
+	// Spec is an in-process caller's typed request layer over the frontmatter,
+	// the layer an HTTP render's PromptRenderRequest.Spec supplies; explicit
+	// flags still resolve above it.
+	Spec *api.Spec `flag:"-" json:"-" yaml:"-"`
+
 	// PromptRef is the raw --prompt/-p value as typed, before an @reference was
 	// expanded into the file's contents. The expansion is what makes `-p @file`
 	// work, but it also erases the path — and the path is what says whether the

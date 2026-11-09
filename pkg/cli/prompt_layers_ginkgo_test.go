@@ -298,6 +298,27 @@ var _ = Describe("prompt layers", func() {
 		Expect(rendered.Resolution.Provenance["/budget/maxTurns"].Source.Name).To(Equal("CLI flags"))
 	})
 
+	It("layers an in-process caller's spec over the frontmatter and beneath the CLI flags", func() {
+		f, _, _ := newRuntimeCatalogFixture()
+		detail := f.prompt("caller", "---\nname: Caller\nmodel: claude-sonnet-4-6\nmode: agent\npermissions:\n  mode: acceptEdits\n---\n{{role \"user\"}}\nHi.\n")
+		opts := AIPromptOptions{Spec: &api.Spec{
+			Model:       api.Model{Name: "claude-opus-4-6"},
+			Permissions: api.Permissions{Mode: api.PermissionPlan},
+			Budget:      api.Budget{MaxTurns: 5},
+		}}
+		opts.MaxTurns = 2
+
+		rendered, err := renderPromptCLI(f.ctx, detail.Path, opts, "", "")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered.ValidationError).To(BeEmpty())
+		Expect(rendered.Model).To(Equal("claude-opus-4-6"))
+		Expect(rendered.Mode).To(Equal("agent"), "unset caller fields inherit the frontmatter")
+		Expect(rendered.Input.Permissions.Mode).To(Equal(api.PermissionPlan))
+		Expect(rendered.Input.Budget.MaxTurns).To(Equal(2), "explicit flags stay above the caller's spec")
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"caller.prompt", "render request", "CLI flags"}))
+	})
+
 	It("never consults the catalog without presets and ignores deprecated profiles", func() {
 		f, presetProbe, profileProbe := newRuntimeCatalogFixture()
 		f.reviewCatalog()

@@ -253,7 +253,7 @@ func frontmatterLayers(ctx context.Context, body promptBody, frontmatter ai.Requ
 	if opts.NoPresets || (opts.PresetsSet && presets == nil) {
 		presets = []string{}
 	}
-	layers, warnings, err := renderLayers(ctx, body.Source, body.Text, frontmatter, PromptRenderRequest{Presets: presets, RuntimeProfile: opts.RuntimeProfile, Literal: body.Literal}, saved)
+	layers, warnings, err := renderLayers(ctx, body.Source, body.Text, frontmatter, PromptRenderRequest{Presets: presets, RuntimeProfile: opts.RuntimeProfile, Spec: opts.Spec, Literal: body.Literal}, saved)
 	if err != nil {
 		return nil, nil, err
 	}
