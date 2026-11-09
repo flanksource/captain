@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/flanksource/clicky/task"
 )
 
 // runSubBuffer bounds each SSE subscriber's channel. A subscriber that can't
@@ -37,6 +38,9 @@ type runStream struct {
 	errMsg        string
 	endedAt       time.Time
 	observer      func(int, ai.Event)
+	// session is the summary of the session the run drives; see
+	// prompt_run_stream_summary.go.
+	session runSessionSummary
 }
 
 func newRunStream() *runStream {
@@ -60,6 +64,7 @@ func (s *runStream) publish(e session.Message) {
 		return
 	}
 	s.entries = append(s.entries, e)
+	s.summarizeEntryLocked(e)
 	for ch := range s.subs {
 		select {
 		case ch <- e:
@@ -198,6 +203,7 @@ func (s *runStream) setRunMetadata(sessionID, model string) {
 	if model != "" {
 		s.run.Model = model
 	}
+	s.updateSessionLocked(func(*task.SessionSummary) {})
 	if changed && !s.done {
 		s.publishEventLocked(runStreamEvent{name: "run", data: s.run})
 	}

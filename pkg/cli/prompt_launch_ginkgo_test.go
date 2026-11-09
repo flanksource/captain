@@ -215,7 +215,10 @@ var _ = Describe("Prompt launch", func() {
 			Expect(uuid.Parse(sessionID)).Error().NotTo(HaveOccurred(), "the first run frame names the captain session")
 			run := onlyTask(group)
 			Expect(run.Name()).To(Equal(callerTaskName))
-			Expect(task.SnapshotTask(run, group.Group).Logs).To(ContainElement(HaveField("Message", "session "+sessionID)))
+			snapshot := task.SnapshotTask(run, group.Group)
+			Expect(snapshot.Logs).To(ContainElement(HaveField("Message", "session "+sessionID)))
+			Expect(snapshot.Session).To(beCaptainSession(sessionID))
+			Expect(task.SnapshotGroup(group.Group).Session).To(BeNil(), "a caller's group may hold several runs, so it names none of their sessions")
 
 			close(release)
 			summary, err := AwaitPromptRun(ctx, started.RunID)
@@ -264,11 +267,15 @@ var _ = Describe("Prompt launch", func() {
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(summary).To(SatisfyAll(HaveField("Success", true), HaveField("SessionID", BeEmpty())))
-			Expect(task.SnapshotTask(onlyTask(group), group.Group).Logs).NotTo(ContainElement(HaveField("Message", HavePrefix("session "))))
+			snapshot := task.SnapshotTask(onlyTask(group), group.Group)
+			Expect(snapshot.Logs).NotTo(ContainElement(HaveField("Message", HavePrefix("session "))))
+			Expect(snapshot.Session).To(BeNil())
 		})
 
-		It("starts its own kind=prompt run group when the caller names none", func(ctx SpecContext) {
+		It("starts its own kind=prompt run group when the caller names none, naming the admitted session on the group and its task", func(ctx SpecContext) {
+			openCLIRecordDB()
 			started := launchInto(ctx, nil)
+			ref := beCaptainSession(runFrameSessionID(started.RunID))
 
 			snapshots := task.SnapshotByID(started.RunID)
 			Expect(snapshots).NotTo(BeEmpty())
@@ -277,10 +284,39 @@ var _ = Describe("Prompt launch", func() {
 				HaveField("Name", "prompt review"),
 				HaveField("Kind", "prompt"),
 				HaveField("Labels", HaveKeyWithValue("prompt", "review")),
+				HaveField("Session", ref),
 			))
-			Expect(snapshots[1:]).To(ConsistOf(HaveField("Name", "execute")))
+			Expect(task.RunMetaFromSnapshot(snapshots[0]).Session).To(ref)
+			Expect(snapshots[1:]).To(ConsistOf(SatisfyAll(HaveField("Name", "execute"), HaveField("Session", ref))))
 			close(release)
 			Expect(AwaitPromptRun(ctx, started.RunID)).Error().NotTo(HaveOccurred())
+		})
+
+		It("summarizes the session on the run's group and task: model, context, actions and the latest part", func(ctx SpecContext) {
+			openCLIRecordDB()
+			const window, used = 200_000, 3_700
+			turns = []ai.Event{
+				{Kind: ai.EventToolUse, Tool: reporter.Name, ToolCallID: "toolu_report", Input: map[string]any{"line": 3}},
+				{Kind: ai.EventToolResult, Tool: reporter.Name, ToolCallID: "toolu_report", Success: true, Text: "recorded"},
+				{Kind: ai.EventText, Text: "reviewing the change", Context: &api.ContextUsage{UsedTokens: used, WindowTokens: window}},
+			}
+			started := launchInto(ctx, nil)
+			close(release)
+			summary, err := AwaitPromptRun(ctx, started.RunID)
+			Expect(err).NotTo(HaveOccurred())
+
+			expected := &task.SessionSummary{
+				Model:   "claude-sonnet-5",
+				Context: &task.SessionContext{UsedTokens: used, WindowTokens: window},
+				Actions: 1,
+				Latest:  &task.SessionLatest{Kind: "text", Text: output},
+			}
+			snapshots := task.SnapshotByID(started.RunID)
+			Expect(snapshots).To(HaveLen(2))
+			for _, snapshot := range snapshots {
+				Expect(snapshot.Session).To(beCaptainSession(summary.SessionID))
+				Expect(snapshot.Session.Summary).To(Equal(expected), "%s %q", snapshot.Type, snapshot.Name)
+			}
 		})
 	})
 
@@ -290,3 +326,11 @@ var _ = Describe("Prompt launch", func() {
 		Expect(err).To(MatchError(ContainSubstring(`unknown prompt run "missing-run"`)))
 	})
 })
+
+// beCaptainSession matches the reference a prompt task carries for the captain
+// session id, readable at captain serve's sessions mount, whatever its summary.
+func beCaptainSession(id string) OmegaMatcher {
+	return PointTo(MatchFields(IgnoreExtras, Fields{
+		"Type": Equal("captain"), "ID": Equal(id), "Href": Equal("/api/captain/sessions/" + id),
+	}))
+}
