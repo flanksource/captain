@@ -14,6 +14,13 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
+// PermissionCatalogHandler serves GET ?dir&provider&mode: the tools, MCP
+// servers, skills and plugins the chosen runtime sees from dir, which must stay
+// within baseCwd. Hosts mount it to back clicky-ui's permission picker.
+func PermissionCatalogHandler(baseCwd string) http.Handler {
+	return handlePermissionCatalog(baseCwd)
+}
+
 func handlePermissionCatalog(baseCwd string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		dir := strings.TrimSpace(r.URL.Query().Get("dir"))

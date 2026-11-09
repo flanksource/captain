@@ -42,6 +42,9 @@ type promptEventAccumulator struct {
 	// the run's stream can name the session a follower subscribes to mid-run.
 	// Nil for a consumer with no stream behind it.
 	session func(sessionID, model string)
+	// context receives every provider context-window snapshot an event carries.
+	// Nil for a consumer with no stream behind it.
+	context func(api.ContextUsage)
 	task    taskSink
 
 	sessionID string
@@ -80,6 +83,9 @@ func (a *promptEventAccumulator) handle(_ int, ev ai.Event) {
 	defer a.mu.Unlock()
 	if ev.Model != "" {
 		a.model = ev.Model
+	}
+	if ev.Context != nil && a.context != nil {
+		a.context(*ev.Context)
 	}
 	switch ev.Kind {
 	case ai.EventTurnStart:
