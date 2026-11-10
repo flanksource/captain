@@ -177,10 +177,10 @@ func (c *Client) Create(ctx context.Context, environment Environment) (*Env, err
 func (e *Env) ID() string { return e.id }
 
 // Actor is the environment's SPIFFE ID, which the egress gateway names it by.
-func (e *Env) Actor() string { return Actor(e.client.options.Atespace, e.id) }
+func (e *Env) Actor() string { return SPIFFEID(e.client.options.Atespace, e.id) }
 
-// Actor is the SPIFFE ID of the environment id in atespace.
-func Actor(atespace, id string) string {
+// SPIFFEID is the SPIFFE ID of the environment id in atespace.
+func SPIFFEID(atespace, id string) string {
 	return "spiffe://substrate-actor.local/actor/" + atespace + "/" + id
 }
 
@@ -206,23 +206,15 @@ const fileChunk = 256 * 1024
 // actor was created before cutoff: the ones a caller that died mid-run left behind, once no run
 // of theirs can still be live. It returns the IDs it deleted, and an error for each it couldn't.
 func (c *Client) Sweep(ctx context.Context, prefix string, cutoff time.Time) ([]string, error) {
+	actors, err := c.ListActors(ctx, c.options.Atespace)
+	if err != nil {
+		return nil, err
+	}
 	var stale []string
-	request := &ateapipb.ListActorsRequest{Atespace: c.options.Atespace, Options: &ateapipb.ListOptions{PageSize: 100}}
-	for {
-		page, err := c.control.ListActors(ctx, request)
-		if err != nil {
-			return nil, fmt.Errorf("list the actors of atespace %s: %w", c.options.Atespace, err)
+	for _, actor := range actors {
+		if strings.HasPrefix(actor.Name, prefix) && !actor.Created.IsZero() && actor.Created.Before(cutoff) {
+			stale = append(stale, actor.Name)
 		}
-		for _, actor := range page.GetActors() {
-			metadata := actor.GetMetadata()
-			if strings.HasPrefix(metadata.GetName(), prefix) && metadata.GetCreateTime() != nil && metadata.GetCreateTime().AsTime().Before(cutoff) {
-				stale = append(stale, metadata.GetName())
-			}
-		}
-		if page.GetNextPageToken() == "" {
-			break
-		}
-		request.Options.PageToken = page.GetNextPageToken()
 	}
 	var swept []string
 	var errs []error

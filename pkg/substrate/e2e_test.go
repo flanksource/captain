@@ -1,5 +1,5 @@
 // The substrate client against a live cluster: files go in and come out of an environment intact,
-// whatever their size, a process in it works on them, and the caller may list what a sweep needs.
+// whatever their size, a process in it works on them, and the caller may list what a sweep and an inventory need.
 package substrate_test
 
 import (
@@ -97,4 +97,21 @@ func TestSweepListsTheActorsOfACluster(t *testing.T) {
 	swept, err := client.Sweep(ctx, "captain-e2e-no-such-prefix-", time.Now())
 	require.NoError(t, err)
 	assert.Empty(t, swept)
+}
+
+// A caller's identity may list the cluster's workers and the actors of every atespace, as an
+// inventory of the substrate must.
+func TestInventoryOfACluster(t *testing.T) {
+	cluster := substratetest.FromEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	client, err := substrate.Dial(cluster.Options)
+	require.NoError(t, err)
+	defer client.Close()
+
+	workers, err := client.ListWorkers(ctx)
+	require.NoError(t, err)
+	assert.NotEmpty(t, workers, "a cluster that runs environments has workers")
+	_, err = client.ListActors(ctx, "")
+	require.NoError(t, err)
 }
