@@ -163,8 +163,8 @@ var _ = Describe("final model saved defaults", func() {
 		Expect(result.Model.Effort).To(Equal(expected))
 		Expect(result.Model.Fallbacks[0].Effort).To(Equal(expected))
 		if enabled {
-			Expect(result.Sources).To(HaveKeyWithValue("/effort", "registry.models.claude-fable-5-1.defaultEffort"))
-			Expect(result.Sources).To(HaveKeyWithValue("/fallbacks/0/effort", "registry.models.claude-fable-5-1.defaultEffort"))
+			Expect(result.Sources).To(HaveKeyWithValue("/effort", "registry.models.claude-fable-5-2.defaultEffort"))
+			Expect(result.Sources).To(HaveKeyWithValue("/fallbacks/0/effort", "registry.models.claude-fable-5-2.defaultEffort"))
 		}
 	}, Entry("saved defaults enabled", true, registry.EffortHigh), Entry("catalog/replay projection", false, registry.EffortNone))
 

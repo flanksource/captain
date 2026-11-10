@@ -28,7 +28,7 @@ var _ = Describe("DeepSeek default model", func() {
 		Expect(ok).To(BeTrue())
 		Expect(entry.Preferred).To(BeTrue())
 		Expect(entry.Reasoning).To(BeTrue())
-		Expect(entry.ContextWindow).To(Equal(1_000_000))
+		Expect(entry.ContextWindow).To(Equal(1_048_576))
 		price, ok := CostFor(flash)
 		Expect(ok).To(BeTrue())
 		Expect(price).To(Equal(ModelCost{Input: 0.15, Output: 0.6, CacheRead: 0.003}))
