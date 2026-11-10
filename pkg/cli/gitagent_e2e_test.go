@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -12,10 +13,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/flanksource/captain/pkg/gitagent"
+	clickyprocess "github.com/flanksource/clicky/process"
 	"github.com/flanksource/commons-db/dbtest"
 	"gopkg.in/yaml.v3"
 )
@@ -223,6 +226,7 @@ func (h *host) serve(port string, args ...string) {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
+		h.killProcesses()
 		<-done
 	})
 	deadline := time.Now().Add(30 * time.Second)
@@ -238,6 +242,46 @@ func (h *host) serve(port string, args ...string) {
 		}
 	}
 	h.t.Fatalf("serve never began listening:\n%s", out.String())
+}
+
+// killProcesses SIGKILLs every process still running with this host's HOME and
+// waits until none is alive. The sidecar launches its agent in a new session
+// and releases it (gitagent.LaunchAgent), and serve's hooks and the dispatch's
+// git children outlive a killed parent, so killing serve alone leaves writers
+// in the host's temp directories while the test removes them.
+func (h *host) killProcesses() {
+	h.t.Helper()
+	ctx := context.Background()
+	snapshot, err := clickyprocess.Discover(ctx, clickyprocess.SnapshotOptions{
+		Environment: &clickyprocess.EnvironmentOptions{Keys: []string{"HOME"}},
+	})
+	if err != nil {
+		h.t.Fatalf("listing processes to stop for %s: %v", h.home, err)
+	}
+	var pids []int
+	for _, p := range snapshot.All() {
+		if p.Environment["HOME"] == h.home {
+			if err := syscall.Kill(p.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				h.t.Errorf("killing %d (%s): %v", p.PID, p.Command, err)
+			}
+			pids = append(pids, p.PID)
+		}
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for len(pids) > 0 {
+		snapshot, err := clickyprocess.Discover(ctx, clickyprocess.SnapshotOptions{})
+		if err != nil {
+			h.t.Fatalf("listing processes stopped for %s: %v", h.home, err)
+		}
+		pids = slices.DeleteFunc(pids, func(pid int) bool {
+			p, found := snapshot.Get(pid)
+			return !found || !p.Active
+		})
+		if len(pids) > 0 && time.Now().After(deadline) {
+			h.t.Fatalf("processes of %s survived SIGKILL: %v", h.home, pids)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func (h *host) serveLogs() string {
@@ -917,9 +961,9 @@ func TestUnconfiguredDispatchLaunchesTheDefaultAgent(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- dispatch.Wait() }()
 	t.Cleanup(func() {
-		if dispatch.Process != nil {
-			_ = dispatch.Process.Kill()
-		}
+		_ = dispatch.Process.Kill()
+		supervisor.killProcesses()
+		<-done
 	})
 
 	// An agent log appearing at all is the assertion: the sidecar launched
