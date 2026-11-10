@@ -181,7 +181,7 @@ func TestValidation_ErrorPassesWhenValid(t *testing.T) {
 
 func TestValidation_RetrySucceedsOnSecond(t *testing.T) {
 	// First response violates; the single retry conforms → returned, exactly 2 calls.
-	resp, err, calls := execWith(t, api.SchemaStrictnessRetry, overCapJSON, validJSON)
+	resp, err, calls := execWith(t, api.SchemaStrictnessRepair, overCapJSON, validJSON)
 	if err != nil {
 		t.Fatalf("retry that conforms must not error, got %v", err)
 	}
@@ -196,7 +196,7 @@ func TestValidation_RetrySucceedsOnSecond(t *testing.T) {
 func TestValidation_RetryThenErrorWhenStillInvalid(t *testing.T) {
 	// Every attempt violates → hard error after the retry budget is exhausted
 	// (1 initial call + maxSchemaRetries re-asks).
-	_, err, calls := execWith(t, api.SchemaStrictnessRetry, overCapJSON)
+	_, err, calls := execWith(t, api.SchemaStrictnessRepair, overCapJSON)
 	if !errors.Is(err, ai.ErrSchemaValidation) {
 		t.Fatalf("want ErrSchemaValidation after retries, got %v", err)
 	}
@@ -215,7 +215,7 @@ func TestValidation_RetryRecoversProviderSchemaError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
 	}
-	resp, err := p.Execute(context.Background(), capRequest(api.SchemaStrictnessRetry))
+	resp, err := p.Execute(context.Background(), capRequest(api.SchemaStrictnessRepair))
 	if err != nil {
 		t.Fatalf("provider schema error should recover on retry, got %v", err)
 	}
@@ -257,7 +257,7 @@ func TestValidation_ProviderSchemaErrorExhaustsRetries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WithSchemaValidation: %v", err)
 	}
-	_, err = p.Execute(context.Background(), capRequest(api.SchemaStrictnessRetry))
+	_, err = p.Execute(context.Background(), capRequest(api.SchemaStrictnessRepair))
 	if !errors.Is(err, ai.ErrSchemaValidation) {
 		t.Fatalf("want ErrSchemaValidation after exhausting retries, got %v", err)
 	}
@@ -273,7 +273,7 @@ func TestValidation_RepairRequestUsesConfiguredModel(t *testing.T) {
 			Model: api.Model{Name: "gpt-5", Mode: ai.ModeAPI},
 		}},
 	}
-	req, cfg, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRetry), json.RawMessage(capSchema), "bad", &ai.Response{Text: overCapJSON}, 1)
+	req, cfg, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRepair), json.RawMessage(capSchema), "bad", &ai.Response{Text: overCapJSON}, 1)
 	if err != nil {
 		t.Fatalf("repairRequest: %v", err)
 	}
@@ -303,7 +303,7 @@ Previous: {{previousResponse}}
 		provider: &scriptedProvider{runtime: ai.RuntimeOf(ai.Anthropic, ai.ModeAPI)},
 		cfg:      ai.Config{SchemaRepair: api.SchemaRepairConfig{Prompt: path}},
 	}
-	req, _, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRetry), json.RawMessage(capSchema), "custom-error", &ai.Response{Text: overCapJSON}, 1)
+	req, _, useParent, err := v.repairRequest(capRequest(api.SchemaStrictnessRepair), json.RawMessage(capSchema), "custom-error", &ai.Response{Text: overCapJSON}, 1)
 	if err != nil {
 		t.Fatalf("repairRequest: %v", err)
 	}

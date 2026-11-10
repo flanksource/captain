@@ -10,16 +10,16 @@ import (
 	"github.com/flanksource/captain/pkg/api"
 )
 
-// maxSchemaRetries bounds the number of fix-up re-asks the retry strictness makes
+// maxSchemaRetries bounds the number of fix-up re-asks the repair strictness makes
 // when a structured response fails schema validation before giving up with a hard
 // error.
 const maxSchemaRetries = 2
 
 // validatingProvider validates a structured-output response against the request's
 // JSON schema and applies the prompt's SchemaStrictness policy: warning (log and
-// continue), error (fail), retry (re-ask the model with the validation errors up to
+// continue), error (fail), repair (re-ask the model with the validation errors up to
 // maxSchemaRetries times, then fail; a streamed turn is re-asked in its own session). It is a no-op unless the prompt sets both a schema and a strictness
-// mode; Anthropic native structured-output backends default to retry validation
+// mode; Anthropic native structured-output backends default to repair validation
 // because their provider-facing schema is intentionally stripped down.
 type validatingProvider struct {
 	provider ai.Provider
@@ -44,17 +44,17 @@ func WithSchemaValidation(cfg ...ai.Config) Option {
 
 func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Response, error) {
 	strictness := v.effectiveStrictness(req)
-	if v.provider.GetRuntime().Provider == "jev" && strictness == api.SchemaStrictnessRetry {
+	if v.provider.GetRuntime().Provider == "jev" && strictness == api.SchemaStrictnessRepair {
 		return nil, fmt.Errorf("jev does not support schema repair retries")
 	}
 	resp, err := v.provider.Execute(ctx, req)
 	if err != nil {
 		// A provider that validates the model's structured output during generation
 		// (e.g. genkit's constrained output) rejects it itself, returning the
-		// rejected answer when it has one. Under "retry" that rejection is
+		// rejected answer when it has one. Under "repair" that rejection is
 		// recoverable: re-ask the model with the schema errors and the answer
 		// instead of failing outright.
-		if strictness == api.SchemaStrictnessRetry && errors.Is(err, ai.ErrSchemaValidation) {
+		if strictness == api.SchemaStrictnessRepair && errors.Is(err, ai.ErrSchemaValidation) {
 			if schema, serr := ai.SchemaJSONFor(req.Prompt); serr == nil && len(schema) > 0 {
 				return v.retryWithFeedback(ctx, req, schema, err.Error(), resp)
 			}
@@ -82,7 +82,7 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 	case api.SchemaStrictnessWarning:
 		log.Warnf("schema validation failed (%s/%s): %s", v.provider.GetRuntime(), v.provider.GetModel(), verrs)
 		return resp, nil
-	case api.SchemaStrictnessRetry:
+	case api.SchemaStrictnessRepair:
 		return v.retryWithFeedback(ctx, req, schema, verrs, resp)
 	case api.SchemaStrictnessError:
 		return resp, fmt.Errorf("%w: %s", ai.ErrSchemaValidation, verrs)
@@ -92,7 +92,7 @@ func (v *validatingProvider) Execute(ctx context.Context, req ai.Request) (*ai.R
 }
 
 func (v *validatingProvider) effectiveStrictness(req ai.Request) api.SchemaStrictness {
-	switch req.Prompt.SchemaStrictness {
+	switch req.Prompt.SchemaStrictness.Canonical() {
 	case api.SchemaStrictnessDisabled:
 		return api.SchemaStrictnessNone
 	case api.SchemaStrictnessNone:
@@ -102,11 +102,11 @@ func (v *validatingProvider) effectiveStrictness(req ai.Request) api.SchemaStric
 		}
 		provider, _ := runtime.ModelProvider()
 		if req.Prompt.HasSchema() && ai.UsesAnthropicSchemaSubset(provider, runtime.Mode) {
-			return api.SchemaStrictnessRetry
+			return api.SchemaStrictnessRepair
 		}
 		return api.SchemaStrictnessNone
 	default:
-		return req.Prompt.SchemaStrictness
+		return req.Prompt.SchemaStrictness.Canonical()
 	}
 }
 
