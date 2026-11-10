@@ -6,15 +6,19 @@ import (
 )
 
 func TestSchemaStrictnessValidate(t *testing.T) {
-	for _, s := range []SchemaStrictness{SchemaStrictnessNone, SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry} {
+	for _, s := range []SchemaStrictness{"", "none", "warning", "error", "repair", "retry"} {
 		if err := s.Validate(); err != nil {
 			t.Errorf("SchemaStrictness(%q).Validate() = %v, want nil", s, err)
 		}
 	}
-	if err := SchemaStrictness("strict").Validate(); err == nil {
-		t.Error("SchemaStrictness(strict).Validate() should fail (only none/warning/error/retry)")
+	const wantErr = `invalid schemaStrictness "strict"; want one of: none, warning, error, repair (retry is an alias)`
+	if err := SchemaStrictness("strict").Validate(); err == nil || err.Error() != wantErr {
+		t.Errorf("SchemaStrictness(strict).Validate() = %v, want %q", err, wantErr)
 	}
-	if want := []SchemaStrictness{SchemaStrictnessDisabled, SchemaStrictnessWarning, SchemaStrictnessError, SchemaStrictnessRetry}; !reflect.DeepEqual(AllSchemaStrictness(), want) {
+	if got := SchemaStrictness("retry").Canonical(); got != "repair" {
+		t.Errorf("SchemaStrictness(retry).Canonical() = %q, want repair", got)
+	}
+	if want := []SchemaStrictness{"none", "warning", "error", "repair"}; !reflect.DeepEqual(AllSchemaStrictness(), want) {
 		t.Errorf("AllSchemaStrictness() = %v, want %v", AllSchemaStrictness(), want)
 	}
 }

@@ -37,7 +37,7 @@ type Prompt struct {
 	// SchemaStrictness governs how a response that fails JSON-schema validation is
 	// handled: "" uses the runtime default (Anthropic structured output retries,
 	// others skip post-validation); "none" always skips; "warning" logs and
-	// continues; "error" fails; "retry" re-asks the model with the validation
+	// continues; "error" fails; "repair" (alias "retry") re-asks the model with the validation
 	// error, then fails. Only meaningful alongside a schema (Schema or SchemaJSON).
 	SchemaStrictness SchemaStrictness `json:"schemaStrictness,omitempty" yaml:"schemaStrictness,omitempty" pretty:"-"`
 	// Metadata is arbitrary caller metadata. (ai.Request.Metadata)
