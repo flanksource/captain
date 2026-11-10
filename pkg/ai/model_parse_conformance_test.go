@@ -58,7 +58,7 @@ var agreedCases = []parseCase{
 	// Family aliases resolve to the exact current registry model.
 	{in: "sonnet", want: model("claude-sonnet-5-5", api.Anthropic, api.ModeAgent, "")},
 	{in: "opus", want: model("claude-opus-5-5", api.Anthropic, api.ModeAgent, "")},
-	{in: "fable", want: model("claude-fable-5-1", api.Anthropic, api.ModeAgent, "")},
+	{in: "fable", want: model("claude-fable-5-2", api.Anthropic, api.ModeAgent, "")},
 
 	// A superseded exact id is rewritten to its successor.
 	{in: "claude-sonnet-4-5", want: model("claude-sonnet-4-6", api.Anthropic, api.ModeAgent, "")},
@@ -188,7 +188,7 @@ var _ = Describe("model parse conformance", func() {
 			Expect(err).NotTo(HaveOccurred())
 			modes := make([]api.RuntimeMode, 0, len(models))
 			for _, m := range models {
-				Expect(m.Name).To(Equal("claude-fable-5-1"))
+				Expect(m.Name).To(Equal("claude-fable-5-2"))
 				Expect(m.Provider).To(Equal(api.Anthropic))
 				modes = append(modes, m.Mode)
 			}
