@@ -8,6 +8,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/approval"
+	"github.com/flanksource/captain/pkg/promptrun"
 	"github.com/flanksource/commons/logger"
 	"golang.org/x/term"
 )
@@ -73,7 +74,7 @@ func terminalApprovals(rendered PromptRenderResult) bool {
 // happen. A relocated run comes back whole; a direct call buffers a schema
 // prompt, while the runner streams it.
 func streamsToTerminal(rendered PromptRenderResult, noStream bool) bool {
-	if noStream || relocatesRun(rendered.Config) {
+	if noStream || promptrun.Relocates(rendered.Config) {
 		return false
 	}
 	return requiresRunner(rendered.Input) || !rendered.Input.Prompt.HasSchema()
