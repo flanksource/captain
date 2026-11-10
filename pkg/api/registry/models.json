@@ -1,5 +1,35 @@
 [
   {
+    "id": "claude-fable-5-2",
+    "provider": "anthropic",
+    "family": "fable",
+    "version": "5.2",
+    "label": "Claude Fable 5.2",
+    "releaseDate": "2026-11-09",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 8,
+      "output": 40,
+      "cacheRead": 0.2,
+      "cacheWrite": 10
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "defaultEffort": "high"
+  },
+  {
     "id": "claude-haiku-5-5",
     "provider": "anthropic",
     "family": "haiku",
@@ -109,7 +139,6 @@
       "image/*",
       "application/pdf"
     ],
-    "preferred": true,
     "adaptiveThinking": true,
     "supportedEfforts": [
       "low",
@@ -1225,6 +1254,33 @@
     ]
   },
   {
+    "id": "gemini-pro-latest",
+    "provider": "google",
+    "family": "gemini",
+    "version": "pro-latest",
+    "label": "Gemini Pro Latest",
+    "releaseDate": "2026-02-19",
+    "reasoning": true,
+    "temperature": true,
+    "contextWindow": 1048576,
+    "cost": {
+      "input": 2,
+      "output": 12,
+      "cacheRead": 0.2
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "video/*",
+      "audio/*",
+      "application/pdf"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  {
     "id": "gemini-3-flash-preview",
     "provider": "google",
     "family": "gemini",
@@ -1344,7 +1400,7 @@
     "releaseDate": "2026-10-17",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "cost": {
       "input": 0.15,
       "output": 0.6,
@@ -1365,7 +1421,7 @@
     "releaseDate": "2026-10-17",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "cost": {
       "input": 0.15,
       "output": 0.6,
@@ -1384,7 +1440,7 @@
     "releaseDate": "2026-10-17",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "cost": {
       "input": 0.15,
       "output": 0.6,
@@ -1400,10 +1456,10 @@
     "family": "deepseek",
     "version": "v4-pro",
     "label": "DeepSeek V4 Pro",
-    "releaseDate": "2026-08-12",
+    "releaseDate": "2026-08-13",
     "reasoning": true,
     "temperature": true,
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "cost": {
       "input": 0.66,
       "output": 1.98,
