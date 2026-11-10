@@ -275,7 +275,7 @@ func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID uuid.UUID, groupValues 
 	}
 	var total float64
 	if err := db.budgetSpendStatement(ctx, ruleID, groupJSON, since).
-		Select(`COALESCE(SUM(CASE WHEN calls.provider_cost_usd > 0 THEN calls.provider_cost_usd ELSE calls.input_cost + calls.output_cost + calls.reasoning_cost + calls.cache_read_cost + calls.cache_write_cost END), 0)`).
+		Select("COALESCE(SUM(" + ModelCallCostUSD + "), 0)").
 		Scan(&total).Error; err != nil {
 		return 0, fmt.Errorf("aggregate completed budget spend: %w", err)
 	}
