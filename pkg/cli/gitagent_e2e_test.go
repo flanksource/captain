@@ -248,7 +248,9 @@ func (h *host) serve(port string, args ...string) {
 // waits until none is alive. The sidecar launches its agent in a new session
 // and releases it (gitagent.LaunchAgent), and serve's hooks and the dispatch's
 // git children outlive a killed parent, so killing serve alone leaves writers
-// in the host's temp directories while the test removes them.
+// in the host's temp directories while the test removes them. It runs inside
+// cleanups, so it reports failures without FailNow and returns, leaving the
+// caller's remaining cleanup (draining Wait) to run.
 func (h *host) killProcesses() {
 	h.t.Helper()
 	ctx := context.Background()
@@ -256,7 +258,8 @@ func (h *host) killProcesses() {
 		Environment: &clickyprocess.EnvironmentOptions{Keys: []string{"HOME"}},
 	})
 	if err != nil {
-		h.t.Fatalf("listing processes to stop for %s: %v", h.home, err)
+		h.t.Errorf("listing processes to stop for %s: %v", h.home, err)
+		return
 	}
 	var pids []int
 	for _, p := range snapshot.All() {
@@ -271,14 +274,16 @@ func (h *host) killProcesses() {
 	for len(pids) > 0 {
 		snapshot, err := clickyprocess.Discover(ctx, clickyprocess.SnapshotOptions{})
 		if err != nil {
-			h.t.Fatalf("listing processes stopped for %s: %v", h.home, err)
+			h.t.Errorf("listing processes stopped for %s: %v", h.home, err)
+			return
 		}
 		pids = slices.DeleteFunc(pids, func(pid int) bool {
 			p, found := snapshot.Get(pid)
 			return !found || !p.Active
 		})
 		if len(pids) > 0 && time.Now().After(deadline) {
-			h.t.Fatalf("processes of %s survived SIGKILL: %v", h.home, pids)
+			h.t.Errorf("processes of %s survived SIGKILL: %v", h.home, pids)
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
