@@ -15,18 +15,21 @@ import (
 type Actor struct {
 	Atespace string `json:"atespace"`
 	Name     string `json:"name"`
-	// State is resuming, running, suspending, suspended, crashed, deleting or reverting.
+	// State is resuming, running, suspending, suspended, crashed, deleting or reverting;
+	// unspecified when Substrate doesn't say, or the state's number for one this client doesn't know.
 	State string `json:"state"`
 	// Created is when the actor was created; zero when Substrate doesn't say.
 	Created time.Time `json:"created,omitzero"`
 }
 
-// Worker is one worker pod that actors run on.
+// Worker is one of substrate's workers, the pods that actors run on. Name is Substrate's name for
+// it.
 type Worker struct {
 	Name string `json:"name"`
 	Pool string `json:"pool"`
 	Node string `json:"node"`
-	// State is active, draining or unavailable.
+	// State is active, draining or unavailable; unspecified when the worker hasn't reported one,
+	// or the state's number for one this client doesn't know.
 	State string `json:"state"`
 	// Capacity is what the worker can hold, and Allocated what its actors are allocated of it,
 	// their runtime's overhead included.
