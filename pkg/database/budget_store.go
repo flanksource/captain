@@ -259,25 +259,24 @@ func (db *DB) budgetSpendStatement(ctx context.Context, ruleID uuid.UUID, groupJ
 
 // BudgetSpendUSD derives completed spend from the model-call ledger. Any
 // non-USD completed call in the group fails closed because no conversion rate
-// is authoritative here.
+// is authoritative here. One statement counts those calls and totals the spend,
+// so a call completing between the two can't be priced at zero unnoticed.
 func (db *DB) BudgetSpendUSD(ctx context.Context, ruleID uuid.UUID, groupValues map[string]string, since time.Time) (float64, error) {
 	groupJSON, err := json.Marshal(cloneStrings(groupValues))
 	if err != nil {
 		return 0, fmt.Errorf("encode budget group: %w", err)
 	}
-	var nonUSD int64
-	if err := db.budgetSpendStatement(ctx, ruleID, groupJSON, since).
-		Where("upper(calls.currency) <> 'USD'").Count(&nonUSD).Error; err != nil {
-		return 0, fmt.Errorf("inspect budget ledger currency: %w", err)
+	var spend struct {
+		NonUSD int64
+		Total  float64
 	}
-	if nonUSD > 0 {
-		return 0, fmt.Errorf("budget ledger contains %d completed non-USD model calls", nonUSD)
-	}
-	var total float64
 	if err := db.budgetSpendStatement(ctx, ruleID, groupJSON, since).
-		Select("COALESCE(SUM(" + ModelCallCostUSD + "), 0)").
-		Scan(&total).Error; err != nil {
+		Select("count(*) FILTER (WHERE upper(calls.currency) <> 'USD') AS non_usd, COALESCE(SUM(" + ModelCallCostUSD + "), 0) AS total").
+		Scan(&spend).Error; err != nil {
 		return 0, fmt.Errorf("aggregate completed budget spend: %w", err)
 	}
-	return total, nil
+	if spend.NonUSD > 0 {
+		return 0, fmt.Errorf("budget ledger contains %d completed non-USD model calls", spend.NonUSD)
+	}
+	return spend.Total, nil
 }
