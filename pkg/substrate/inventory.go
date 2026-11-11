@@ -13,28 +13,32 @@ import (
 
 // Actor is one actor in a substrate: an environment, or anything else Substrate runs.
 type Actor struct {
-	Atespace, Name string
+	Atespace string `json:"atespace"`
+	Name     string `json:"name"`
 	// State is resuming, running, suspending, suspended, crashed, deleting or reverting.
-	State string
+	State string `json:"state"`
 	// Created is when the actor was created; zero when Substrate doesn't say.
-	Created time.Time
+	Created time.Time `json:"created,omitzero"`
 }
 
 // Worker is one worker pod that actors run on.
 type Worker struct {
-	Name, Pool, Node string
+	Name string `json:"name"`
+	Pool string `json:"pool"`
+	Node string `json:"node"`
 	// State is active, draining or unavailable.
-	State string
+	State string `json:"state"`
 	// Capacity is what the worker can hold, and Allocated what its actors are allocated of it,
 	// their runtime's overhead included.
-	Capacity, Allocated Resources
+	Capacity  Resources `json:"capacity"`
+	Allocated Resources `json:"allocated"`
 }
 
 // Resources is an amount of a worker's CPU, memory and actor slots.
 type Resources struct {
-	CPUMillicores int64
-	MemoryBytes   int64
-	Actors        int32
+	CPUMillicores int64 `json:"cpuMillicores"`
+	MemoryBytes   int64 `json:"memoryBytes"`
+	Actors        int32 `json:"actors"`
 }
 
 // listPageSize is how many items one list call asks Substrate for.

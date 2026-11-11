@@ -3,6 +3,7 @@
 package substrate_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -64,4 +65,25 @@ func TestListWorkersReportsTheirCapacityAndWhatActorsUse(t *testing.T) {
 	got, err := dial(t, server).ListWorkers(testContext(t))
 	require.NoError(t, err)
 	assert.Equal(t, workers, got)
+}
+
+func TestInventoryEncodesAsJSON(t *testing.T) {
+	worker, err := json.Marshal(substrate.Worker{
+		Name: "pool-a-0", Pool: "pool-a", Node: "node-1", State: "active",
+		Capacity:  substrate.Resources{CPUMillicores: 4000, MemoryBytes: 8, Actors: 10},
+		Allocated: substrate.Resources{CPUMillicores: 1500, MemoryBytes: 2, Actors: 3},
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"name":"pool-a-0","pool":"pool-a","node":"node-1","state":"active",
+		"capacity":{"cpuMillicores":4000,"memoryBytes":8,"actors":10},
+		"allocated":{"cpuMillicores":1500,"memoryBytes":2,"actors":3}}`, string(worker))
+
+	created := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	actors, err := json.Marshal([]substrate.Actor{
+		{Atespace: "ate-env", Name: "run-1", State: "running", Created: created},
+		{Atespace: "ate-env", Name: "run-2", State: "crashed"},
+	})
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"atespace":"ate-env","name":"run-1","state":"running","created":"2026-11-11T10:00:00Z"},
+		{"atespace":"ate-env","name":"run-2","state":"crashed"}]`, string(actors), "a zero creation time is left out")
 }
