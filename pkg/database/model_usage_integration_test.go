@@ -51,12 +51,8 @@ var _ = Describe("Model usage aggregation", func() {
 		db := openSchemaScopedDatabases(ctx, "captain_model_usage", "agent_usage_scope_context")[0]
 		since := time.Now().Add(-time.Hour)
 
-		record := func(title string, usage api.Usage, providerCostUSD float64) {
-			recordModelCall(ctx, db, title, usage, &api.Cost{}, providerCostUSD)
-		}
-
-		record(tenantTitle, api.Usage{InputTokens: tenantInputTokens, OutputTokens: tenantOutputToken}, tenantProviderCostUSD)
-		record(otherTenantTitle, api.Usage{InputTokens: 500, OutputTokens: 500}, otherProviderCostUSD)
+		recordModelCall(ctx, db, tenantTitle, api.Usage{InputTokens: tenantInputTokens, OutputTokens: tenantOutputToken}, &api.Cost{}, tenantProviderCostUSD)
+		recordModelCall(ctx, db, otherTenantTitle, api.Usage{InputTokens: 500, OutputTokens: 500}, &api.Cost{}, otherProviderCostUSD)
 
 		// Stands in for an embedding application's ownership table: it knows
 		// which sessions belong to the tenant, Captain knows what they cost.
