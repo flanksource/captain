@@ -200,7 +200,7 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/captain/sessions/live", handleSessionsLive())
 	mux.HandleFunc("GET /api/captain/sessions/throughput", handleSessionsThroughput())
 	mux.HandleFunc("POST /api/captain/hooks/{provider}", handleMonitorHookEvent())
-	mux.HandleFunc("GET /api/captain/ai/permissions/catalog", handlePermissionCatalog(cwd))
+	mux.Handle("GET /api/captain/ai/permissions/catalog", PermissionCatalogHandler(cwd))
 	mux.HandleFunc("GET /api/captain/ai/prompt/schema", handlePromptSchema())
 	registerAdapterSchemaHandlers(mux)
 	registerSandboxHandlers(mux)
@@ -213,11 +213,14 @@ func RunServe(ctx context.Context, rootCmd *cobra.Command, opts ServeOptions, ve
 	mux.HandleFunc("GET /api/attachments/{id}", handleAttachmentGet(attachmentStore))
 	// Task tracking: /api/captain/tasks, /tasks/stream, /tasks/{id}, and the
 	// /tasks/runs/stream run-list SSE the clicky-ui useTaskRuns hook subscribes to.
+	// /tasks/stream multiplexes the live entries of the captain sessions its
+	// tasks name, read from the same database SessionHandler reads them from.
+	task.RegisterSessionSource(captainSessionType, captainSessionSource{open: captainDB})
 	task.RegisterHandlers(route.NewRouter(mux), "/api/captain")
 	// Live session history and controls for a prompt run.
 	mux.HandleFunc("GET /api/captain/prompt/names", handleNamedPrompts)
 	mux.Handle("/api/captain/prompt/runs/", http.StripPrefix("/api/captain/prompt/runs", PromptRunHandler()))
-	mux.Handle("/api/captain/sessions/", http.StripPrefix("/api/captain/sessions", SessionHandler()))
+	mux.Handle(captainSessionsMount+"/", http.StripPrefix(captainSessionsMount, SessionHandler()))
 	chatHandler := chat.Handler()
 	mux.Handle("/api/chat", chatHandler)
 	mux.Handle("/api/chat/", chatHandler)

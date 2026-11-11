@@ -49,6 +49,7 @@ func (c projectionContributor) Contribute(_ context.Context, aggregate *session.
 	metadata := c.facts.Metadata
 	setString(&aggregate.Model, metadata.Model)
 	setString(&aggregate.Provider, metadata.Provider)
+	setString(&aggregate.Name, metadata.Name)
 	if len(aggregate.Files.Read) == 0 && len(aggregate.Files.Written) == 0 {
 		aggregate.Files = metadata.Files
 	}

@@ -3,12 +3,12 @@ package history
 import (
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/codexhome"
 	"github.com/flanksource/captain/pkg/jsonl"
 	"github.com/segmentio/encoding/json"
 )
@@ -400,23 +400,22 @@ func sortedCodexPendingCalls(pending map[string]codexPendingCall) []codexPending
 	return calls
 }
 
+// FindCodexSessionFiles lists the rollouts under every home codex writes to:
+// the user's, and the isolated one captain starts read-only runs in.
 func FindCodexSessionFiles() ([]string, error) {
-	home, err := os.UserHomeDir()
+	roots, err := codexhome.SessionRoots()
 	if err != nil {
 		return nil, err
 	}
-	sessionsDir := filepath.Join(home, ".codex", "sessions")
-	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
-		return nil, nil
+	rollouts, err := walkCodexRollouts(roots, time.Time{})
+	if err != nil {
+		return nil, err
 	}
-	var files []string
-	err = filepath.Walk(sessionsDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() && strings.HasSuffix(path, ".jsonl") {
-			files = append(files, path)
-		}
-		return nil
-	})
-	return files, err
+	files := make([]string, 0, len(rollouts))
+	for _, rollout := range rollouts {
+		files = append(files, rollout.Path)
+	}
+	return files, nil
 }
 
 func IsCodexSession(path string) bool {

@@ -76,6 +76,7 @@ type PromptRunCheckpoint struct {
 type PromptRunFilter struct {
 	SessionID          *uuid.UUID
 	ExecutionSessionID *uuid.UUID
+	ParentRunID        *uuid.UUID
 	State              *PromptRunState
 }
 

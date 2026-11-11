@@ -17,8 +17,8 @@ after:
     commands: ["git worktree prune"]
 `), &wf)).To(Succeed())
 		Expect(wf.After).To(Equal([]AfterStep{
-			{Cwd: "/src/repo", Commands: []string{"git merge --ff-only topic"}},
-			{When: CommitWhenAlways, Commands: []string{"git worktree prune"}},
+			{Cwd: "/src/repo", HookAction: HookAction{Commands: []string{"git merge --ff-only topic"}}},
+			{When: CommitWhenAlways, HookAction: HookAction{Commands: []string{"git worktree prune"}}},
 		}))
 		Expect(wf.After[0].EffectiveWhen()).To(Equal(CommitWhenVerify))
 		Expect(wf.After[1].EffectiveWhen()).To(Equal(CommitWhenAlways))
@@ -30,8 +30,9 @@ after:
 			err := (&Workflow{After: []AfterStep{step}}).Validate()
 			Expect(err).To(MatchError(ContainSubstring(want)))
 		},
-		Entry("unknown gate", AfterStep{When: "sometimes", Commands: []string{"true"}}, "workflow.after[0].when"),
-		Entry("no commands", AfterStep{}, "workflow.after[0].commands is empty"),
-		Entry("blank command", AfterStep{Commands: []string{"true", "  "}}, "workflow.after[0].commands[1] is empty"),
+		Entry("unknown gate", AfterStep{When: "sometimes", HookAction: HookAction{Commands: []string{"true"}}}, "workflow.after[0]: when"),
+		Entry("no action", AfterStep{}, "workflow.after[0]: declares no action"),
+		Entry("blank command", AfterStep{HookAction: HookAction{Commands: []string{"true", "  "}}}, "workflow.after[0]: commands[1] is empty"),
+		Entry("cwd on a tool", AfterStep{Cwd: "sub", HookAction: HookAction{Tool: "t"}}, "cwd is not read by a tool step"),
 	)
 })

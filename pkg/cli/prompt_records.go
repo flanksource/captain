@@ -69,32 +69,7 @@ func listPromptRecordsFromSource(source promptSource) ([]promptRecord, error) {
 		return records, err
 	}
 
-	err := filepath.WalkDir(source.Root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if name == ".git" || name == "node_modules" || name == "vendor" || name == "dist" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 || !strings.HasSuffix(name, ".prompt") {
-			return nil
-		}
-		rel, err := filepath.Rel(source.Root, path)
-		if err != nil {
-			return err
-		}
-		info, _ := d.Info()
-		add(rel, info)
-		return nil
-	})
-	if errors.Is(err, fs.ErrNotExist) && source.Implicit {
-		return records, nil
-	}
-	return records, err
+	return listLocalPromptRecords(source)
 }
 
 type promptRecordOptions struct {
@@ -123,6 +98,21 @@ func resolvePromptRecord(ctx context.Context, options promptRecordOptions) (prom
 			if source.Kind != ref.Kind || source.ID != ref.SourceID {
 				continue
 			}
+			if source.FS == nil {
+				if strings.HasSuffix(ref.RelPath, ".prompt") {
+					return localPromptRecord(source, ref.RelPath)
+				}
+				records, err := listPromptRecordsFromSource(source)
+				if err != nil {
+					return promptRecord{}, err
+				}
+				for _, record := range records {
+					if record.Rel == ref.RelPath {
+						return record, nil
+					}
+				}
+				return promptRecord{}, fmt.Errorf("prompt %q not found in %s", ref.RelPath, source.Label)
+			}
 			path := ref.RelPath
 			if source.Root != "" {
 				path = filepath.Join(source.Root, filepath.FromSlash(ref.RelPath))
@@ -136,8 +126,8 @@ func resolvePromptRecord(ctx context.Context, options promptRecordOptions) (prom
 
 func resolvePromptRecordByName(sources []promptSource, name string) (promptRecord, error) {
 	bareName := strings.TrimSuffix(name, ".prompt")
-	var matches []promptRecord
-	for _, source := range sources {
+	for _, source := range promptLookupSources(sources) {
+		var matches []promptRecord
 		records, err := listPromptRecordsFromSource(source)
 		if err != nil {
 			return promptRecord{}, err
@@ -148,19 +138,19 @@ func resolvePromptRecordByName(sources []promptSource, name string) (promptRecor
 				matches = append(matches, record)
 			}
 		}
-	}
-	switch len(matches) {
-	case 0:
-		return promptRecord{}, fmt.Errorf("prompt %q not found", name)
-	case 1:
-		return matches[0], nil
-	default:
+		if len(matches) == 0 {
+			continue
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
 		paths := make([]string, len(matches))
 		for i, match := range matches {
 			paths[i] = match.Source.Label + ":" + match.Rel
 		}
 		return promptRecord{}, fmt.Errorf("prompt name %q is ambiguous (%s); use a prompt id or path", name, strings.Join(paths, ", "))
 	}
+	return promptRecord{}, fmt.Errorf("prompt %q not found", name)
 }
 
 func isBarePromptFilename(id string) bool {
@@ -184,25 +174,20 @@ func filePromptRecord(id string) (promptRecord, error) {
 	if err != nil {
 		return promptRecord{}, err
 	}
-	info, err := os.Stat(abs)
+	record, err := localPromptRecord(promptSource{Kind: "file", ID: "file", Label: "File", Root: filepath.Dir(abs)}, filepath.Base(abs))
 	if err != nil {
 		return promptRecord{}, fmt.Errorf("prompt file %s: %w", id, err)
 	}
-	if info.IsDir() {
-		return promptRecord{}, fmt.Errorf("%s is a directory, not a .prompt file", id)
-	}
-	return promptRecord{
-		Source:    promptSource{Kind: "file", ID: "file", Label: "File", Root: filepath.Dir(abs)},
-		ID:        id,
-		Path:      abs,
-		Rel:       filepath.Base(abs),
-		UpdatedAt: modTimeString(info),
-	}, nil
+	record.ID = id
+	return record, nil
 }
 
 func promptSummary(record promptRecord) (PromptSummary, error) {
 	content, err := readPromptContent(record)
 	if err != nil {
+		if record.LinkError != nil || record.ReadPath != "" {
+			return promptLinkWarning(record, err), nil
+		}
 		return PromptSummary{}, err
 	}
 	return promptSummaryOrRepair(record, content), nil
@@ -224,6 +209,9 @@ func promptSummaryOrRepair(record promptRecord, content string) PromptSummary {
 func promptDetail(record promptRecord) (PromptDetail, error) {
 	content, err := readPromptContent(record)
 	if err != nil {
+		if record.LinkError != nil || record.ReadPath != "" {
+			return PromptDetail{PromptSummary: promptLinkWarning(record, err)}, nil
+		}
 		return PromptDetail{}, err
 	}
 	if record.UpdatedAt == "" {
@@ -305,7 +293,7 @@ func promptRunModels(models []api.Model) []api.Model {
 
 func promptSummaryFromContent(record promptRecord, content string) (PromptSummary, error) {
 	tmpl := promptlib.Load(content)
-	req, cfg, err := tmpl.Render(promptlib.RenderOptions{Data: map[string]any{}, Declared: true})
+	req, cfg, err := tmpl.Render(promptlib.RenderOptions{Data: map[string]any{}, Declared: true, Dir: promptDir(record)})
 	if err != nil {
 		return PromptSummary{}, err
 	}
@@ -345,6 +333,9 @@ func basePromptSummary(record promptRecord) PromptSummary {
 }
 
 func readPromptContent(record promptRecord) (string, error) {
+	if record.LinkError != nil {
+		return "", record.LinkError
+	}
 	if record.Source.FS != nil {
 		data, err := fs.ReadFile(record.Source.FS, record.Rel)
 		if err != nil {
@@ -352,7 +343,7 @@ func readPromptContent(record promptRecord) (string, error) {
 		}
 		return string(data), nil
 	}
-	file, err := openLocalPromptFile(record, false)
+	file, err := openPromptReadFile(record)
 	if err != nil {
 		return "", err
 	}
@@ -368,7 +359,11 @@ func inspectPrompt(content string, data map[string]any) (promptInspection, error
 	if data == nil {
 		data = map[string]any{}
 	}
-	prepared, declarations, err := promptlib.PrepareSchemaSource(content)
+	source, err := promptlib.RenderFrontmatter(content, data)
+	if err != nil {
+		return promptInspection{}, err
+	}
+	prepared, declarations, err := promptlib.PrepareSchemaSource(source)
 	if err != nil {
 		return promptInspection{}, err
 	}

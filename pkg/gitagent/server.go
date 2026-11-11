@@ -104,6 +104,8 @@ func handleSession(s ssh.Session, root string, cfg ServerConfig) {
 	switch cmd[0] {
 	case EnrollCommand:
 		handleEnroll(s, cfg, fingerprint, cmd)
+	case TunnelCommand:
+		handleTunnel(s, root, cfg, fingerprint, cmd)
 	case "git-receive-pack", "git", "git-upload-pack", "git-upload-archive":
 		handleGit(s, root, cfg, fingerprint, cmd)
 	default:
@@ -192,6 +194,43 @@ func agentDispatchURL(req EnrollRequest, remote net.Addr, repoPath string) strin
 	}
 	return "ssh://captain@" + net.JoinHostPort(host, port) + "/" + strings.TrimPrefix(repoPath, "/")
 }
+
+// handleTunnel splices the session to one of a task's registered services:
+// `captain-tunnel <repo> <task> <service>`. Only an enrolled key gets this far,
+// and OpenService confines it to its own task's services.
+func handleTunnel(s ssh.Session, root string, cfg ServerConfig, fingerprint string, cmd []string) {
+	if len(cmd) != 4 {
+		fmt.Fprintf(s.Stderr(), "captain: usage: %s <repo> <task> <service>\n", TunnelCommand)
+		_ = s.Exit(1)
+		return
+	}
+	agent, ok := cfg.Directory.AgentByFingerprint(fingerprint)
+	if !ok {
+		fmt.Fprintf(s.Stderr(), "captain: key %s is not enrolled\n", fingerprint)
+		_ = s.Exit(1)
+		return
+	}
+	repo, err := ResolveRepoPath(root, cmd[1])
+	if err != nil {
+		fmt.Fprintf(s.Stderr(), "captain: %v\n", err)
+		_ = s.Exit(1)
+		return
+	}
+	conn, err := OpenService(repo, agent, cmd[2], cmd[3])
+	if err != nil {
+		fmt.Fprintf(s.Stderr(), "captain: tunnel refused: %v\n", err)
+		_ = s.Exit(1)
+		return
+	}
+	Splice(sessionStream{s}, conn)
+	_ = s.Exit(0)
+}
+
+// sessionStream half-closes an SSH session's stdout when the service side is
+// done, rather than tearing the session down before its exit status is sent.
+type sessionStream struct{ ssh.Session }
+
+func (s sessionStream) Close() error { return s.CloseWrite() }
 
 func handleGit(s ssh.Session, root string, cfg ServerConfig, fingerprint string, cmd []string) {
 	repoArg, err := parseReceivePack(cmd)

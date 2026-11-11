@@ -71,24 +71,18 @@ func handlePromptRunControl(chats *chatBroker, control chatControl) http.Handler
 	}
 }
 
-func handlePromptRunStop(runs *runBroker, chats *chatBroker) http.HandlerFunc {
+func handlePromptRunStop() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		runID := r.PathValue("runId")
-		stream, ok := runs.get(runID)
-		if !ok {
+		switch err := StopPromptRun(r.PathValue("runId")); {
+		case errors.Is(err, ErrUnknownPromptRun):
 			http.Error(w, "unknown run", http.StatusNotFound)
-			return
-		}
-		if chat, found := chats.getRun(runID); found {
-			if !chat.stop() {
-				writeChatError(w, newChatError(http.StatusConflict, "run is terminal"))
-				return
-			}
-		} else if !stream.requestStop() {
+		case errors.Is(err, ErrPromptRunTerminal):
 			writeChatError(w, newChatError(http.StatusConflict, "run is terminal"))
-			return
+		case err != nil:
+			writeChatError(w, newChatError(http.StatusInternalServerError, err.Error()))
+		default:
+			writeChatJSON(w, http.StatusAccepted, map[string]string{"status": "stopping"})
 		}
-		writeChatJSON(w, http.StatusAccepted, map[string]string{"status": "stopping"})
 	}
 }
 
@@ -189,7 +183,7 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 	if messageID == "" {
 		messageID = newMessageID()
 	}
-	run, err := launchAsyncRun(item.CaptainID, rendered, true)
+	run, err := launchAsyncRun(promptLaunch{ID: item.CaptainID, Rendered: rendered, Chat: true})
 	if err != nil {
 		return ChatMessageResponse{}, err
 	}

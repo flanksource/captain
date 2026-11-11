@@ -80,6 +80,9 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	if err != nil {
 		return api.RuntimeObservation{}, err
 	}
+	if rendered.Skip != nil {
+		return api.RuntimeObservation{}, fmt.Errorf("prompt observe cannot observe a run its input hooks skip: %s", rendered.Skip.Reason)
+	}
 	if rendered.ValidationError != "" {
 		return api.RuntimeObservation{}, errors.New(rendered.ValidationError)
 	}
@@ -91,6 +94,9 @@ func observePromptAction(ctx context.Context, id string, flags map[string]string
 	}
 	if workflowConfigured(rendered.Input.Workflow) {
 		return api.RuntimeObservation{}, errors.New("prompt observe v1 does not support workflow-backed prompts")
+	}
+	if len(rendered.Input.Tools) > 0 {
+		return api.RuntimeObservation{}, errors.New("prompt observe v1 does not support prompts with inline tools")
 	}
 
 	runtime := rendered.Config.Model

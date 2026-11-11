@@ -1,0 +1,78 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Sandboxes
+description: Runtime isolation, container images, git-agent deployments and sandbox credentials.
+section: Reference
+---
+
+# Sandboxes
+
+Runtime selection and sandbox selection are separate. A runtime chooses how a model executes; `sandbox` chooses where and under which restrictions its work runs. The CLI accepts `--sandbox off|native|docker|git-agent` or a configured backend name. A prompt can declare a scalar selector or an object with its backend, worker and submit policy. Inspect `captain prompt --schema` for the current typed shapes.
+
+`permissions.access: read-only` is a portable access intent compiled per runtime; it is not a substitute for choosing an execution environment. See [Portable access](/prompts/runtime/#portable-access) for exact and approximate enforcement and rejected combinations.
+
+## Container workflow
+
+```sh
+captain container
+captain container list
+captain container generate --help
+captain container build --preset golang
+captain container run --help
+captain sandbox presets
+```
+
+Discovery finds agent configuration, hooks, commands, MCP settings and token/environment passthrough for the generated context. Generation/build options include interactive selection, base image, preset, and copy versus mount mode. Inspect each command's help before building or launching its environment.
+
+## Agent image
+
+The embedded base image definition lives under `pkg/container/base`: `Dockerfile`, `deps.yaml` and `entrypoint.sh`. It extends `flanksource/base-image` and installs Claude, Codex and Gemini CLIs, the Claude Agent bridge, Captain/Gavel/Repomap, Go tools, Node/pnpm, browser tooling and shell utilities. The image creates a user matching the requested UID/GID, switches execution through `gosu`, and uses `/workspace`.
+
+```sh
+task image:base
+```
+
+This builds the base locally. The `image:lab` task builds and pushes an overlay containing the working tree's binary to its configured registry; inspect [Taskfile.yaml](https://github.com/flanksource/captain/blob/main/Taskfile.yaml) for registry overrides before publishing. GitHub release credentials, when supplied for image provisioning, pass through BuildKit secrets rather than image layers. The multi-architecture Docker Hub/GHCR release workflow is manually dispatched after its tag's release exists.
+
+## Git-agent sidecars
+
+`captain sandbox git-agent` enrolls remote workers and dispatches through the supervisor mailbox. Deployment requires a live mailbox presenting the supervisor's key and reachable addresses in both directions: worker to supervisor and supervisor to worker. It refuses missing topology rather than enrolling an unusable worker.
+
+Preview a Docker deployment:
+
+```sh
+captain sandbox git-agent deploy worker-01 --target docker --dry-run
+```
+
+Run `captain sandbox git-agent serve --role mailbox --listen :7422` on the supervisor for the standalone mailbox. The regular `captain serve` also hosts a git-agent endpoint; remote HTTPS enrollment uses the address published by that server. Kubernetes deployment needs an explicit reachable `--supervisor-address` unless Captain is running in the cluster.
+
+Deploy applies by default; `--dry-run` prints intended mutations. Sidecars run unprivileged, drop capabilities, use a read-only root with scratch space, and receive no container runtime socket. `--cpu-limit`, `--memory-limit`, `--storage` and `--image` control resources. The Captain token is mounted as a file. Undeploy removes the workload and revokes its key/token; shared provider credential secrets remain intact.
+
+See [Serve](/serve/#remote-access-and-tls) for TLS and API/git token scopes. Enrolled agents pin the supervisor certificate; it is reused rather than silently replaced. Pool enrollment shares a durable token across members; a token bound to one worker remains the default.
+
+## Provider credentials
+
+Subscription credentials need more than an API-key environment variable. Claude stores OAuth state in its keychain or credential file; Codex stores its login in its auth file. `captain sandbox credentials` copies usable access tokens with refresh material removed. Claude copies also omit unrelated MCP OAuth secrets.
+
+```sh
+captain sandbox credentials status
+captain sandbox credentials sync --directory ~/.captain/sandbox/credentials
+```
+
+Publishing is opt-in in `~/.captain.yaml`:
+
+```yaml
+credentials:
+  refreshMargin: 5m
+  publish:
+    - providers: [claude, codex]
+      directory: ~/.captain/sandbox/credentials
+    - providers: [claude, codex]
+      kubernetes:
+        namespace: agents
+        secret: captain-agent-credentials
+```
+
+`captain serve` republishes according to the source credential's expiry. An expired source is refused; use the host CLI to refresh its login. Local srt/container backends consume redacted credentials through their `tokens` block. Captain points the agent to the replacement config directory and denies reads of the original credential file, retaining access to other settings/history.
+
+A deployed sidecar mounts the credentials as a read-only directory at `/run/captain/credentials` and copies each to its CLI's expected path. Use `--credentials-secret` for Kubernetes or `--credentials-dir` for Docker. The Kubernetes mount is a directory rather than a `subPath`, so kubelet can refresh it. Credential publication can change shared secrets or files; select the destination before syncing.

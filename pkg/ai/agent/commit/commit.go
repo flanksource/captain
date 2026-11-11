@@ -9,12 +9,15 @@
 // stall or fail on an LLM call, and a run that is interrupted or fails
 // verification still leaves its work behind.
 //
-// Repo pre-commit hooks are bypassed (`--no-verify`): captain runs its own cheap
-// gates per commit, and a full pre-commit pipeline belongs to the host, which
-// supplies it via Hook.Do together with gates: full.
+// Every commit is cut through the commons-db workspace pipeline (stage → hooks
+// → gates → commit), so content the setup cloned from the source's gitignored
+// files never enters a commit. Repo git hooks are bypassed: the pipeline's
+// gates — the policy's configured ones plus any the host supplies — are the
+// checks.
 package commit
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -22,15 +25,16 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/api"
+	dbcontext "github.com/flanksource/commons-db/context"
+	"github.com/flanksource/commons-db/workspace"
 	"github.com/flanksource/commons/logger"
 )
 
 var fallbackLog = logger.GetLogger("commit")
 
-// Plan is one resolved commit, handed to Hook.Do so a host can cut it with its
-// own pipeline. It is the policy after every default and lookup is applied —
-// the phase, the exact paths, the anchor to fix up — so a host never has to
-// re-derive any of it.
+// Plan is one resolved commit: the policy after every default and lookup is
+// applied — the phase, the exact paths, the anchor to fix up — handed to a
+// host's Message callback so it never has to re-derive any of it.
 type Plan struct {
 	Dir     string          // working dir the commit is cut in
 	Phase   agent.Phase     // boundary this commit is being cut at
@@ -39,8 +43,11 @@ type Plan struct {
 	Anchor  string          // resolved SHA to fix up onto; empty in commit/amend mode
 	Stage   api.CommitStage // how Paths were selected
 	Paths   []string        // repo-relative paths to stage (never empty)
-	Gates   api.CommitGates // how much checking the host should run
-	DryRun  bool
+	// WORKAROUND(gavel-commit-compat): Hook.Do hosts read the policy's gates to pick their pipeline
+	// Correct fix: gavel supplies HostMessage/HostGates/HostHooks + a push wrapper; then delete this field
+	// Ref: discussed with user 2026-10-28
+	Gates  api.CommitGateSpecs // the policy's gates as declared, including the full directive
+	DryRun bool
 }
 
 // action names what this plan does, distinguishing the run's first commit from
@@ -54,14 +61,11 @@ func (p Plan) action() string {
 }
 
 // Hook cuts commits for one api.Commit policy. The embedded policy is the whole
-// configuration; the three callbacks are escape hatches that let an API caller
-// override a single decision — the subject, the file selection, or the commit
-// itself — without reimplementing phase dispatch.
+// configuration; the callbacks and host extension points let an API caller
+// override a single decision — the subject, the file selection, the message —
+// or add checks to the pipeline, without reimplementing phase dispatch.
 type Hook struct {
 	api.Commit
-
-	// MaxFileSize overrides the cheap gate's per-file ceiling (DefaultMaxFileSize).
-	MaxFileSize int64
 
 	// Subject overrides the commit subject. Called once per run; the result is
 	// reused for every commit so a chain shares one anchor subject.
@@ -69,13 +73,26 @@ type Hook struct {
 	// StagePaths overrides which repo-relative paths are committed, replacing
 	// the Stage policy entirely.
 	StagePaths func(*agent.HookContext) ([]string, error)
-	// Do replaces the built-in git implementation with the host's commit
-	// pipeline. It may cut several commits under messages of its own; it returns
-	// the last one's SHA (the anchor later fixups fold into), or "" when it
-	// committed nothing. The workspace record is read from git — every commit
-	// between the pre-cut HEAD and HEAD, with git's stored messages — not built
-	// from the return value, which must be among those commits. This is what
-	// gates: full requires, and how gavel reuses its own fixup machinery.
+	// HostMessage composes a real commit's message (never a fixup's, which borrows
+	// its anchor's) from the resolved plan, in place of plan.Subject — how a
+	// host generates messages of its own.
+	HostMessage func(*agent.HookContext, Plan) (string, error)
+	// HostGates run after the policy's configured Gates on every commit; the
+	// host resolves them (they may be gates it never registers by name).
+	HostGates []workspace.Gate
+	// HostHooks run before the gates on every commit and may rewrite the
+	// staged files (formatters, tidy); the pipeline restages after them.
+	HostHooks []workspace.Hook
+
+	// WORKAROUND(gavel-commit-compat): gavel still cuts its own commits (AI messages, grouping, PR push)
+	// Correct fix: gavel supplies HostMessage/HostGates/HostHooks + a push wrapper; then delete Do
+	// Ref: discussed with user 2026-10-28
+	//
+	// Do replaces the workspace commit with the host's pipeline. It receives the
+	// plan — Paths already free of excluded content — and may cut several
+	// commits; it returns the last one's SHA, or "" when it committed nothing.
+	// The record is read from git between the pre-cut HEAD and HEAD. A policy
+	// whose gates carry the full directive requires it.
 	Do func(*agent.HookContext, Plan) (string, error)
 
 	anchor   string   // SHA the chain fixes up onto, set by the run's first commit
@@ -162,11 +179,17 @@ func (h *Hook) commit(hc *agent.HookContext, phase agent.Phase) error {
 	if err != nil {
 		return err
 	}
-	paths, stageMode, err := h.resolvePaths(hc, dir)
+	ctx := dbcontext.NewContext(hc)
+	ws, err := workspace.Open(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("commit: open workspace %s: %w", dir, err)
+	}
+	paths, stageMode, err := h.resolvePaths(ctx, hc, ws, dir)
 	if err != nil || len(paths) == 0 {
 		return err
 	}
-	if err := CheckGates(dir, h.EffectiveGates(), h.MaxFileSize, paths); err != nil {
+	gates, err := h.gates()
+	if err != nil {
 		return err
 	}
 
@@ -187,7 +210,7 @@ func (h *Hook) commit(hc *agent.HookContext, phase agent.Phase) error {
 		Anchor:  anchor,
 		Stage:   stageMode,
 		Paths:   paths,
-		Gates:   h.EffectiveGates(),
+		Gates:   h.Gates,
 		DryRun:  h.DryRun,
 	}
 	if h.DryRun {
@@ -195,59 +218,68 @@ func (h *Hook) commit(hc *agent.HookContext, phase agent.Phase) error {
 			plan.action(), phase, len(paths), strings.Join(paths, ", "))
 		return nil
 	}
-	if h.Do == nil && h.EffectiveGates() == api.CommitGatesFull {
-		return fmt.Errorf("commit: gates: full runs the host's pre-commit pipeline, which captain does not have — supply Hook.Do or lower gates to cheap")
-	}
-	// Announced before the cut, not only after it: a host pipeline on gates: full
-	// runs lint and pre-commit hooks, which is long enough that silence reads as a
-	// hang. A turn that resolved no paths says nothing at all — silence there
-	// already means "nothing happened", and a line per read-only turn is noise.
+	// Announced before the cut, not only after it: host hooks and gates (lint,
+	// secret scanners) can run long enough that silence reads as a hang. A turn
+	// that resolved no paths says nothing at all — silence there already means
+	// "nothing happened", and a line per read-only turn is noise.
 	hc.Notify("[post-%s] committing %d file(s)", phase, len(paths))
-	pre, sha, err := h.cut(hc, plan)
+	pre, err := headSHA(plan.Dir)
+	if err != nil {
+		return err
+	}
+	sha, err := h.cut(ctx, hc, ws, plan, gates)
 	return h.record(hc, plan, pre, sha, err)
 }
 
-// cut delegates to the host's commit pipeline when one is supplied, else to the
-// built-in git implementation. pre is HEAD before the cut ("" when unborn), the
-// lower bound record reads what was committed from.
-func (h *Hook) cut(hc *agent.HookContext, plan Plan) (pre, sha string, err error) {
-	if pre, err = headSHA(plan.Dir); err != nil {
-		return "", "", err
+// gates resolves the policy's configured gates and appends the host's.
+func (h *Hook) gates() ([]workspace.Gate, error) {
+	// WORKAROUND(gavel-commit-compat): the full directive names the host pipeline, not a gate
+	// Correct fix: gavel registers named gates; then drop the directive and this check
+	// Ref: discussed with user 2026-10-28
+	if api.HasGate(h.Gates, api.FullPipelineGate) && h.Do == nil {
+		return nil, fmt.Errorf("commit: gates: full runs the host's pre-commit pipeline, which captain does not have — supply Hook.Do or list gates by name")
 	}
-	if h.Do != nil {
-		sha, err = h.Do(hc, plan)
-	} else {
-		sha, err = h.run(plan)
+	gates, err := workspace.ResolveGates(h.Gates.Resolvable())
+	if err != nil {
+		return nil, fmt.Errorf("commit: gates: %w", err)
 	}
-	return pre, sha, err
+	return append(gates, h.HostGates...), nil
 }
 
-// run is the built-in git implementation of a Plan.
-func (h *Hook) run(plan Plan) (string, error) {
-	if err := stage(plan.Dir, plan.Paths); err != nil {
-		return "", err
+// cut commits the plan through the workspace pipeline and returns the new
+// commit's SHA, or "" when nothing was left to stage (an earlier phase already
+// committed the paths).
+func (h *Hook) cut(ctx dbcontext.Context, hc *agent.HookContext, ws *workspace.Workspace, plan Plan, gates []workspace.Gate) (string, error) {
+	// WORKAROUND(gavel-commit-compat): delegate to the host pipeline while gavel still uses Do
+	// Correct fix: gavel supplies HostMessage/HostGates/HostHooks + a push wrapper; then delete this branch
+	// Ref: discussed with user 2026-10-28
+	if h.Do != nil {
+		return h.Do(hc, plan)
 	}
-	staged, err := hasStaged(plan.Dir)
+	opts := workspace.CommitOptions{Paths: plan.Paths, Hooks: h.HostHooks, Gates: gates}
+	switch {
+	case plan.Mode == api.CommitModeFixup && plan.Anchor != "":
+		opts.Mode, opts.Anchor = workspace.CommitFixup, plan.Anchor
+	case plan.Mode == api.CommitModeAmend && h.anchor != "":
+		opts.Mode = workspace.CommitAmend
+	default: // a plain commit, or the anchor of a fixup/amend chain
+		opts.Mode, opts.Message = workspace.CommitNew, plan.Subject
+		if h.HostMessage != nil {
+			message, err := h.HostMessage(hc, plan)
+			if err != nil {
+				return "", fmt.Errorf("commit: message: %w", err)
+			}
+			opts.Message = message
+		}
+	}
+	result, err := ws.Commit(ctx, opts)
+	if errors.Is(err, workspace.ErrNothingStaged) {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
-	if !staged {
-		return "", nil // the paths were already committed by an earlier phase
-	}
-	switch plan.Mode {
-	case api.CommitModeFixup:
-		if plan.Anchor != "" {
-			return commitFixup(plan.Dir, plan.Anchor)
-		}
-		return commitStaged(plan.Dir, plan.Subject) // the anchor itself
-	case api.CommitModeAmend:
-		if h.anchor != "" {
-			return commitAmend(plan.Dir)
-		}
-		return commitStaged(plan.Dir, plan.Subject)
-	default:
-		return commitStaged(plan.Dir, plan.Subject)
-	}
+	return result.SHA, nil
 }
 
 // shouldCommit applies the outcome gate. A per-turn policy never reaches the
@@ -266,13 +298,15 @@ func (h *Hook) shouldCommit(hc *agent.HookContext) bool {
 
 // resolvePaths selects the files this commit picks up, and reports which staging
 // mode chose them.
-func (h *Hook) resolvePaths(hc *agent.HookContext, dir string) ([]string, api.CommitStage, error) {
+// Candidates are the workspace's Changes, so content the setup cloned from the
+// source's gitignored files is never a candidate, in any mode.
+func (h *Hook) resolvePaths(ctx dbcontext.Context, hc *agent.HookContext, ws *workspace.Workspace, dir string) ([]string, api.CommitStage, error) {
 	mode := h.stageMode(hc)
 	if h.StagePaths != nil {
 		paths, err := h.StagePaths(hc)
 		return paths, mode, err
 	}
-	dirty, err := dirtyPaths(dir)
+	dirty, err := ws.Changes(ctx)
 	if err != nil {
 		return nil, mode, err
 	}
@@ -443,7 +477,7 @@ func (h *Hook) resolveAnchor(dir string, mode api.CommitMode) (string, error) {
 	case "":
 		return "", nil // this commit becomes the anchor
 	case "auto":
-		return "", fmt.Errorf("commit: anchor: auto routes each file to the commit that last touched it, which captain's built-in committer does not implement — supply Hook.Do (gavel does), or name a ref")
+		return "", fmt.Errorf("commit: anchor: auto routes each file to the commit that last touched it, which captain does not implement — leave anchor empty or name a ref")
 	default:
 		sha, err := resolveRef(dir, h.Anchor)
 		if err != nil {

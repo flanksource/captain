@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/csv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,7 @@ func ctx() context.Context { return context.Background() }
 // renderedUser is the prompt body as the provider would receive it: literal or
 // templated, with any unconsumed stdin appended.
 func renderedUser(body promptBody, vars promptVarsResult, stdin string) string {
-	req, err := promptFrontmatter(body, vars, stdin)
+	req, _, err := promptFrontmatter(ctx(), body, vars, stdin, false)
 	Expect(err).ToNot(HaveOccurred())
 	return req.Prompt.User
 }
@@ -189,5 +190,38 @@ var _ = Describe("prompt flag decoding", func() {
 
 			Expect(err).To(HaveOccurred())
 		})
+
+		It("decodes prompt run|render --var values from clicky's CSV flag map whole", func() {
+			vars := []string{`files:=["a.go","b.go"]`, "focus=errors, then style"}
+			var encoded strings.Builder
+			writer := csv.NewWriter(&encoded)
+			Expect(writer.Write(vars)).To(Succeed())
+			writer.Flush()
+
+			opts, err := actionFlagsToOptions(map[string]string{"var": strings.TrimSuffix(encoded.String(), "\n")})
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(opts.Var).To(Equal(vars))
+		})
+
+		It("binds stdin when a list var reads -", func() {
+			_, boundStdin, err := parseVars([]string{"files[]=-"}, "a.go\nb.go")
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(boundStdin).To(BeTrue())
+		})
+
+		DescribeTable("guards typed @file reads like key=@file",
+			func(form string) {
+				key := writeTempFile("server.pem", "-----BEGIN PRIVATE KEY-----")
+
+				_, _, err := parseVars([]string{form + "@" + key}, "")
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("refusing to read"))
+			},
+			Entry("json", "secret:="),
+			Entry("lines", "secret[]="),
+		)
 	})
 })

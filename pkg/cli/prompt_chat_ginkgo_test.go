@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"path/filepath"
+	"time"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/rpc"
@@ -29,6 +30,64 @@ func (p *interruptProviderStub) Interrupt(context.Context) error {
 }
 
 var _ = Describe("prompt chat lifecycle", func() {
+	It("starts chat orchestration while the only ordinary worker is occupied", func() {
+		task.SetMaxConcurrent(1)
+		DeferCleanup(task.SetMaxConcurrent, 4)
+		started, release := make(chan struct{}), make(chan struct{})
+		blocker := task.StartTask("occupied worker", func(_ flanksourceContext.Context, _ *task.Task) (bool, error) {
+			close(started)
+			<-release
+			return true, nil
+		})
+		DeferCleanup(func() { close(release); blocker.WaitFor() })
+		Eventually(started).Should(BeClosed())
+		rendered := claudeAgentRender("")
+		cwd := GinkgoT().TempDir()
+		rendered.Input.SetCwd(cwd)
+		rendered.Input.Prompt.Attachments = []api.AttachmentRef{{Path: filepath.Join(cwd, "missing.png")}}
+		run, err := launchAsyncRun(promptLaunch{Rendered: rendered, Chat: true})
+		Expect(err).NotTo(HaveOccurred())
+		stream, ok := promptRuns.get(run.RunID)
+		Expect(ok).To(BeTrue())
+		DeferCleanup(promptRuns.remove, run.RunID)
+		Eventually(func() bool { _, done, _, _ := stream.snapshot(); return done }, time.Second).Should(BeTrue())
+	})
+
+	It("makes a stop before task admission terminal and prevents provider startup", func() {
+		stream := newRunStream()
+		chat := newChatSession("stopped-before-admission", claudeAgentRender(""), 0, stream, nil)
+		Expect(chat.stop()).To(BeTrue())
+		_, done, _, message := stream.snapshot()
+		Expect(done).To(BeTrue())
+		Expect(message).To(Equal("stopped"))
+		Expect(chat.stop()).To(BeFalse())
+		handle := task.StartTask("stopped chat", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) { return chat.run(t) }, task.WithSlots(0))
+		_, err := handle.GetResult()
+		Expect(err).To(HaveOccurred())
+		Expect(chat.provider).To(BeNil())
+		Expect(chat.state.Turn).To(BeZero())
+	})
+
+	It("cancels an admitted chat waiting on a dependency without launching its provider", func() {
+		release := make(chan struct{})
+		blocker := task.StartTask("chat dependency", func(_ flanksourceContext.Context, _ *task.Task) (bool, error) {
+			<-release
+			return true, nil
+		}, task.WithSlots(0))
+		DeferCleanup(func() { close(release); blocker.WaitFor() })
+		stream := newRunStream()
+		chat := newChatSession("stopped-admitted-chat", claudeAgentRender(""), 0, stream, nil)
+		handle := chat.start("dependent chat", task.WithDependencies(blocker.Task))
+		Expect(chat.stop()).To(BeTrue())
+		Expect(handle.Status()).To(Equal(task.StatusCancelled))
+		handle.WaitFor()
+		Expect(handle.Context().Err()).To(MatchError(context.Canceled))
+		_, done, _, message := stream.snapshot()
+		Expect(done).To(BeTrue())
+		Expect(message).To(Equal("stopped"))
+		Expect(chat.provider).To(BeNil())
+		Expect(chat.state.Turn).To(BeZero())
+	})
 	It("queues an idle follow-up and publishes its exact message id", func() {
 		stream := newRunStream()
 		chat := newChatSession("run-1", PromptRenderResult{Provider: api.OpenAI.Name, Mode: string(api.ModeAgent)}, 0, stream, nil)

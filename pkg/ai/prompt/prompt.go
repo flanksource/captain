@@ -20,11 +20,12 @@
 package prompt
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
+	"path/filepath"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
@@ -35,23 +36,22 @@ import (
 )
 
 // frontmatterRe splits a .prompt source into YAML frontmatter (group 1) and body
-// (group 2). The pattern is copied from google/dotprompt's FrontmatterAndBodyRegex
-// so the split matches exactly what the dotprompt library re-parses.
-var frontmatterRe = regexp.MustCompile(
-	`^(?:(?:#[^\n]*|[ \t]*)\n)*---\s*(?:\r\n|\r|\n)([\s\S]*?)(?:\r\n|\r|\n)---\s*(?:\r\n|\r|\n)([\s\S]*)$`)
+// (group 2) exactly as the dotprompt library re-parses it.
+var frontmatterRe = dp.FrontmatterAndBodyRegex
 
-// renderFrontmatter templates the YAML frontmatter of a .prompt source with data
+// RenderFrontmatter templates the YAML frontmatter of a .prompt source with data
 // (the same map used to render the body), so authors can parametrize frontmatter —
 // notably output.schema constraints like `maxItems: {{maxCommits}}`. Only the
 // frontmatter is rendered here; the body is left for dotprompt so its {{role …}}
 // helpers and partials render normally. No-op when the source has no frontmatter or
-// the frontmatter contains no `{{`.
-func renderFrontmatter(source string, data map[string]any) (string, error) {
+// the frontmatter contains no `{{`. Empty data yields the declared frontmatter,
+// which is what Parse and Hook read.
+func RenderFrontmatter(source string, data map[string]any) (string, error) {
 	loc := frontmatterRe.FindStringSubmatchIndex(source)
 	if loc == nil {
 		return source, nil
 	}
-	fm := source[loc[2]:loc[3]]
+	fm := deferHookExpressions(source[loc[2]:loc[3]])
 	if !strings.Contains(fm, "{{") {
 		return source, nil
 	}
@@ -71,6 +71,9 @@ type Template struct {
 	dp     *dp.Dotprompt
 	source string
 	name   string
+	// dir is the directory of a template loaded from disk, which its hooks'
+	// relative child prompt paths resolve against.
+	dir string
 }
 
 // Load parses a .prompt source string.
@@ -96,6 +99,7 @@ func LoadFile(path string) (*Template, error) {
 	}
 	t := Load(string(b))
 	t.name = path
+	t.dir = filepath.Dir(path)
 	return t, nil
 }
 
@@ -114,13 +118,16 @@ type RenderOptions struct {
 	Data     map[string]any
 	Output   any
 	Declared bool
+	// Dir is the directory relative hook prompt paths resolve against; empty
+	// uses the directory of a template loaded with LoadFile.
+	Dir string
 }
 
 // Render executes the body and preserves frontmatter and output schemas.
 // Declared leaves model selection authored for subsequent layer resolution.
 func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) {
 	data, out := options.Data, options.Output
-	src, err := renderFrontmatter(t.source, data)
+	src, err := RenderFrontmatter(t.source, data)
 	if err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("render prompt %s frontmatter: %w", t.name, err)
 	}
@@ -148,6 +155,12 @@ func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) 
 	var req ai.Request
 	if err := decodeSpecFrontmatter(rendered.Raw, &req); err != nil {
 		return ai.Request{}, ai.Config{}, fmt.Errorf("decode prompt %s frontmatter into ai.Request: %w", t.name, err)
+	}
+	if err := resolveHookPrompts(&req, cmp.Or(options.Dir, t.dir)); err != nil {
+		return ai.Request{}, ai.Config{}, fmt.Errorf("prompt %s: %w", t.name, err)
+	}
+	if declaresHooks(req) {
+		req.Prompt.Variables = data
 	}
 
 	// The rendered template body wins over any frontmatter prompt.user/system.
@@ -220,6 +233,29 @@ func (t *Template) Render(options RenderOptions) (ai.Request, ai.Config, error) 
 func decodeSpecFrontmatter(raw map[string]any, req *ai.Request) error {
 	if len(raw) == 0 {
 		return nil
+	}
+	schemaHooks, err := decodeSectionHooks(raw, "output")
+	if err != nil {
+		return err
+	}
+	inputHooks, err := decodeSectionHooks(raw, "input")
+	if err != nil {
+		return err
+	}
+	if err := decodeSpecFields(raw, req); err != nil {
+		return err
+	}
+	req.Prompt.SchemaHooks, req.Prompt.InputHooks = schemaHooks, inputHooks
+	return nil
+}
+
+func decodeSpecFields(raw map[string]any, req *ai.Request) error {
+	// dotprompt spells tools as a list of registered tool names; captain declares
+	// them inline, and a list would otherwise fail as an opaque type mismatch.
+	if tools, ok := raw["tools"]; ok {
+		if _, isMap := tools.(map[string]any); !isMap {
+			return fmt.Errorf("tools must be a mapping of tool name to {description, input, output, exec}, got %T", tools)
+		}
 	}
 	specRaw := map[string]any{}
 	for key, value := range raw {

@@ -180,6 +180,15 @@ table "captain_sessions" {
   index "captain_sessions_parent_session_id_idx" {
     columns = [column.parent_session_id]
   }
+  # One admission session is one provider conversation, so it holds at most one
+  # transcript child: the read path folds exactly one. A run of a different
+  # provider family cannot continue it. 04_demote_extra_transcript_children.sql
+  # demotes the extra children written before this key existed.
+  index "captain_sessions_transcript_parent_key" {
+    unique  = true
+    columns = [column.parent_session_id]
+    where   = "parent_relation = 'transcript'"
+  }
   index "captain_sessions_root_session_id_idx" {
     columns = [column.root_session_id]
   }

@@ -35,7 +35,7 @@ var _ = Describe("version information", func() {
 		info := rootcmd.BuildInfo{Version: "v1.2.3", Commit: "abc1234", Date: "2026-07-27T12:34:56Z", Dirty: "maybe"}
 
 		Expect(func() {
-			info.String()
+			_ = info.String()
 		}).To(PanicWith(`invalid build dirty state "maybe"`))
 	})
 

@@ -1,6 +1,26 @@
 {
-  "claude-fable-5-1": {
+  "claude-fable-5-2": {
+    "provider": "anthropic",
+    "family": "fable",
+    "version": "5.2",
+    "label": "Claude Fable 5.2",
+    "releaseDate": "2026-11-09",
+    "reasoning": true,
+    "contextWindow": 1000000,
+    "cost": {
+      "input": 8,
+      "output": 40,
+      "cacheRead": 0.2,
+      "cacheWrite": 10
+    },
+    "inputMediaTypes": ["image/*", "application/pdf"],
     "preferred": true,
+    "adaptiveThinking": true,
+    "supportedEfforts": ["low", "medium", "high", "xhigh", "max"],
+    "defaultEffort": "high"
+  },
+  "claude-fable-5-1": {
+    "preferred": false,
     "defaultEffort": "high"
   },
   "claude-opus-5-5": {
@@ -53,6 +73,13 @@
     "priority": 0,
     "aliases": null
   },
+  "gpt-6.1-terra": {
+    "preferred": true,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "priority": 4,
+    "defaultEffort": "medium",
+    "aliases": ["terra"]
+  },
   "gpt-6-luna": {
     "preferred": true,
     "availability": ["api", "cli", "agent", "cmux"],
@@ -99,9 +126,7 @@
       "max",
       "ultra"
     ],
-    "aliases": [
-      "terra"
-    ]
+    "aliases": null
   },
   "gpt-5.6-luna": {
     "preferred": false,

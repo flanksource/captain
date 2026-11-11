@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="28 28 200 200" role="img" aria-labelledby="title">
+  <title id="title">Captain</title>
+  <style>@media(prefers-color-scheme:dark){path{fill:#F2A477}}</style>
+  <path fill="#C45125" d="M64 32 H160 L208 80 H112 Z M32 104 H200 L224 128 L200 152 H32 Z M112 176 H208 L160 224 H64 Z"/>
+</svg>

@@ -32,7 +32,7 @@ An `api.Spec` (a rendered `.prompt` file plus any runtime overlay) declares a **
 commit → cmd → prompt → fixture → caller → setup
 ```
 
-Commit hooks lead so a squash is cut before any teardown can take the tree it commits from. The workflow's own checks run cheap to expensive — commands, then LLM judges, then the fixture — so a run that is going to fail fails on the fast check first. The caller's own hooks sit between the checks and setup: a host's commit pipeline at `PhaseRun` still sees a live worktree, and a host's `PreRun` hook runs before the tree is relocated. Setup trails so its teardown is the last thing to happen.
+Commit hooks lead so a squash is cut before teardown can take its tree. Verification runs commands, LLM judges and fixtures in that order and combines the round's verdicts. Caller hooks sit between checks and setup: a host's commit pipeline at `PhaseRun` still sees a live worktree, and its `PreRun` hook runs before relocation. Setup trails so teardown happens last. Recorded runs append their recorder after setup so the stored runtime and workspace reflect the prepared run.
 
 A caller that sets `Input.CallerOwnsCommits` drops the leading commit hooks — the host commits the tree itself — and must supply at least one hook of its own, or nothing would commit at all.
 

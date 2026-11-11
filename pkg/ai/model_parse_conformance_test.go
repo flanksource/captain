@@ -58,7 +58,7 @@ var agreedCases = []parseCase{
 	// Family aliases resolve to the exact current registry model.
 	{in: "sonnet", want: model("claude-sonnet-5-5", api.Anthropic, api.ModeAgent, "")},
 	{in: "opus", want: model("claude-opus-5-5", api.Anthropic, api.ModeAgent, "")},
-	{in: "fable", want: model("claude-fable-5-1", api.Anthropic, api.ModeAgent, "")},
+	{in: "fable", want: model("claude-fable-5-2", api.Anthropic, api.ModeAgent, "")},
 
 	// A superseded exact id is rewritten to its successor.
 	{in: "claude-sonnet-4-5", want: model("claude-sonnet-4-6", api.Anthropic, api.ModeAgent, "")},
@@ -83,7 +83,7 @@ var agreedCases = []parseCase{
 	// the bare path went through an alias-blind claim — an accident of which
 	// parser ran, not a decision.
 	{in: "sol", want: model("gpt-6.1-sol", api.OpenAI, api.ModeAgent, "")},
-	{in: "terra", want: model("gpt-5.6-terra", api.OpenAI, api.ModeAgent, "")},
+	{in: "terra", want: model("gpt-6.1-terra", api.OpenAI, api.ModeAgent, "")},
 	{in: "luna", want: model("gpt-6-luna", api.OpenAI, api.ModeAgent, "")},
 	{in: "astra", want: model("gpt-6-astra", api.OpenAI, api.ModeAgent, "")},
 	{in: "api:astra:high", want: model("gpt-6-astra", api.OpenAI, api.ModeAPI, api.EffortHigh)},
@@ -188,7 +188,7 @@ var _ = Describe("model parse conformance", func() {
 			Expect(err).NotTo(HaveOccurred())
 			modes := make([]api.RuntimeMode, 0, len(models))
 			for _, m := range models {
-				Expect(m.Name).To(Equal("claude-fable-5-1"))
+				Expect(m.Name).To(Equal("claude-fable-5-2"))
 				Expect(m.Provider).To(Equal(api.Anthropic))
 				modes = append(modes, m.Mode)
 			}

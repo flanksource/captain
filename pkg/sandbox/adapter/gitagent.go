@@ -9,14 +9,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/flanksource/commons-db/connection"
+	"github.com/flanksource/commons/logger"
+
 	"github.com/flanksource/captain/pkg/ai/agent/setup"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/credproxy"
 	"github.com/flanksource/captain/pkg/gitagent"
 	"github.com/flanksource/clicky/text"
 )
@@ -55,7 +60,18 @@ func (g *gitAgentSandbox) IsolatesWorkspace() bool { return true }
 // credentials; the sidecar proxy substitutes on the way out.
 func (g *gitAgentSandbox) ProvidesEgressProxy() bool { return true }
 
-func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Response, error) {
+func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec, opts api.RemoteExecOptions) (*api.Response, error) {
+	services, tools, err := taskTools(opts.CallerTools)
+	if err != nil {
+		return nil, err
+	}
+	sidecar, err := sidecarTools(spec.Tools, opts, services)
+	if err != nil {
+		return nil, err
+	}
+	if sidecar != nil {
+		sidecar.Preferences, sidecar.Policy = spec.ToolPreferences, spec.ToolPolicy
+	}
 	if spec.Setup != nil && setup.Relocates(spec.Setup.Checkout) {
 		return nil, fmt.Errorf("sandbox git-agent relocates the run; it cannot be combined with a setup checkout (register exactly one isolator)")
 	}
@@ -113,12 +129,21 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		TaskPayload: gitagent.TaskPayload{
 			Prompt: prompt, System: system,
 			Model: spec.Name, Mode: spec.Mode, Provider: specProviderName(spec), Effort: spec.Effort, Timeout: timeout,
+			Tools: tools, Sidecar: sidecar, Requires: requirements(tools, sidecar),
 		},
 		HooksJSON: hooksJSON,
+		Services:  services,
 	})
 	if err != nil {
 		return nil, err
 	}
+	// The services serve every attempt of the task, so they are withdrawn
+	// only once its outcome is in, whichever way the wait ends.
+	defer func() {
+		if err := gitagent.RemoveServices(mailbox.Path, dispatch.Task); err != nil {
+			logger.Warnf("git-agent task %s: withdraw services: %v", dispatch.Task, err)
+		}
+	}()
 	verdict, err := gitagent.AwaitOutcome(ctx, mailbox.Path, dispatch.Task, target.waitTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("task %s dispatched but not concluded: %w", dispatch.Task, err)
@@ -128,6 +153,115 @@ func (g *gitAgentSandbox) Execute(ctx context.Context, spec api.Spec) (*api.Resp
 		return nil, errors.New(response.Text)
 	}
 	return response, nil
+}
+
+// taskTools publishes the run's caller-tool server to the task: its loopback
+// address as the tools service, and its path and credential in the payload.
+func taskTools(endpoint *api.CallerToolEndpoint) (gitagent.Services, *gitagent.TaskTools, error) {
+	if endpoint == nil {
+		return gitagent.Services{}, nil, nil
+	}
+	parsed, err := url.Parse(endpoint.URL)
+	if err != nil || parsed.Scheme != "http" || parsed.Host == "" {
+		return nil, nil, fmt.Errorf("caller-tool endpoint %q is not a local http server the tunnel can reach", endpoint.URL)
+	}
+	services := gitagent.Services{gitagent.ToolsService: parsed.Host}
+	if err := services.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("caller-tool endpoint: %w", err)
+	}
+	return services, &gitagent.TaskTools{Name: endpoint.Name, Path: parsed.RequestURI(), Headers: endpoint.Headers}, nil
+}
+
+// sidecarTools ships the declarations of the tools placed on the sidecar,
+// adding each sidecar-proxied tool's credential release and each proxied
+// tool's proxies to services. A grant travels as its destination and header
+// names only: the declaration's values are the supervisor's to resolve, and a
+// static one is a secret in clear text. A proxied tool's connections stay
+// behind entirely — its kube proxy holds them.
+func sidecarTools(declared api.InlineTools, opts api.RemoteExecOptions, services gitagent.Services) (*gitagent.TaskSidecarTools, error) {
+	shipped := &gitagent.TaskSidecarTools{
+		Tools:    api.InlineTools{},
+		Releases: map[string]gitagent.TaskCredentialRelease{},
+		Proxies:  map[string]gitagent.TaskToolProxies{},
+	}
+	for _, name := range declared.Names() {
+		tool := declared[name]
+		if tool.Placement != api.ToolPlacementSidecar {
+			continue
+		}
+		tool.Grants = withoutGrantValues(tool.Grants)
+		switch tool.Credentials {
+		case api.ToolCredentialsSidecarProxied:
+			release, ok := opts.CredentialReleases[name]
+			if !ok {
+				return nil, fmt.Errorf("tools.%s is sidecar-proxied, but the run serves no credential release for it", name)
+			}
+			service := "creds/" + name
+			services[service] = release.Addr
+			shipped.Releases[name] = gitagent.TaskCredentialRelease{Service: service, Token: release.Token}
+		case api.ToolCredentialsProxied:
+			endpoints, ok := opts.ToolProxies[name]
+			if !ok {
+				return nil, fmt.Errorf("tools.%s is proxied, but the run serves no proxies for it", name)
+			}
+			proxies, err := publishToolProxies(name, endpoints, services)
+			if err != nil {
+				return nil, err
+			}
+			tool.Connections = connection.ExecConnections{}
+			shipped.Proxies[name] = proxies
+		}
+		shipped.Tools[name] = tool
+	}
+	if len(shipped.Tools) == 0 {
+		return nil, nil
+	}
+	return shipped, services.Validate()
+}
+
+// publishToolProxies adds a proxied tool's egress and kube proxies to services
+// as egress/<tool> and kube/<tool>.
+func publishToolProxies(name string, endpoints api.ToolProxyEndpoints, services gitagent.Services) (gitagent.TaskToolProxies, error) {
+	proxies := gitagent.TaskToolProxies{EgressSecret: endpoints.EgressSecret, CAPEM: endpoints.CAPEM, KubeToken: endpoints.KubeToken}
+	if endpoints.Egress != "" {
+		proxies.EgressService = "egress/" + name
+		services[proxies.EgressService] = endpoints.Egress
+	}
+	if endpoints.KubeURL != "" {
+		parsed, err := url.Parse(endpoints.KubeURL)
+		if err != nil || parsed.Scheme != "http" || parsed.Host == "" {
+			return proxies, fmt.Errorf("tools.%s: kube proxy %q is not a local http server the tunnel can reach", name, endpoints.KubeURL)
+		}
+		proxies.KubeService = "kube/" + name
+		services[proxies.KubeService] = parsed.Host
+	}
+	if proxies.EgressService == "" && proxies.KubeService == "" {
+		return proxies, fmt.Errorf("tools.%s is proxied, but declares neither grants nor a kubernetes connection to proxy", name)
+	}
+	return proxies, nil
+}
+
+func withoutGrantValues(grants []credproxy.Grant) []credproxy.Grant {
+	stripped := make([]credproxy.Grant, len(grants))
+	for i, grant := range grants {
+		stripped[i] = grant
+		stripped[i].Headers = make([]credproxy.HeaderGrant, len(grant.Headers))
+		for j, header := range grant.Headers {
+			stripped[i].Headers[j] = credproxy.HeaderGrant{Name: header.Name}
+		}
+	}
+	return stripped
+}
+
+func requirements(tools *gitagent.TaskTools, sidecar *gitagent.TaskSidecarTools) []string {
+	var required []string
+	if tools != nil {
+		required = append(required, gitagent.RequiresTools)
+	}
+	if sidecar != nil {
+		required = append(required, gitagent.RequiresSidecarTools)
+	}
+	return required
 }
 
 // specProviderName is the resolved provider's key, or "" when the spec named a

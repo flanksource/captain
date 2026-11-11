@@ -1,0 +1,96 @@
+---
+layout: ../../layouts/DocsLayout.astro
+title: Prompt CLI
+description: Discover, inspect, author, render, run and observe prompts, with terminal and agent help.
+section: Prompts
+---
+
+# Prompt CLI
+
+`captain prompt` is the primary prompt command. Its children share the same source catalog and runtime schema. `captain ai prompt` is an alias for `captain prompt run`.
+
+| Command | Result |
+| --- | --- |
+| `captain prompt list` | Discover prompts; filter with `--query` and `--source` |
+| `captain prompt get SOURCE` | Read content, metadata, schemas and version |
+| `captain prompt create key=value ...` | Validate and create a writable local prompt |
+| `captain prompt update SOURCE key=value ...` | Validate and replace local content |
+| `captain prompt delete SOURCE` | Delete a local file; built-ins remain read-only |
+| `captain prompt render [SOURCE] [FILES...]` | Preview messages, spec, schemas, provenance and validation |
+| `captain prompt run [SOURCE] [FILES...]` | Render, validate and execute |
+| `captain prompt observe [SOURCE]` | Execute one `--runtime` and emit observation JSON |
+
+`SOURCE` can be an opaque catalog ID, a bare name, a `.prompt` path, or `-` for stdin on render/run. An existing file in the current directory wins over catalog discovery. Local sources shadow embedded names; ambiguous local names need an explicit path or ID.
+
+## Preview before running
+
+```sh
+captain prompt list --query review
+captain prompt get proposal-review --json
+captain prompt render review.prompt -V target=pkg/cli --json
+captain prompt run review.prompt -V target=pkg/cli --access read-only
+```
+
+`render` calls no model and runs no setup. Its JSON includes the full `input` request, `resolution` and `validationError`; inspect that error before executing. For declaration-only validation, use `captain lint promptfile review.prompt`.
+
+## Inline text, variables and stdin
+
+```sh
+captain prompt run --model agent:sonnet -p 'Explain this repository'
+captain prompt render --model agent:sonnet -p 'Explain {{topic}}' -V topic=permissions
+git diff | captain prompt run review.prompt -V patch=-
+captain prompt render review.prompt --vars @inputs.json --json
+```
+
+Choose one positional source or `-p`; with neither, Captain reads stdin. `.prompt` files are templates. Inline and piped text are literal data unless supplied variables or `{{input}}` opt into templating. Piped input binds to `input`, or to a named variable with `-V key=-`; unused piped input is appended to the body. `-V key=@file` reads one variable from a file. `-p`, `-s`, `--append-system` and `--vars` also accept `@file` or `@url`.
+
+## Input files and batches
+
+```sh
+captain prompt run classify.prompt .gavel/jira/10304/*.md
+captain prompt run classify.prompt .gavel/jira/10304/*.md --batch=1 --batch-concurrency=4
+captain prompt run describe.prompt -A a.png -A b.png --batch=1
+captain prompt render classify.prompt .gavel/jira/10304/KEY-1.md --json
+```
+
+Arguments after the prompt are input files; the shell expands globs. Each must be an existing regular file. A run binds them as the `files` variable (a list of paths), and as `file` when it has exactly one. Setting `file` or `files` yourself with `-V`, `--vars` or stdin while passing input files is an error. Input files are not attached; `--attach`/`-A` files are, as before.
+
+Without a batch, every input file goes to one run. `--batch=N` splits them into runs of N files, so `--batch=1` processes files one at a time; under a batch the `--attach` files are split too, each run attaching only its own. `--batch-concurrency=M` runs M batches at once (default 1). The flags override the prompt's `batch` field. Each batch is its own recorded run, and its input hooks may skip it. The result lists one row per batch with its inputs, status and answer, skip reason or error. The totals count succeeded, failed and skipped runs; tokens and cost are summed over the runs that executed. When any batch fails, the others still run and the command exits non-zero. A batch cannot be combined with a multi-runtime run (`runtimes:` or `-M`).
+
+## Runtime and output
+
+```sh
+captain prompt run review.prompt --preset Plan
+captain prompt render review.prompt --no-presets --json
+captain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.1-sol
+captain prompt run review.prompt --no-stream --json
+captain prompt observe --runtime agent:sonnet -p 'Explain this repository'
+```
+
+Compact selectors use `mode:model:effort`, such as `agent:sonnet:high`. Repeated `-M` values replace a prompt's declared runtime matrix. `--preset` replaces its preset selection; `--no-presets` clears it. Use `--attach` for local paths or URLs and `--timeout` to supply a caller deadline; a declared `budget.timeout` takes precedence. `--json` returns structured results and `--no-stream` buffers the final result. See [Runtime overlay](/prompts/runtime/) for permissions, budgets, fallbacks and layer order.
+
+A foreground, single-runtime Claude Agent or Codex app-server run can ask through the terminal when stdin and stderr are terminals. Piping input removes that answer channel; redirecting stdout preserves it. See [Approvals](/agents/approvals/#foreground-terminal-runs).
+
+## Create and update
+
+```sh
+captain prompt create name=hello 'content=Hello {{name}}'
+captain prompt get .captain/prompts/hello.prompt --json
+captain prompt update .captain/prompts/hello.prompt 'content=Hello {{name}}!' baseVersion=VERSION_FROM_GET
+```
+
+Creation uses the first writable source by default. Supply `target=SOURCE_ID` and `relPath=hello.prompt` to choose a destination. The generated schema endpoint lists writable sources, including empty directories. Updates can send the version returned by `get` as `baseVersion`; stale versions fail instead of overwriting another edit. Embedded content must be copied to a writable source. Both create and update validate content before an atomic write. See [Sources and API](/prompts/sources-api/#saving).
+
+## Help, color and schemas
+
+```sh
+captain prompt --help
+captain prompt run --help
+captain prompt observe --help
+captain prompt render --no-color --help
+captain prompt --schema
+```
+
+Root help covers promptfile authoring; each child's help adds examples and its generated flags, including inherited output options. Human terminal help uses colored headings and syntax-highlighted examples. `--no-color`, `NO_COLOR`, and redirected output disable ANSI color. Detected Captain, Claude, Codex and Gemini sessions receive Markdown help without ANSI escapes. Result-format flags such as `--json` select command results rather than the help renderer.
+
+`--schema` exposes generated input/output schemas, enum values, runtime catalogs and provider-specific `cliArgs`. For server clients, `GET /api/captain/ai/prompt/schema` is the authoring schema and availability catalog.

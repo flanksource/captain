@@ -5,8 +5,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Claude Fable 5.1", func() {
-	const model = "claude-fable-5-1"
+var _ = Describe("Claude Fable 5.2", func() {
+	const model = "claude-fable-5-2"
 
 	DescribeTable("resolves the bare Claude sentinel to Opus", func(mode RuntimeMode) {
 		resolved, ok := Anthropic.ResolveExact(mode, "claude")
@@ -39,17 +39,20 @@ var _ = Describe("Claude Fable 5.1", func() {
 		Expect(ok).To(BeTrue())
 		Expect(entry.Preferred).To(BeTrue())
 		Expect(entry.ContextWindow).To(Equal(1_000_000))
-		Expect(entry.ReleaseDate).To(Equal("2026-09-01"))
+		Expect(entry.ReleaseDate).To(Equal("2026-11-09"))
 		Expect(entry.Temperature).To(BeFalse())
 		Expect(entry.AdaptiveThinking).To(BeTrue())
 		Expect(entry.SupportedEfforts).To(Equal([]Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}))
 		Expect(entry.DefaultEffort).To(Equal(EffortHigh))
 		price, ok := CostFor(model)
 		Expect(ok).To(BeTrue())
-		Expect(price).To(Equal(ModelCost{Input: 10, Output: 50, CacheRead: 0.25, CacheWrite: 12.5}))
-		previousPrice, ok := CostFor("claude-fable-5")
+		Expect(price).To(Equal(ModelCost{Input: 8, Output: 40, CacheRead: 0.2, CacheWrite: 10}))
+		previous, ok := Anthropic.Lookup("claude-fable-5-1")
 		Expect(ok).To(BeTrue())
-		Expect(previousPrice).To(Equal(ModelCost{Input: 10, Output: 50, CacheRead: 1, CacheWrite: 12.5}))
+		Expect(previous.Preferred).To(BeFalse())
+		previousPrice, ok := CostFor("claude-fable-5-1")
+		Expect(ok).To(BeTrue())
+		Expect(previousPrice).To(Equal(ModelCost{Input: 10, Output: 50, CacheRead: 0.25, CacheWrite: 12.5}))
 	})
 
 	It("uses adaptive thinking and omits unsupported temperature", func() {

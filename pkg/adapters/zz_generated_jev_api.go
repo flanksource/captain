@@ -4,36 +4,52 @@ package adapters
 
 import "encoding/json"
 
+// Jev APIChoice Question configuration. See the linked native reference for
+// semantics and availability.
 type JevAPIChoiceQuestion struct {
-	// Criteria corresponds to the JSON schema field "criteria".
+	// Criteria configuration. See the linked native reference for semantics and
+	// availability.
 	Criteria JevAPIChoiceQuestionCriteria `json:"criteria"`
 
-	// Instructions corresponds to the JSON schema field "instructions".
-	Instructions interface{} `json:"instructions"`
+	// Instructions configuration. See the linked native reference for semantics and
+	// availability.
+	Instructions json.RawMessage `json:"instructions"`
 
-	// Type corresponds to the JSON schema field "type".
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
 	Type interface{} `json:"type"`
 }
 
-type JevAPIChoiceQuestionCriteria map[string]interface{}
+// Criteria configuration. See the linked native reference for semantics and
+// availability.
+type JevAPIChoiceQuestionCriteria map[string]json.RawMessage
 
+// Jev APINoul Question configuration. See the linked native reference for
+// semantics and availability.
 type JevAPINoulQuestion struct {
-	// Criteria corresponds to the JSON schema field "criteria".
+	// Criteria configuration. See the linked native reference for semantics and
+	// availability.
 	Criteria *JevAPINoulQuestionCriteria `json:"criteria,omitempty,omitzero"`
 
-	// Instructions corresponds to the JSON schema field "instructions".
-	Instructions interface{} `json:"instructions"`
+	// Instructions configuration. See the linked native reference for semantics and
+	// availability.
+	Instructions json.RawMessage `json:"instructions"`
 
-	// Type corresponds to the JSON schema field "type".
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
 	Type interface{} `json:"type"`
 }
 
+// Criteria configuration. See the linked native reference for semantics and
+// availability.
 type JevAPINoulQuestionCriteria struct {
-	// False corresponds to the JSON schema field "false".
-	False interface{} `json:"false,omitempty,omitzero"`
+	// False configuration. See the linked native reference for semantics and
+	// availability.
+	False *json.RawMessage `json:"false,omitempty,omitzero"`
 
-	// True corresponds to the JSON schema field "true".
-	True interface{} `json:"true,omitempty,omitzero"`
+	// True configuration. See the linked native reference for semantics and
+	// availability.
+	True *json.RawMessage `json:"true,omitempty,omitzero"`
 }
 
 // Native TypeSafe SystemOne evaluation request sent by Captain's Jev API runtime.
@@ -48,13 +64,18 @@ type JevAPIOptions struct {
 	State json.RawMessage `json:"state"`
 }
 
+// Jev APIScore Question configuration. See the linked native reference for
+// semantics and availability.
 type JevAPIScoreQuestion struct {
-	// Criteria corresponds to the JSON schema field "criteria".
-	Criteria []interface{} `json:"criteria"`
+	// Criteria configuration. See the linked native reference for semantics and
+	// availability.
+	Criteria []json.RawMessage `json:"criteria"`
 
-	// Instructions corresponds to the JSON schema field "instructions".
-	Instructions interface{} `json:"instructions"`
+	// Instructions configuration. See the linked native reference for semantics and
+	// availability.
+	Instructions json.RawMessage `json:"instructions"`
 
-	// Type corresponds to the JSON schema field "type".
+	// Type configuration. See the linked native reference for semantics and
+	// availability.
 	Type interface{} `json:"type"`
 }

@@ -2,44 +2,49 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/captainconfig"
+	"github.com/flanksource/captain/pkg/promptrun"
 )
 
 // renderPrompt is the HTTP/Spec render path: the caller's structured api.Spec
 // (the web UI's runtime overrides) is the last layer over the selected runtime
 // presets and the rendered frontmatter. A non-empty Content renders that draft
-// instead of the saved file.
+// instead of the saved file; without an id that draft is self-contained, its
+// own frontmatter included.
 func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest) (PromptRenderResult, error) {
-	if strings.TrimSpace(id) == "" {
+	hasDraft := strings.TrimSpace(renderReq.Content) != ""
+	if strings.TrimSpace(id) == "" && !hasDraft {
 		return renderEphemeralPrompt(ctx, renderReq)
 	}
 	saved, err := loadSavedConfig()
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	record, err := resolvePromptRecord(ctx, promptRecordOptions{ID: id, Config: &saved})
-	if err != nil {
-		return PromptRenderResult{}, err
-	}
-	content, err := readPromptContent(record)
-	if err != nil {
-		return PromptRenderResult{}, err
-	}
-	if strings.TrimSpace(renderReq.Content) != "" {
-		content = renderReq.Content
+	record, content := draftPromptRecord(), renderReq.Content
+	if strings.TrimSpace(id) != "" {
+		if record, err = resolvePromptRecord(ctx, promptRecordOptions{ID: id, Config: &saved}); err != nil {
+			return PromptRenderResult{}, err
+		}
+		if !hasDraft {
+			if content, err = readPromptContent(record); err != nil {
+				return PromptRenderResult{}, err
+			}
+		}
 	}
 	vars := renderReq.Variables
 	if vars == nil {
 		vars = map[string]any{}
 	}
-	frontmatter, _, err := promptlib.Load(content).Render(promptlib.RenderOptions{Data: vars, Declared: true})
+	frontmatter, _, skip, err := promptrun.RenderTemplate(ctx, promptlib.Load(content), promptlib.RenderOptions{Data: vars, Declared: true, Dir: promptDir(record)}, ai.Config{})
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
@@ -48,7 +53,7 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
+	return completePromptRender(promptRenderInput{Directory: renderReq.Directory, Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved, Skip: skip})
 }
 
 func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (PromptRenderResult, error) {
@@ -67,7 +72,49 @@ func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
+	return completePromptRender(promptRenderInput{Directory: renderReq.Directory, Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved})
+}
+
+// promptDir is the directory a saved prompt's hooks resolve relative child
+// prompts against; empty for a prompt not read from a directory on disk.
+func promptDir(record promptRecord) string {
+	if record.Source.FS != nil || !filepath.IsAbs(record.Path) {
+		return ""
+	}
+	return filepath.Dir(record.Path)
+}
+
+// previewSchemaHooks runs the rendered spec's output.hooks so `captain prompt
+// render` shows the schema a run would send. Only a render does this: a run
+// applies them itself, before its first turn.
+func previewSchemaHooks(ctx context.Context, rendered *PromptRenderResult) error {
+	spec := &rendered.Input
+	// A run its input hooks skip never reaches its schema hooks; the preview
+	// must not run them either.
+	if len(spec.Prompt.SchemaHooks) == 0 || rendered.Skip != nil {
+		return nil
+	}
+	if err := promptrun.RenderSchemaHooks(ctx, spec, rendered.Config); err != nil {
+		return err
+	}
+	raw, schemaType := spec.Prompt.SchemaJSON, api.SchemaTypeJSONSchema
+	if spec.Prompt.OutputSchemaType == api.SchemaTypeTypeSafe {
+		raw, schemaType = spec.Prompt.TypeSafeQuestions, api.SchemaTypeTypeSafe
+	}
+	rendered.OutputSchema, rendered.OutputSchemaType = nil, schemaType
+	if err := json.Unmarshal(raw, &rendered.OutputSchema); err != nil {
+		return fmt.Errorf("decode emitted output schema: %w", err)
+	}
+	return nil
+}
+
+// draftPromptRecord names an unsaved draft posted without a saved prompt id.
+func draftPromptRecord() promptRecord {
+	return promptRecord{
+		Source: promptSource{Kind: "draft", ID: "draft", Label: "Draft"},
+		Path:   "<draft>",
+		Rel:    "draft.prompt",
+	}
 }
 
 func ephemeralPromptContent() string {
@@ -80,8 +127,9 @@ description: Ephemeral prompt
 }
 
 type promptRenderInput struct {
-	Record  promptRecord
-	Content string
+	Directory string
+	Record    promptRecord
+	Content   string
 	// Literal marks Content as caller data, so it is not inspected for
 	// frontmatter, input/output schemas or template variables.
 	Literal  bool
@@ -90,6 +138,9 @@ type promptRenderInput struct {
 	Runtimes []api.Model
 	Options  AIPromptOptions
 	Saved    captainconfig.Config
+	// Skip is the input hook's request not to run the prompt, carried onto the
+	// result.
+	Skip *promptrun.Skip
 }
 
 func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJSON, stdin string) (PromptRenderResult, error) {
@@ -102,15 +153,15 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	vars, err := promptVars(opts, varsJSON, stdin, body.UsedStdin)
+	vars, err := ParsePromptVariables(opts, varsJSON, stdin, body.UsedStdin)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	layers, warnings, err := renderLoadedLayers(ctx, body, vars, stdin, opts, saved)
+	layers, warnings, skip, err := renderLoadedLayers(ctx, body, vars, stdin, opts, saved)
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	return completePromptRender(promptRenderInput{Record: body.Record, Content: body.Text, Literal: body.Literal, Layers: layers, Warnings: warnings, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved})
+	return completePromptRender(promptRenderInput{Record: body.Record, Content: body.Text, Literal: body.Literal, Layers: layers, Warnings: warnings, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved, Skip: skip})
 }
 
 // literalOrParsedDetail describes the prompt behind a render. A literal body is
@@ -127,9 +178,13 @@ func literalOrParsedDetail(input promptRenderInput) (PromptDetail, error) {
 
 func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
 	saved := input.Saved
-	cwd, err := os.Getwd()
-	if err != nil {
-		return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
+	cwd := input.Directory
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return PromptRenderResult{}, fmt.Errorf("get working directory: %w", err)
+		}
 	}
 	flags, err := input.Options.requestSpec()
 	if err != nil {
@@ -170,12 +225,19 @@ func completePromptRender(input promptRenderInput) (PromptRenderResult, error) {
 	}
 	result.Resolution.Warnings = append(input.Warnings, result.Resolution.Warnings...)
 	req, cfg := result.Request, result.Config
+	if len(req.Prompt.SchemaJSON) > 0 {
+		if err := json.Unmarshal(req.Prompt.SchemaJSON, &detail.OutputSchema); err != nil {
+			return PromptRenderResult{}, fmt.Errorf("decode resolved output schema: %w", err)
+		}
+		detail.OutputSchemaType = api.SchemaTypeJSONSchema
+	}
 	return PromptRenderResult{
 		ID: detail.ID, Name: detail.Name, Model: cfg.Model.Name, Provider: providerName(cfg.Model.Provider), Mode: string(cfg.Model.Mode),
 		User: req.Prompt.User, System: req.Prompt.System, Input: req, Config: cfg,
 		InputSchema: detail.InputSchema, InputSchemaType: detail.InputSchemaType, InputDefault: detail.InputDefault,
 		OutputSchema: detail.OutputSchema, OutputSchemaType: detail.OutputSchemaType,
 		Runtimes: runtimes, variants: variants, Resolution: result.Resolution, ValidationError: renderValidationError(req, cfg, runtimes),
+		Skip: input.Skip,
 	}, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observe"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
 )
@@ -33,7 +34,7 @@ func (v *validatingProvider) executeRepair(ctx context.Context, parent ai.Reques
 	if c, ok := p.(io.Closer); ok {
 		defer func() { _ = c.Close() }()
 	}
-	return (&observingProvider{provider: p}).Execute(ctx, req)
+	return observe.Wrap(p).Execute(ctx, req)
 }
 
 func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMessage, verrs string, prev *ai.Response, attempt int) (ai.Request, ai.Config, bool, error) {
@@ -79,6 +80,13 @@ func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMes
 	req.Prompt.SchemaJSON = parent.Prompt.SchemaJSON
 	req.Prompt.SchemaStrictness = api.SchemaStrictnessDisabled
 	req.Workflow = nil
+	req.ToolApproval = nil
+	if len(parent.Messages) > 0 {
+		req.Messages = append(append([]api.Message(nil), parent.Messages...), api.Message{
+			Role: api.RoleUser, Parts: []api.Part{{Type: api.PartText, Text: renderedReq.Prompt.System + "\n\n" + renderedReq.Prompt.User}},
+		})
+	}
+	req.ToolPolicy = parent.ToolPolicy.Append(api.PermissionPolicy{{ToolMatch: api.ToolMatch{Name: api.MatchPatterns{"*"}}, Policy: api.ToolPolicyDeny}})
 
 	cfg := v.cfg
 	cfg.Model = model

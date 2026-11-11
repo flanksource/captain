@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "docker": {
+      "type": "object",
+      "title": "Docker backend",
+      "description": "Trusted Docker backend entry in ~/.captain.yaml under sandbox.backends.<name>. An image may instead come from the project's .container-sandbox.yaml. Host mounts and environment access are grants made by the machine owner.",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "x-captain-source": "pkg/sandbox/adapter/container.go",
+      "properties": {
+        "kind": { "type": "string", "const": "docker", "default": "docker" },
+        "image": { "type": "string", "description": "Container image override. Required at execution when no project image is configured." },
+        "presets": { "type": "array", "items": { "type": "string" }, "description": "Named dependency presets that grant host cache mounts and credential environment passthrough." },
+        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables expanded from the trusted machine environment and passed into Docker." },
+        "envPassthrough": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Names of existing host environment variables to pass into the container." },
+        "volumes": { "type": "array", "items": { "type": "string", "pattern": "^[^:]+:[^:]+(?::ro)?$" }, "description": "Trusted host mounts as source:target[:ro]. Project configuration uses structured volume objects instead." }
+      }
+    },
+    "git-agent": {
+      "type": "object",
+      "title": "Git Agent backend",
+      "description": "Trusted Git Agent backend entry in ~/.captain.yaml under sandbox.backends.<name>. Enrollment records are managed by captain sandbox git-agent add. This preview does not read credential files or contact agents.",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "x-captain-source": "pkg/sandbox/adapter/gitagent.go",
+      "properties": {
+        "kind": { "type": "string", "const": "git-agent", "default": "git-agent" },
+        "relay": { "type": "string", "enum": ["sync", "async"], "default": "sync", "description": "Mailbox relay behavior for dispatched tasks." },
+        "key": { "type": "string", "description": "Path to the supervisor's dispatch SSH key. Defaults beside the Captain configuration." },
+        "mailboxRoot": { "type": "string", "description": "Root served by the long-running mailbox endpoint." },
+        "waitTimeout": { "type": "string", "pattern": "^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|µs|μs|ms|s|m|h))+$", "description": "Positive Go duration for waiting for a terminal verdict, for example 1h or 30m. Runtime validation also rejects zero durations.", "default": "1h" },
+        "agents": {
+          "type": "object", "readOnly": true,
+          "description": "Enrollment-managed endpoints and paths. Re-enroll an agent to update transport trust and credentials.",
+          "additionalProperties": {
+            "type": "object", "additionalProperties": false, "required": ["url"],
+            "properties": {
+              "url": { "type": "string", "pattern": "^(ssh|https)://", "description": "Enrolled agent endpoint." },
+              "hostFingerprint": { "type": "string", "description": "Pinned SSH host key fingerprint." },
+              "tokenPath": { "type": "string", "description": "Path to the HTTPS dispatch token, never its contents." },
+              "caPath": { "type": "string", "description": "Path to the trusted HTTPS certificate authority." },
+              "pinnedPubkey": { "type": "string", "description": "Pinned HTTPS server public key." }
+            }
+          }
+        }
+      }
+    }
+  }
+}

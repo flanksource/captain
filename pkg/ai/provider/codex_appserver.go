@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	osexec "os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +55,10 @@ type CodexAppServer struct {
 	// runLabels is the host's identification of the current run, recorded here
 	// for the same reason posture is: the spawn path cannot reach the request.
 	runLabels map[string]string
+	// codexHome is the CODEX_HOME the running server was started with: empty
+	// for the user's, the isolated home for a read-only run. A process cannot
+	// change it, so a later turn that needs the other is refused.
+	codexHome string
 
 	callerToolsMu      sync.Mutex
 	callerToolsRuntime *callertools.Runtime
@@ -147,8 +152,13 @@ func (c *CodexAppServer) ExecuteStream(ctx context.Context, req ai.Request) (<-c
 	if _, err := translateCodexSandbox(api.RuntimeOf(api.OpenAI, api.ModeAgent), req); err != nil {
 		return nil, err
 	}
+	codexHome, err := codexRunHome(req)
+	if err != nil {
+		return nil, fmt.Errorf("codex app-server: %w", err)
+	}
 	req = c.beginTurn(req)
-	if err := c.ensureStarted(ctx); err != nil {
+	req.Prompt.AppendSystem = strings.Join([]string{req.Prompt.AppendSystem, ai.QuestionInstructions("request_user_input", c.cfg.OnApproval != nil && req.Permissions.Mode == api.PermissionPlan)}, "\n\n")
+	if err := c.ensureStarted(ctx, codexHome); err != nil {
 		c.turnMu.Unlock()
 		return nil, err
 	}
@@ -278,17 +288,21 @@ func (c *CodexAppServer) clearActive(ts *turnState) {
 
 // ensureStarted lazily spawns the supervised server, binds the JSON-RPC client
 // to its stdio, and performs the initialize handshake (serialized by turnMu).
-func (c *CodexAppServer) ensureStarted(ctx context.Context) error {
+func (c *CodexAppServer) ensureStarted(ctx context.Context, codexHome string) error {
 	if c.client() != nil {
+		if c.codexHome != codexHome {
+			return fmt.Errorf("codex app-server: this session's server runs with CODEX_HOME %q but the turn needs %q; permissions.access cannot change within a session", c.codexHome, codexHome)
+		}
 		return nil
 	}
+	c.codexHome = codexHome
 	if _, err := osexec.LookPath("codex"); err != nil {
 		return fmt.Errorf("%w: %v", ai.ErrCLINotFound, err)
 	}
 
 	ready := make(chan error, 1)
 	var process *exec.Process
-	sup := newCodexAppServerProcess(c.cfg).WithStdioPipe().Supervise(exec.SuperviseOptions{
+	sup := newCodexAppServerProcess(c.cfg, codexHome).WithStdioPipe().Supervise(exec.SuperviseOptions{
 		// No restart: a crash surfaces as EventError, never a silent retry.
 		RestartPolicy: exec.RestartNo,
 		Task:          c.taskIdentity(),
@@ -537,6 +551,9 @@ func cloneStringMap(values map[string]string) map[string]string {
 func (c *CodexAppServer) handleNotification(method string, params json.RawMessage) {
 	ts := c.currentTurn()
 	if ts == nil {
+		return
+	}
+	if !ts.ownsThread(parseAppServerNotif(params).threadID()) {
 		return
 	}
 	ctx := appServerEventContext{Model: ts.model, Usage: ts.usage, UsagePresent: &ts.usagePresent, Context: &ts.context}

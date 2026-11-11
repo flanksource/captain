@@ -182,6 +182,13 @@ func legacyMergePermissions(p, o Permissions) Permissions {
 	if o.ApprovalTimeout != "" {
 		p.ApprovalTimeout = o.ApprovalTimeout
 	}
+	// The access level layers like the mode: a layer that names one replaces it.
+	if o.Access != "" {
+		p.Access = o.Access
+	}
+	if o.AccessState != nil {
+		p.AccessState = o.AccessState
+	}
 	if len(o.Presets) > 0 {
 		p.Presets = o.Presets
 	}
@@ -221,6 +228,7 @@ func neutralize(s Spec) Spec {
 	// Maps that used to be replaced wholesale and now merge key-wise, because
 	// each key is an independent setting.
 	s.ToolPreferences = nil
+	s.Tools = nil
 	s.CLIArgs = nil
 	s.Labels = nil
 	s.Prompt.Metadata = nil
@@ -230,6 +238,7 @@ func neutralize(s Spec) Spec {
 	// Fields the hand-written mergers simply forgot; the structural engine cannot
 	// forget one, so these now carry through.
 	s.Prompt.Attachments = nil
+	s.Prompt.SchemaHooks, s.Prompt.InputHooks, s.Prompt.Variables, s.Batch = nil, nil, nil, nil
 	s.Model.Streaming, s.Model.Resume, s.Model.Interrupt, s.Model.Steer, s.Model.CallerTools = false, false, false, false, false
 	s.Model.MediaTypes = nil
 	s.Model.Provider = nil

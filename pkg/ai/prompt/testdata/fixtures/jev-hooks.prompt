@@ -1,0 +1,68 @@
+---
+model: jev-latest
+mode: api
+input:
+  schemaType: json-schema
+  schema:
+    type: object
+    additionalProperties: false
+    required: [file, issue]
+    properties:
+      file:
+        type: string
+        description: Path of the issue document the classification is recorded in.
+      issue:
+        type: string
+        description: The issue text to classify.
+tools:
+  product_choices:
+    description: Emit the product question with the products the classifier may choose from
+    readonly: true
+    exec: |
+      cat >/dev/null
+      printf '%s' '{"product":{"type":"choice","instructions":"Which product does the issue concern? Choose unknown when the issue names none.","criteria":{"annuity":"Annuity products.","group-life":"Group life products.","unknown":"The issue names no product."}},"confidence":{"type":"score","instructions":"Rate confidence in the classification.","criteria":["Low confidence.","Medium confidence.","High confidence."]}}'
+  record_classification:
+    description: Record the classification beside the issue
+    destructive: true
+    permission: allow
+    input:
+      type: object
+      required: [file, values]
+      properties:
+        file: {type: string}
+        values: {type: object}
+    exec: cat >/dev/null
+output:
+  schemaType: typesafe-schema
+  hooks:
+    - tool: product_choices
+  schema:
+    product:
+      type: choice
+      instructions: Which product does the issue concern? Choose unknown when the issue names none.
+      criteria:
+        unknown: The issue names no product.
+    confidence:
+      type: score
+      instructions: Rate confidence in the classification.
+      criteria:
+        - Low confidence.
+        - Medium confidence.
+        - High confidence.
+workflow:
+  after:
+    - when: onSuccess
+      tool: record_classification
+      with: {file: "{{vars.file}}", values: "{{output.value}}"}
+    - when: onSuccess
+      if: output.value.product != "unknown"
+      prompt: jev.prompt
+      with:
+        targetScope: "{{output.value.product}}"
+        message: "{{vars.file}}"
+        patch: "{{vars.issue}}"
+---
+{{role "system"}}
+Classify the issue into the product it concerns. Choose unknown when the evidence does not support a product.
+{{role "user"}}
+{{issue}}

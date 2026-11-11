@@ -32,6 +32,7 @@ type chatSession struct {
 	provider   ai.Provider
 	streamer   ai.StreamingProvider
 	baseCancel context.CancelFunc
+	task       *task.Task
 	turnCancel context.CancelFunc
 	turnDone   chan struct{}
 	acc        *promptEventAccumulator
@@ -41,9 +42,14 @@ type chatSession struct {
 	discarded       []string
 	interruptedTurn int
 	recordedTurns   int
-	terminal        bool
-	startedAt       time.Time
-	binding         *promptSessionBinding
+	// sessionIDs are the sessions the chat's recorded runs were filed on, and
+	// lastOutcome the state its last recorded run ended in: what the chat's
+	// end writes as their terminal lifecycle (see endSessions).
+	sessionIDs  []uuid.UUID
+	lastOutcome database.PromptRunState
+	terminal    bool
+	startedAt   time.Time
+	binding     *promptSessionBinding
 	// admissionSessionID is the captain session a fresh chat files every turn
 	// on; nil for a batch member or a chat that continues a provider session.
 	admissionSessionID uuid.UUID
@@ -88,21 +94,46 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 	t.SetBackground(true)
 	baseCtx, cancel := context.WithCancel(t.Context())
 	c.mu.Lock()
+	if c.terminal {
+		c.mu.Unlock()
+		cancel()
+		return PromptRunSummary{RunID: c.runID, Error: "stopped"}, errors.New("stopped")
+	}
 	c.baseCancel = cancel
 	c.mu.Unlock()
 	c.stream.setCancel(cancel)
 	defer cancel()
-
-	req := c.rendered.Input
-	if err := preparePromptAttachments(baseCtx, &req, c.rendered.Config); err != nil {
+	if err := baseCtx.Err(); err != nil {
 		return c.fail(t, err)
 	}
-	provider, cleanup, err := buildProvider(baseCtx, &req, c.rendered.Config)
+
+	req, cfg := c.rendered.Input, c.rendered.Config
+	if err := preparePromptAttachments(baseCtx, &req, cfg); err != nil {
+		return c.fail(t, err)
+	}
+	tools, err := promptrun.BindInlineTools(&req, &cfg)
+	if err != nil {
+		return c.fail(t, err)
+	}
+	provider, cleanup, err := buildProvider(baseCtx, &req, cfg)
 	if err != nil {
 		return c.fail(t, err)
 	}
 	defer cleanup()
 	defer closeProvider(provider)
+	// One tools environment serves every turn: prepared where setup left the
+	// chat, and torn down before setup's own cleanup when the chat ends.
+	if tools != nil {
+		defer func() {
+			if err := tools.Close(); err != nil {
+				log.Errorf("close chat inline tools: %v", err)
+			}
+		}()
+		tools.SetRun(req.Cwd(), req.Setup)
+		if err := tools.Prepare(baseCtx); err != nil {
+			return c.fail(t, err)
+		}
+	}
 	streamer, ok := provider.(ai.StreamingProvider)
 	if !ok {
 		return c.fail(t, fmt.Errorf("runtime %s/%s does not support streaming", c.rendered.Provider, c.rendered.Mode))
@@ -123,6 +154,9 @@ func (c *chatSession) run(t *task.Task) (PromptRunSummary, error) {
 		}
 		nextMessage, waitErr := c.waitForMessage(baseCtx, turn.Summary)
 		if errors.Is(waitErr, errChatIdle) {
+			if err := c.endSessions(nil); err != nil {
+				return c.fail(t, err)
+			}
 			return c.complete(t, turn.Summary), nil
 		}
 		if waitErr != nil {
@@ -439,13 +473,24 @@ func (c *chatSession) stop() bool {
 		return false
 	}
 	c.state.Status = "stopping"
-	state := c.stateCopyLocked()
 	cancel := c.baseCancel
+	queued := cancel == nil
+	if queued {
+		c.terminal = true
+	}
+	state := c.stateCopyLocked()
+	handle := c.task
 	c.mu.Unlock()
 	c.stream.setChatState(state)
 	c.stream.requestStop()
 	if cancel != nil {
 		cancel()
+	}
+	if queued {
+		if handle != nil {
+			handle.Cancel()
+		}
+		_, _ = c.failRun(errors.New("stopped"))
 	}
 	return true
 }
@@ -492,7 +537,7 @@ func (c *chatSession) persistTurn(req ai.Request, turn chatTurn, turnErr error) 
 		Model:    summary.Model, ProviderSessionID: firstNonEmpty(summary.SessionID, c.sessionID()),
 		Outcome: chatTurnOutcome(summary, turn.Interrupted || c.stream.wasStopped(), turnErr),
 	}
-	return recordCompletedRun(context.Background(), c.recording(rendered, runID), done)
+	return c.record(rendered, runID, done)
 }
 
 // chatTurnOutcome is how a turn ended: cancelled when the person interrupted
@@ -512,9 +557,10 @@ func chatTurnOutcome(summary PromptRunSummary, cancelled bool, turnErr error) pr
 }
 
 // recording places every turn of one chat on the same session: the batch
-// member's, the provider session it continues, or the chat's own.
+// member's, the provider session it continues, or the chat's own. Its turns
+// are chat runs, so they leave that session running between turns.
 func (c *chatSession) recording(rendered PromptRenderResult, runID string) promptRecordingInput {
-	return promptRecordingInput{Rendered: rendered, RunID: runID, Binding: c.binding, SessionID: c.admissionSessionID}
+	return promptRecordingInput{Rendered: rendered, RunID: runID, Binding: c.binding, SessionID: c.admissionSessionID, Chat: true}
 }
 
 // recordFailedRun gives a batch chat that failed before any of its turns was
@@ -526,7 +572,7 @@ func (c *chatSession) recordFailedRun(err error) error {
 	if c.binding == nil || recorded {
 		return nil
 	}
-	return recordCompletedRun(context.Background(), c.recording(c.rendered, c.runID), unstartedRun(c.rendered, err))
+	return c.record(c.rendered, c.runID, unstartedRun(c.rendered, err))
 }
 
 func (c *chatSession) complete(t *task.Task, summary PromptRunSummary) PromptRunSummary {
@@ -541,13 +587,19 @@ func (c *chatSession) complete(t *task.Task, summary PromptRunSummary) PromptRun
 }
 
 func (c *chatSession) fail(t *task.Task, err error) (PromptRunSummary, error) {
+	summary, err := c.failRun(err)
+	_, _ = t.FailedWithError(err)
+	return summary, err
+}
+
+func (c *chatSession) failRun(err error) (PromptRunSummary, error) {
 	c.mu.Lock()
 	c.terminal = true
 	c.mu.Unlock()
 	promptChats.finish(c)
 	err = errors.Join(err, c.recordFailedRun(err))
+	err = errors.Join(err, c.endSessions(err))
 	summary := c.stream.fail(err.Error())
-	_, _ = t.FailedWithError(err)
 	return summary, err
 }
 
@@ -562,7 +614,7 @@ func (c *chatSession) followUpRequest(base ai.Request, text string) ai.Request {
 	req.Prompt.SchemaJSON = nil
 	req.Workflow = nil
 	req.Setup = nil
-	return req
+	return req.WithoutExplicit("/prompt/attachments", "/prompt/schemaJSON", "/workflow", "/setup")
 }
 
 func (c *chatSession) publishUser(message ChatQueuedMessage) {

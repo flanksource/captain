@@ -11,6 +11,8 @@ import (
 	"github.com/flanksource/captain/pkg/ai/agent"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/exec"
+	dbcontext "github.com/flanksource/commons-db/context"
+	"github.com/flanksource/commons-db/workspace"
 )
 
 const testPrompt = "add a greeting helper"
@@ -130,6 +132,24 @@ func newContext(dir, branch string) *agent.HookContext {
 	}
 }
 
+// testGate is a host gate deciding from the check alone.
+type testGate func(workspace.Check) error
+
+func (testGate) Name() string { return "test" }
+
+func (g testGate) Check(_ dbcontext.Context, _ *workspace.Workspace, c workspace.Check) error {
+	return g(c)
+}
+
+// testHook is a host hook rewriting files from the commit's paths.
+type testHook func(*workspace.Workspace, []string) error
+
+func (testHook) Name() string { return "test" }
+
+func (h testHook) Run(_ dbcontext.Context, ws *workspace.Workspace, paths []string) error {
+	return h(ws, paths)
+}
+
 // changed records paths as agent-modified, the way Runner.recordEvent does from
 // the agent's Edit/Write tool calls.
 func changed(hc *agent.HookContext, paths ...string) {
@@ -195,5 +215,20 @@ func TestMain(m *testing.M) {
 		os.Stderr.WriteString("commit: git is required for this package's tests\n")
 		os.Exit(1)
 	}
-	os.Exit(m.Run())
+	// The developer's global git config (excludes such as .env, signing, hooks)
+	// must not change what the test repos report.
+	xdg, err := os.MkdirTemp("", "commit-test-xdg-")
+	if err != nil {
+		os.Stderr.WriteString("commit: " + err.Error() + "\n")
+		os.Exit(1)
+	}
+	for key, value := range map[string]string{"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_NOSYSTEM": "1", "XDG_CONFIG_HOME": xdg} {
+		if err := os.Setenv(key, value); err != nil {
+			os.Stderr.WriteString("commit: " + err.Error() + "\n")
+			os.Exit(1)
+		}
+	}
+	code := m.Run()
+	_ = os.RemoveAll(xdg)
+	os.Exit(code)
 }

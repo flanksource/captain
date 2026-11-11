@@ -18,6 +18,7 @@ type sessionMetadataBuild struct {
 	turns          []Turn
 	turnByEntry    map[string]string
 	permissionMode api.PermissionMode
+	name           string
 }
 
 func buildTranscriptMetadata(parsed claude.ParsedSession) sessionMetadataBuild {
@@ -30,6 +31,9 @@ func buildTranscriptMetadata(parsed claude.ParsedSession) sessionMetadataBuild {
 		current := buildSessionMetadata(transcript.Entries)
 		if !transcript.IsAgent && current.permissionMode != "" {
 			combined.permissionMode = current.permissionMode
+		}
+		if !transcript.IsAgent && current.name != "" {
+			combined.name = current.name
 		}
 		namespaceTurns(&current, agentID)
 		combined.events = append(combined.events, current.events...)
@@ -163,6 +167,12 @@ func buildSessionMetadata(entries []claude.HistoryEntry) sessionMetadataBuild {
 		if entry.Event != nil && entry.Event.Type == claude.PermissionModeEvent {
 			if mode, _ := entry.Event.Data["permissionMode"].(string); mode != "" {
 				b.permissionMode = api.PermissionMode(mode)
+			}
+			continue
+		}
+		if entry.Event != nil && entry.Event.Type == claude.CustomTitleEvent {
+			if name, _ := entry.Event.Data["customTitle"].(string); strings.TrimSpace(name) != "" {
+				b.name = strings.TrimSpace(name)
 			}
 			continue
 		}

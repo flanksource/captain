@@ -2,13 +2,16 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/commons-db/connection"
 	"github.com/flanksource/commons-db/shell"
 	"github.com/flanksource/commons-db/types"
 	. "github.com/onsi/ginkgo/v2"
@@ -40,8 +43,8 @@ var _ = Describe("provider observers", func() {
 		_, err = p.Execute(context.Background(), ai.Request{})
 		Expect(err).To(MatchError(failure))
 		Expect(events).To(HaveLen(2))
-		Expect(events[0].Phase).To(Equal("request"))
-		Expect(events[1].Phase).To(Equal("response"))
+		Expect(events[0].Phase).To(Equal(observe.PhaseRequest))
+		Expect(events[1].Phase).To(Equal(observe.PhaseResponse))
 		Expect(events[1].Model).To(Equal("test-model"))
 		Expect(events[1].Backend).NotTo(BeEmpty())
 		Expect(events[1].Usage).To(Equal(response.Usage))
@@ -61,7 +64,7 @@ var _ = Describe("provider observers", func() {
 		defer release()
 		stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), ai.Request{})
 		Expect(err).NotTo(HaveOccurred())
-		Expect((<-observed).Phase).To(Equal("request"))
+		Expect((<-observed).Phase).To(Equal(observe.PhaseRequest))
 		go func() { input <- ai.Event{Kind: ai.EventText, Text: "hello"} }()
 		Expect((<-stream).Text).To(Equal("hello"))
 		go func() {
@@ -121,7 +124,7 @@ var _ = Describe("provider observers", func() {
 		}
 		for i := 0; i < 4; i++ {
 			ev := <-observed
-			if ev.Phase != "request" {
+			if ev.Phase != observe.PhaseRequest {
 				continue
 			}
 			Expect(ev.Request.Setup.Env).To(Equal([]string{"TOKEN=[REDACTED]"}))
@@ -132,6 +135,68 @@ var _ = Describe("provider observers", func() {
 		Expect(req.Setup.Env[0]).To(Equal("TOKEN=secret"))
 		Expect(req.Setup.EnvVars[0].ValueStatic).To(Equal("hidden"))
 		Expect(req.Labels["key"]).To(Equal("original"))
+	})
+	It("isolates the observed buffered response from the caller's response", func() {
+		response := &ai.Response{Text: "original", Context: &api.ContextUsage{UsedTokens: 5}, Usage: ai.Usage{InputTokens: 7}, CostUSD: 0.1}
+		p, err := Wrap(&observedStub{stubProvider: stubProvider{resp: response}}, WithObservers())
+		Expect(err).NotTo(HaveOccurred())
+		var observed observe.ProviderEvent
+		release := observe.ObserveProvider(func(ev observe.ProviderEvent) {
+			if ev.Phase == observe.PhaseResponse {
+				observed = ev
+				ev.Response.Text = "changed"
+				ev.Response.Context.UsedTokens = 9
+			}
+		})
+		defer release()
+		got, err := p.Execute(context.Background(), ai.Request{})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(BeIdenticalTo(response))
+		Expect(got.Text).To(Equal("original"))
+		Expect(got.Context.UsedTokens).To(Equal(5))
+		Expect(observed.Usage.InputTokens).To(Equal(7))
+		Expect(observed.Cost).To(Equal(0.1))
+	})
+	It("redacts connection credentials in observed requests without mutating the original request", func() {
+		const secret = "connection-secret"
+		secretRef := func() *types.EnvVar {
+			return &types.EnvVar{ValueStatic: secret, ValueFrom: &types.EnvVarSource{SecretKeyRef: &types.SecretKeySelector{Key: "k"}}}
+		}
+		aws := connection.AWSConnection{AccessKey: *secretRef(), SecretKey: *secretRef(), SessionToken: *secretRef(), Region: "us-east-1"}
+		gcp := connection.GCPConnection{Credentials: secretRef(), Project: "project-x"}
+		req := ai.Request{Setup: &shell.Setup{Connections: connection.ExecConnections{
+			AWS:   &aws,
+			GCP:   &gcp,
+			Azure: &connection.AzureConnection{ClientID: secretRef(), ClientSecret: secretRef(), TenantID: "tenant-x"},
+			Kubernetes: &connection.KubernetesConnection{
+				KubeconfigConnection: connection.KubeconfigConnection{Kubeconfig: secretRef()},
+				EKS:                  &connection.EKSConnection{AWSConnection: aws},
+				GKE:                  &connection.GKEConnection{GCPConnection: gcp},
+				CNRM:                 &connection.CNRMConnection{GKE: connection.GKEConnection{GCPConnection: gcp}},
+			},
+		}}}
+		p, err := Wrap(&observedStub{stubProvider: stubProvider{resp: &ai.Response{}}}, WithObservers())
+		Expect(err).NotTo(HaveOccurred())
+		var redacted *ai.Request
+		release := observe.ObserveProvider(func(ev observe.ProviderEvent) {
+			if ev.Phase == observe.PhaseRequest {
+				redacted = ev.Request
+			}
+		})
+		defer release()
+		_, err = p.Execute(context.Background(), req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(redacted).NotTo(BeNil())
+		Expect(redacted.Setup.Connections.AWS.Region).To(Equal("us-east-1"))
+		Expect(redacted.Setup.Connections.Azure.TenantID).To(Equal("tenant-x"))
+		Expect(fmt.Sprintf("%+v", redacted.Setup.Connections)).NotTo(ContainSubstring(secret))
+		raw, err := json.Marshal(redacted.Setup.Connections)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(raw)).NotTo(ContainSubstring(secret))
+		Expect(string(raw)).NotTo(ContainSubstring("valueFrom"))
+		Expect(req.Setup.Connections.Azure.ClientSecret.ValueStatic).To(Equal(secret))
+		Expect(req.Setup.Connections.Kubernetes.CNRM.GKE.Credentials.ValueStatic).To(Equal(secret))
+		Expect(req.Setup.Connections.AWS.SecretKey.ValueFrom).NotTo(BeNil())
 	})
 	It("drains a cancelled stream and forwards a waiting terminal result", func() {
 		input := make(chan ai.Event)
@@ -270,10 +335,10 @@ var _ = Describe("provider observers", func() {
 		for i := 0; i < 4; i++ {
 			var ev ProviderEvent
 			Eventually(observed, time.Second).Should(Receive(&ev))
-			if ev.Phase == "request" {
+			if ev.Phase == observe.PhaseRequest {
 				requests++
 			}
-			if ev.Phase == "response" {
+			if ev.Phase == observe.PhaseResponse {
 				responses++
 			}
 		}

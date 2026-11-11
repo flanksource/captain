@@ -1,0 +1,31 @@
+name: captain-prompt-question
+description: Native question followed by a reply to its tool result; no unmatched-request fallback.
+anthropic:
+  - match:
+      system_contains: You are naming a coding session
+    repeat: -1
+    respond:
+      text: Captain question fixture
+      stop_reason: end_turn
+  - match:
+      prompt_contains: captain-question-fixture
+    respond:
+      tool_use:
+        name: AskUserQuestion
+        id: toolu_captain_question
+        input:
+          questions:
+            - question: Which database should the store use?
+              header: Storage
+              options:
+                - label: postgres
+                  description: Use the server database.
+                - label: sqlite
+                  description: Use the embedded database.
+              multiSelect: false
+      stop_reason: tool_use
+  - match:
+      tool_result_for: AskUserQuestion
+    respond:
+      text: CAPTAIN_QUESTION_COMPLETE
+      stop_reason: end_turn

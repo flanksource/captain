@@ -3,11 +3,14 @@ package cli
 import (
 	"context"
 	"errors"
+	"path/filepath"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/commons-db/dbtest"
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gstruct"
@@ -99,6 +102,72 @@ var _ = Describe("persisting a resumed chat turn", func() {
 			Fields{"State": Equal(database.PromptRunStateCancelled), "Error": BeEmpty()}),
 		Entry("a turn the person stopped", reachedProvider(PromptRunSummary{}), context.Canceled, true, "stopped",
 			Fields{"State": Equal(database.PromptRunStateCancelled), "Error": Equal("stopped")}),
+	)
+
+	It("records every turn of a chat whose render normalized its setup directory", func() {
+		captainconfig.SetPathForTesting(filepath.Join(GinkgoT().TempDir(), ".captain.yaml"))
+		DeferCleanup(captainconfig.SetPathForTesting, "")
+		GinkgoT().Chdir(GinkgoT().TempDir())
+		rendered, err := renderPrompt(GinkgoT().Context(), "", PromptRenderRequest{
+			Spec: &api.Spec{Model: api.Model{Name: "claude-opus-5", Mode: api.ModeAgent}, Prompt: api.Prompt{User: "turn 1"}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered.Input.Fields()).To(HaveKey("/setup/baseDir"), "the render must normalize the setup the follow-ups drop")
+		chat := newChatSession("chat-run", rendered, 0, newRunStream(), nil)
+		prompts := []string{"turn 1", "turn 2", "turn 3", "turn 4"}
+
+		for i, prompt := range prompts {
+			req := chat.rendered.Input
+			if i > 0 {
+				req = chat.followUpRequest(chat.rendered.Input, prompt)
+			}
+			chat.state.Turn = i + 1
+			Expect(chat.endTurn(req, reachedProvider(PromptRunSummary{Success: true}), nil)).To(Succeed(), "turn %d", i+1)
+		}
+
+		var recorded []string
+		for _, run := range persistedTurns() {
+			recorded = append(recorded, run.PromptMarkdown)
+		}
+		Expect(recorded).To(ConsistOf(prompts))
+	})
+
+	// A follower closes its stream on a terminal lifecycle, so a chat that
+	// answered and awaits the next message must still read as running.
+	DescribeTable("keeps a live chat's sessions running between turns until the chat ends",
+		func(stopped bool, chatErr error, want database.SessionLifecycleStatus) {
+			chat := resumedChat(nil)
+			chatSessions := func() []database.SessionLifecycleStatus {
+				GinkgoHelper()
+				var lifecycles []database.SessionLifecycleStatus
+				for _, run := range persistedTurns() {
+					for _, id := range []*uuid.UUID{&run.SessionID, run.ExecutionSessionID} {
+						if id == nil {
+							continue
+						}
+						session, err := db.GetSession(GinkgoT().Context(), *id)
+						Expect(err).NotTo(HaveOccurred())
+						lifecycles = append(lifecycles, session.LifecycleStatus)
+					}
+				}
+				return lifecycles
+			}
+
+			for turn := 1; turn <= 2; turn++ {
+				chat.state.Turn = turn
+				Expect(chat.endTurn(chat.rendered.Input, reachedProvider(PromptRunSummary{Success: true}), nil)).To(Succeed())
+				Expect(chatSessions()).To(HaveEach(database.SessionLifecycleRunning), "after turn %d", turn)
+			}
+			if stopped {
+				chat.stream.requestStop()
+			}
+
+			Expect(chat.endSessions(chatErr)).To(Succeed())
+			Expect(chatSessions()).To(HaveEach(want))
+		},
+		Entry("a chat that idled out finishes as its last turn did", false, nil, database.SessionLifecycleSucceeded),
+		Entry("a chat the person stopped is cancelled", true, errors.New("stopped"), database.SessionLifecycleCancelled),
+		Entry("a chat that failed is failed", false, errors.New("claude-agent: process exited mid-turn"), database.SessionLifecycleFailed),
 	)
 
 	It("records nothing for a follow-up turn that never reached the provider", func() {

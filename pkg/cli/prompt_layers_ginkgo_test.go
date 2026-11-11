@@ -10,6 +10,7 @@ import (
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/onsi/gomega/gstruct"
 )
 
 // runtimeCatalogFixture is a file-backed preset/profile catalog pinned on the
@@ -263,6 +264,21 @@ var _ = Describe("prompt layers", func() {
 		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "scratch.prompt", "render request"}))
 	})
 
+	It("renders a self-contained draft without a saved prompt", func() {
+		f, _, _ := newRuntimeCatalogFixture()
+		draft := "---\nname: Feedback\nmodel: claude-sonnet-4-6\nbudget:\n  maxTurns: 4\n---\n{{role \"user\"}}\nReview {{page}}.\n"
+
+		rendered, err := renderPrompt(f.ctx, "", PromptRenderRequest{Content: draft, Variables: map[string]any{"page": "welcome"}})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered.ValidationError).To(BeEmpty())
+		Expect(rendered).To(MatchFields(IgnoreExtras, Fields{
+			"ID": BeEmpty(), "Name": Equal("Feedback"), "Model": Equal("claude-sonnet-4-6"), "User": Equal("Review welcome."),
+		}))
+		Expect(rendered.Input.Budget.MaxTurns).To(Equal(4))
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"draft.prompt"}))
+	})
+
 	It("layers --preset beneath the CLI flags", func() {
 		f, _, _ := newRuntimeCatalogFixture()
 		f.reviewCatalog()
@@ -280,6 +296,27 @@ var _ = Describe("prompt layers", func() {
 		Expect(rendered.Input.Memory.SkipUser).To(BeTrue())
 		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"Org", "Review", "layered.prompt", "CLI flags"}))
 		Expect(rendered.Resolution.Provenance["/budget/maxTurns"].Source.Name).To(Equal("CLI flags"))
+	})
+
+	It("layers an in-process caller's spec over the frontmatter and beneath the CLI flags", func() {
+		f, _, _ := newRuntimeCatalogFixture()
+		detail := f.prompt("caller", "---\nname: Caller\nmodel: claude-sonnet-4-6\nmode: agent\npermissions:\n  mode: acceptEdits\n---\n{{role \"user\"}}\nHi.\n")
+		opts := AIPromptOptions{Spec: &api.Spec{
+			Model:       api.Model{Name: "claude-opus-4-6"},
+			Permissions: api.Permissions{Mode: api.PermissionPlan},
+			Budget:      api.Budget{MaxTurns: 5},
+		}}
+		opts.MaxTurns = 2
+
+		rendered, err := renderPromptCLI(f.ctx, detail.Path, opts, "", "")
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rendered.ValidationError).To(BeEmpty())
+		Expect(rendered.Model).To(Equal("claude-opus-4-6"))
+		Expect(rendered.Mode).To(Equal("agent"), "unset caller fields inherit the frontmatter")
+		Expect(rendered.Input.Permissions.Mode).To(Equal(api.PermissionPlan))
+		Expect(rendered.Input.Budget.MaxTurns).To(Equal(2), "explicit flags stay above the caller's spec")
+		Expect(traceNames(rendered.Resolution)).To(Equal([]string{"caller.prompt", "render request", "CLI flags"}))
 	})
 
 	It("never consults the catalog without presets and ignores deprecated profiles", func() {
