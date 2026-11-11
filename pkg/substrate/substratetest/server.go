@@ -3,6 +3,7 @@
 package substratetest
 
 import (
+	"cmp"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -255,7 +256,7 @@ func (c control) ListActors(_ context.Context, req *ateapipb.ListActorsRequest) 
 		}
 	}
 	slices.SortFunc(envs, func(a, b *Environment) int {
-		return strings.Compare(a.Atespace+"/"+a.ID, b.Atespace+"/"+b.ID)
+		return cmp.Or(strings.Compare(a.Atespace, b.Atespace), strings.Compare(a.ID, b.ID))
 	})
 	start, end, next, err := s.page(req.GetOptions(), len(envs))
 	if err != nil {
