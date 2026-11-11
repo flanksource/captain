@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observe"
 	promptlib "github.com/flanksource/captain/pkg/ai/prompt"
 	"github.com/flanksource/captain/pkg/api"
 )
@@ -33,7 +34,7 @@ func (v *validatingProvider) executeRepair(ctx context.Context, parent ai.Reques
 	if c, ok := p.(io.Closer); ok {
 		defer func() { _ = c.Close() }()
 	}
-	return (&observingProvider{provider: p}).Execute(ctx, req)
+	return observe.Wrap(p).Execute(ctx, req)
 }
 
 func (v *validatingProvider) repairRequest(parent ai.Request, schema json.RawMessage, verrs string, prev *ai.Response, attempt int) (ai.Request, ai.Config, bool, error) {
