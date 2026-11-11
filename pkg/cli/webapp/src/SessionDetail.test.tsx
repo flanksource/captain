@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionDetail } from "./SessionDetail";
+import { RunVerification } from "./RunVerification";
 import type { SessionGetResult } from "./sessionData";
 import type { VerifyFrame, VerifyReport } from "./types/verifyReport";
 
@@ -72,64 +73,28 @@ const report: VerifyReport = {
   reason: "Expected three retries",
 };
 
-function storedSession(verify: unknown): SessionGetResult {
+function storedSession(): SessionGetResult {
   return {
     total: 1,
     sessions: [{
       captainId: "stored-session",
       detailAvailable: true,
       summary: { key: "stored-session", id: "stored-session", source: "captain", messages: 1, toolCalls: 0 },
-      detail: { id: "stored-session", source: "captain", messages: [], structuredOutput: { verify } },
+      detail: { id: "stored-session", source: "captain", messages: [] },
     }],
   };
 }
 
-describe("SessionDetail verification", () => {
-  it.each([false, true])("renders a persisted report with collection=%s", (collection) => {
-    render(<SessionDetail
-      result={{ ...storedSession(report), ...(collection ? { rootSessionId: "stored-session" } : {}) }}
-      loading={false} error={undefined} onRefresh={vi.fn()}
-    />);
-    expect(screen.getByText("Persisted acceptance check")).toBeInTheDocument();
-    expect(screen.getByText("Expected three retries")).toBeInTheDocument();
-    expect(screen.getByText("Stored transcript")).toBeInTheDocument();
-    expect(screen.queryByText("Running verification…")).not.toBeInTheDocument();
-  });
-
-  it("surfaces malformed persisted verification without losing the transcript", () => {
-    render(<SessionDetail result={storedSession({ ...report, state: "bogus" })}
-      loading={false} error={undefined} onRefresh={vi.fn()}
-    />);
+describe("RunVerification", () => {
+  it("surfaces malformed persisted verification", () => {
+    render(<RunVerification storedReport={{ ...report, state: "bogus" }} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Invalid stored verification report");
-    expect(screen.getByText("Stored transcript")).toBeInTheDocument();
-  });
-
-  it("shows the live retry report instead of the stored prior verdict", () => {
-    useSessionChatMock.mockReturnValueOnce({
-      ...chatState(),
-      verify: {
-        done: false,
-        report: {
-          ...report,
-          state: "running",
-          reason: undefined,
-          tests: [{ name: "Retrying acceptance check", framework: "fixture", running: true }],
-          summary: { ...report.summary, failed: 0, running: 1 },
-        },
-      },
-    });
-    render(<SessionDetail result={storedSession(report)}
-      loading={false} error={undefined} onRefresh={vi.fn()}
-    />);
-    expect(screen.getByText("Retrying acceptance check")).toBeInTheDocument();
-    expect(screen.getByText("Running verification…")).toBeInTheDocument();
-    expect(screen.queryByText("Persisted acceptance check")).not.toBeInTheDocument();
   });
 });
 
 describe("SessionDetail typed approval decisions", () => {
   const withApproval = (): SessionGetResult => {
-    const result = storedSession(undefined);
+    const result = storedSession();
     result.sessions[0]!.detail!.requests = [
       { id: "approval-7", kind: "tool_approval", state: "pending", tool: "request_permissions" },
     ];

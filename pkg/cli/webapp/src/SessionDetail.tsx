@@ -21,7 +21,6 @@ import {
   type ApprovalDecisionExtras,
   type ApprovalResolveAction,
 } from "./sessionApprovals";
-import { RunVerification } from "./RunVerification";
 import { sizeSessionTokens } from "./sessionTokens";
 import {
   mergeSessionMessages,
@@ -75,12 +74,6 @@ export function SessionDetail({
             onResolveApproval={onResolveApproval}
           />
         </div>
-        {result.sessions.map((item) => (
-          <RunVerification key={item.captainId}
-            storedReport={item.detail?.verifications?.slice(-1)[0]?.report}
-            title={`Verification · ${item.summary.title || item.captainId}`}
-          />
-        ))}
       </div>
     );
   }
@@ -126,17 +119,26 @@ function SessionGetItemDetail({
     permissionModes: item.permissionModes,
   });
   const detail = useMemo(
-    () =>
-      item.detail
-        ? {
-            ...item.detail,
-            messages: mergeSessionMessages(
-              item.detail.messages ?? [],
-              chat.messages,
+    () => {
+      if (!item.detail) return undefined;
+      const liveReport = chat.verify?.report;
+      if (liveReport && liveReport.iteration === undefined) {
+        throw new Error("Live verification report is missing its iteration.");
+      }
+      return {
+        ...item.detail,
+        messages: mergeSessionMessages(item.detail.messages ?? [], chat.messages),
+        ...(liveReport ? {
+          verifications: [
+            ...(item.detail.verifications ?? []).filter(
+              (verification) => verification.iteration !== liveReport.iteration,
             ),
-          }
-        : undefined,
-    [chat.messages, item.detail],
+            { iteration: liveReport.iteration!, report: liveReport },
+          ],
+        } : {}),
+      };
+    },
+    [chat.messages, chat.verify, item.detail],
   );
   // Questions are answerable only by resuming the session, and not while a run
   // is already carrying an answer.
@@ -225,7 +227,6 @@ function SessionGetItemDetail({
           Transcript unavailable.
         </div>
       )}
-      <RunVerification frame={chat.verify} storedReport={detail?.verifications?.slice(-1)[0]?.report} />
     </section>
   );
 }
