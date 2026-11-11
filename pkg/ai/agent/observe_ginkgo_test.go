@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/flanksource/captain/pkg/ai"
-	"github.com/flanksource/captain/pkg/ai/middleware"
+	"github.com/flanksource/captain/pkg/ai/observe"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/commons-db/shell"
 	. "github.com/onsi/ginkgo/v2"
@@ -13,22 +13,22 @@ import (
 
 var _ = Describe("runner observation", func() {
 	It("publishes iteration and tool events with the loop iteration", func() {
-		var events []middleware.ProviderEvent
-		release := middleware.ObserveProvider(func(ev middleware.ProviderEvent) { events = append(events, ev) })
+		var events []observe.ProviderEvent
+		release := observe.ObserveProvider(func(ev observe.ProviderEvent) { events = append(events, ev) })
 		defer release()
 		r := &Runner[any]{Provider: &fakeProvider{}}
 		hc := &HookContext{Response: &ai.Response{}, Iteration: 2}
 		r.recordEvent(hc, ai.Event{Kind: ai.EventTurnStart})
 		r.recordEvent(hc, ai.Event{Kind: ai.EventToolUse, Tool: "Read"})
 		Expect(events).To(HaveLen(2))
-		Expect(events[0].Phase).To(Equal("iteration"))
-		Expect(events[1].Phase).To(Equal("tool"))
+		Expect(events[0].Phase).To(Equal(observe.PhaseIteration))
+		Expect(events[1].Phase).To(Equal(observe.PhaseTool))
 		Expect(events[1].Iter).To(Equal(2))
 		Expect(events[1].Event.Tool).To(Equal("Read"))
 	})
 	It("publishes events from a running turn", func() {
-		var events []middleware.ProviderEvent
-		release := middleware.ObserveProvider(func(ev middleware.ProviderEvent) { events = append(events, ev) })
+		var events []observe.ProviderEvent
+		release := observe.ObserveProvider(func(ev observe.ProviderEvent) { events = append(events, ev) })
 		defer release()
 		provider := &fakeProvider{events: func(int) []ai.Event {
 			return []ai.Event{{Kind: ai.EventToolUse, Tool: "Read"}, {Kind: ai.EventResult, Success: true}}
@@ -37,13 +37,13 @@ var _ = Describe("runner observation", func() {
 		_, err := r.Run(context.Background())
 		Expect(err).NotTo(HaveOccurred())
 		Expect(events).To(HaveLen(2))
-		Expect(events[0].Phase).To(Equal("iteration"))
-		Expect(events[1].Phase).To(Equal("tool"))
+		Expect(events[0].Phase).To(Equal(observe.PhaseIteration))
+		Expect(events[1].Phase).To(Equal(observe.PhaseTool))
 		Expect(events[1].Event.Tool).To(Equal("Read"))
 	})
 	It("redacts environment values in the iteration's embedded request", func() {
-		var events []middleware.ProviderEvent
-		release := middleware.ObserveProvider(func(ev middleware.ProviderEvent) { events = append(events, ev) })
+		var events []observe.ProviderEvent
+		release := observe.ObserveProvider(func(ev observe.ProviderEvent) { events = append(events, ev) })
 		defer release()
 		r := &Runner[any]{Provider: &fakeProvider{}}
 		hc := &HookContext{Response: &ai.Response{}}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flanksource/captain/pkg/ai"
+	"github.com/flanksource/captain/pkg/ai/observe"
 	"github.com/flanksource/captain/pkg/api"
 )
 
@@ -191,7 +192,7 @@ func (v *validatingProvider) streamRepair(ctx context.Context, parent ai.Request
 		if c, ok := provider.(io.Closer); ok {
 			defer func() { _ = c.Close() }()
 		}
-		provider = &observingProvider{provider: provider}
+		provider = observe.Wrap(provider)
 	}
 	streamer, ok := provider.(ai.StreamingProvider)
 	if !ok {
