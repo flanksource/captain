@@ -287,7 +287,12 @@ func (p *observingProvider) forwardStream(ctx context.Context, stream <-chan ai.
 			if ev.Usage != nil {
 				response.Usage = *ev.Usage
 			}
-			response.CostUSD, response.Context, response.Raw = ev.CostUSD, ev.Context, ev.Input
+			response.CostUSD, response.Raw = ev.CostUSD, ev.Input
+			response.Context = nil
+			if ev.Context != nil {
+				snapshot := *ev.Context
+				response.Context = &snapshot
+			}
 			if len(ev.StructuredData) > 0 {
 				response.StructuredData = ev.StructuredData
 			}

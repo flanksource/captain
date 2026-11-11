@@ -158,6 +158,30 @@ var _ = Describe("provider observers", func() {
 		Expect(observed.Usage.InputTokens).To(Equal(7))
 		Expect(observed.Cost).To(Equal(0.1))
 	})
+	It("isolates the observed streamed response from the forwarded result event", func() {
+		input := make(chan ai.Event, 1)
+		input <- ai.Event{Kind: ai.EventResult, Success: true, Context: &api.ContextUsage{UsedTokens: 5}}
+		close(input)
+		p, err := Wrap(&observedStub{events: input}, WithObservers())
+		Expect(err).NotTo(HaveOccurred())
+		observed := make(chan observe.ProviderEvent, 1)
+		release := observe.ObserveProvider(func(ev observe.ProviderEvent) {
+			if ev.Phase == observe.PhaseResponse {
+				ev.Response.Context.UsedTokens = 9
+				observed <- ev
+			}
+		})
+		defer release()
+		stream, err := p.(ai.StreamingProvider).ExecuteStream(context.Background(), ai.Request{})
+		Expect(err).NotTo(HaveOccurred())
+		var forwarded ai.Event
+		for ev := range stream {
+			forwarded = ev
+		}
+		result := <-observed
+		Expect(result.Response.Context.UsedTokens).To(Equal(9))
+		Expect(forwarded.Context.UsedTokens).To(Equal(5))
+	})
 	It("redacts connection credentials in observed requests without mutating the original request", func() {
 		const secret = "connection-secret"
 		secretRef := func() *types.EnvVar {
