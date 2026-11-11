@@ -53,7 +53,7 @@ func normalizeInput(input RuleInput) (RuleInput, error) {
 	if input.Name == "" || input.Amount <= 0 || input.Window == "" {
 		return RuleInput{}, fmt.Errorf("%w: name, positive amount, and window are required", ErrInvalid)
 	}
-	if _, err := windowStart(input.Window, time.Now().UTC()); err != nil {
+	if _, err := WindowStart(input.Window, time.Now().UTC()); err != nil {
 		return RuleInput{}, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	dimensions := make(map[string]string, len(input.Match.Dimensions))
@@ -95,7 +95,9 @@ func cleanList(values []string) []string {
 	return out
 }
 
-func windowStart(raw string, now time.Time) (time.Time, error) {
+// WindowStart is where a budget window that ends at now starts: raw is datemath relative to now,
+// such as now/M or now-30d, evaluated in UTC. An absolute or future start is refused.
+func WindowStart(raw string, now time.Time) (time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "now") {
 		return time.Time{}, fmt.Errorf("budget window %q must be relative to now", raw)
