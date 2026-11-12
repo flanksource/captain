@@ -37,7 +37,7 @@ var _ = Describe("Prompt invocation", func() {
 		for _, variant := range rendered.variants {
 			Expect(variant.Request.Prompt.SchemaJSON).To(ContainSubstring(`"violations"`))
 			Expect(variant.Request.Prompt.SchemaJSON).NotTo(ContainSubstring(`"old"`))
-			Expect(variant.Request.Prompt.SchemaStrictness).To(Equal(api.SchemaStrictnessError))
+			Expect(variant.Request.Prompt.SchemaStrictness).To(Equal(api.SchemaStrictnessRepair))
 			Expect(variant.Resolution.Trace[len(variant.Resolution.Trace)-1].Name).To(Equal("Lint"))
 		}
 	})
