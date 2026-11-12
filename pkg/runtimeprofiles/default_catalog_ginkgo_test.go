@@ -91,7 +91,11 @@ var _ = Describe("Default runtime catalog", func() {
 		catalog, err := NewDefaultCatalog(ctx, DefaultCatalogOptions{Cwd: cwd, Config: &cfg})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(catalog.Sources()).To(HaveLen(6))
-		Expect(catalog.ListPresets(ctx)).To(HaveLen(4), "the configured preset plus the three built-ins")
+		listed, err := catalog.ListPresets(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(presetSummaries(listed)).To(Equal([][2]string{
+			{"file", "Shared"}, {"builtin", "Edit"}, {"builtin", "Lint"}, {"builtin", "Plan"}, {"builtin", "Read-only"},
+		}), "the configured preset once, despite its alias, plus the four built-ins")
 	})
 
 	It("registers the built-ins last and lets a repo preset override one by name", func(ctx SpecContext) {

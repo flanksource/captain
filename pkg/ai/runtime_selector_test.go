@@ -234,7 +234,7 @@ func TestResolveMulti_PerSelectorEffortAndDedup(t *testing.T) {
 	want := []runtime{
 		{"gpt-6.1-sol", api.ModeAgent, api.EffortHigh},
 		{"gpt-6.1-sol", api.ModeAgent, api.EffortXHigh},
-		{"gpt-5.6-terra", api.ModeCmux, api.EffortMax},
+		{"gpt-6.1-terra", api.ModeCmux, api.EffortMax},
 	}
 	gotRuntimes := make([]runtime, 0, len(got))
 	for _, m := range got {
@@ -358,7 +358,7 @@ func TestResolve_OpenAIVariantsAvailableViaAPI(t *testing.T) {
 	for alias, want := range map[string]string{
 		"luna":  "gpt-6-luna",
 		"sol":   "gpt-6.1-sol",
-		"terra": "gpt-5.6-terra",
+		"terra": "gpt-6.1-terra",
 	} {
 		t.Run(alias, func(t *testing.T) {
 			got, err := Resolve(api.Model{Name: "api:" + alias})
