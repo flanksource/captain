@@ -47,6 +47,9 @@ func LoadTaskState(repo, task string) (*TaskState, bool, error) {
 }
 
 func loadTaskStateUnlocked(repo, task string) (*TaskState, bool, error) {
+	if !filepath.IsLocal(task) {
+		return nil, false, fmt.Errorf("task id %q is not a local path", task)
+	}
 	data, err := os.ReadFile(filepath.Join(taskStateDir(repo, task), "state.json"))
 	if os.IsNotExist(err) {
 		return nil, false, nil
