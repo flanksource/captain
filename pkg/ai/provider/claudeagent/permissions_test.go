@@ -107,7 +107,9 @@ func TestInitializeParams_NormalizesToolModes(t *testing.T) {
 		Permissions: api.Permissions{Tools: tools},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Bash", "WebFetch"}, params.DisallowedTools,
+	// AskUserQuestion is denied too: with no approval broker attached there is
+	// nobody to answer it.
+	assert.Equal(t, []string{"Bash", "WebFetch", "AskUserQuestion"}, params.DisallowedTools,
 		"an off tool mode is a deny and must reach disallowedTools")
 	// `on` resolves to auto — the agent's normal behaviour — so it must not
 	// narrow the run into a one-tool allowlist.

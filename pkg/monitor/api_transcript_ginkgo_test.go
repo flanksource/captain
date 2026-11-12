@@ -77,6 +77,6 @@ var _ = Describe("API transcripts", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		outside := filepath.Join(GinkgoT().TempDir(), "elsewhere.jsonl")
 		Expect(newIngestor(monitor).ingestFile(ctx, api.TranscriptSourceAPI, outside)).
-			To(MatchError(ContainSubstring("outside the api session root")))
+			To(MatchError(ContainSubstring("outside every api session root")))
 	})
 })

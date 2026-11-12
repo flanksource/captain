@@ -32,7 +32,7 @@ func (s *relocatingSandbox) Prepare(context.Context, *api.Spec) (*api.SandboxSes
 func (s *relocatingSandbox) Close() error              { s.closed++; return nil }
 func (s *relocatingSandbox) IsolatesWorkspace() bool   { return true }
 func (s *relocatingSandbox) ProvidesEgressProxy() bool { return true }
-func (s *relocatingSandbox) Execute(_ context.Context, spec api.Spec) (*api.Response, error) {
+func (s *relocatingSandbox) Execute(_ context.Context, spec api.Spec, _ api.RemoteExecOptions) (*api.Response, error) {
 	s.executed = append(s.executed, spec)
 	return &api.Response{Text: "done remotely", Model: "sonnet"}, nil
 }
