@@ -11,7 +11,7 @@ import (
 const PromptLookupHelp = `- Embedded examples ship with the binary (read-only).
 - Configured directories: prompts.dirs in ~/.captain.yaml; relative paths resolve from that config file's directory.
 - Caller-provided directories and embedded filesystems are also included when registered by a host application.
-- Project directory: ./.captain/prompts, used only when no configured or caller-provided writable source exists.
+- Project directory: ./.captain/prompts, always included after configured and caller-provided directories.
 - User directory: ~/.config/captain/prompts, or $XDG_CONFIG_HOME/captain/prompts when XDG_CONFIG_HOME is set; always included.
 - Links directly inside a prompt directory are read-only: linked .prompt files are included, and linked directories contribute only their immediate regular .prompt files (no subdirectories or further links).
 - Broken links and unreadable linked prompts remain inspectable with promptfile/symlink warnings; render and run fail if the selected prompt cannot be read.

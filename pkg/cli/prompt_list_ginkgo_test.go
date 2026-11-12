@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/captainconfig"
 	"github.com/flanksource/clicky"
@@ -36,7 +37,7 @@ var _ = Describe("Prompt list lookup locations", func() {
 		Expect(out).To(ContainSubstring(filepath.Join(home, "prompts")))
 	})
 
-	It("shows configured and host sources instead of an inactive project fallback", func() {
+	It("shows configured and host sources ahead of the workspace prompt directory", func() {
 		configPath, err := captainconfig.Path()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(os.Mkdir(filepath.Join(filepath.Dir(configPath), "configured-prompts"), 0o700)).To(Succeed())
@@ -46,9 +47,12 @@ var _ = Describe("Prompt list lookup locations", func() {
 		out, err := promptLookupFooter(ctx, clicky.FormatOptions{Format: "markdown"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(ContainSubstring("**Lookup locations**"))
-		Expect(out).To(ContainSubstring(filepath.Join(filepath.Dir(configPath), "configured-prompts")))
-		Expect(out).To(ContainSubstring("host-prompts"))
-		Expect(out).NotTo(ContainSubstring(filepath.Join(".captain", "prompts")))
+		configured := strings.Index(out, filepath.Join(filepath.Dir(configPath), "configured-prompts"))
+		host := strings.Index(out, "host-prompts")
+		workspace := strings.Index(out, filepath.Join(".captain", "prompts"))
+		Expect(configured).To(BeNumerically(">=", 0), out)
+		Expect(host).To(BeNumerically(">", configured), out)
+		Expect(workspace).To(BeNumerically(">", host), "the workspace directory is always a source, after configured and host ones")
 	})
 
 	DescribeTable("keeps machine output and file exports free of a terminal footer", func(opts clicky.FormatOptions) {
@@ -82,6 +86,8 @@ var _ = Describe("Prompt list lookup locations", func() {
 		if child {
 			target = list
 		}
+		// Cobra sets the context only on Execute; a direct RunE call must supply it.
+		target.SetContext(context.Background())
 		err := target.RunE(target, nil)
 		if runErr == nil {
 			Expect(err).NotTo(HaveOccurred())
