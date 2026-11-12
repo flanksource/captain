@@ -47,18 +47,23 @@ var resourceProjections = []resourceProjection{
 	{"google", "environment", "/properties/advanced"},
 }
 
-func resourceSchemas() ([]SchemaDocument, error) {
-	sources := map[string]map[string]any{}
-	for _, provider := range []string{"openai", "anthropic", "google"} {
-		raw, err := schemaFiles.ReadFile("resources/" + provider + ".json")
-		if err != nil {
-			return nil, fmt.Errorf("read %s resource schema: %w", provider, err)
+// NativeResourceCatalogFile is the generated catalog of native provider resources.
+// CI publishes it to the schemas branch (see NativeResourceCatalogURL); it is not embedded.
+const NativeResourceCatalogFile = "native-resources.json"
+
+// NativeResourceCatalogURL is where the browser loads the published native resource catalog.
+const NativeResourceCatalogURL = "https://raw.githubusercontent.com/flanksource/captain/schemas/adapters/" + NativeResourceCatalogFile
+
+// NativeResourceProviders are the providers whose native configuration snapshots feed the catalog.
+var NativeResourceProviders = []string{"openai", "anthropic", "google"}
+
+// NativeResourceSchemas projects native provider configuration snapshots, keyed by
+// provider, into catalog documents. Every provider in NativeResourceProviders is required.
+func NativeResourceSchemas(sources map[string]map[string]any) ([]SchemaDocument, error) {
+	for _, provider := range NativeResourceProviders {
+		if sources[provider] == nil {
+			return nil, fmt.Errorf("native resource source for %s is missing", provider)
 		}
-		var schema map[string]any
-		if err := json.Unmarshal(raw, &schema); err != nil {
-			return nil, fmt.Errorf("decode %s resources: %w", provider, err)
-		}
-		sources[provider] = schema
 	}
 	var documents []SchemaDocument
 	for _, projection := range resourceProjections {
@@ -68,11 +73,14 @@ func resourceSchemas() ([]SchemaDocument, error) {
 		}
 		documents = append(documents, document)
 	}
-	portable, err := captainResourceSchemas()
+	return documents, nil
+}
+
+func resourceSchemas() ([]SchemaDocument, error) {
+	documents, err := captainResourceSchemas()
 	if err != nil {
 		return nil, err
 	}
-	documents = append(documents, portable...)
 	backends, err := backendResourceSchemas()
 	return append(documents, backends...), err
 }

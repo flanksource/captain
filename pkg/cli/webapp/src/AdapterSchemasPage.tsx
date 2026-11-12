@@ -5,7 +5,7 @@ import { SchemaViewer } from "@flanksource/clicky-ui/data";
 import { StateMessage } from "./StateMessage";
 import { AdapterSchemaPreview } from "./AdapterSchemaPreview";
 import { AdapterSchemaProvenance } from "./AdapterSchemaProvenance";
-import { adapterSchemaLocation, fetchAdapterSchemas, selectAdapterSchema, type AdapterSchemaDocument, type AdapterSchemaSelection } from "./adapterSchemas";
+import { adapterSchemaLocation, fetchAdapterSchemas, fetchNativeResourceSchemas, selectAdapterSchema, type AdapterSchemaDocument, type AdapterSchemaSelection } from "./adapterSchemas";
 import type { SchemaDraft } from "./adapterSchemaDraft";
 
 type Navigate = (to: string, opts?: { replace?: boolean }) => void;
@@ -16,17 +16,20 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 export function AdapterSchemasPage({ selection, search = "", onNavigate }: { selection: AdapterSchemaSelection; search?: string; onNavigate: Navigate }) {
   const query = useQuery({ queryKey: ["adapter-schemas"], queryFn: fetchAdapterSchemas, staleTime: Number.POSITIVE_INFINITY });
-  const selected = selectAdapterSchema(query.data ?? [], selection);
+  const native = useQuery({ queryKey: ["adapter-schemas", "native"], queryFn: fetchNativeResourceSchemas, staleTime: Number.POSITIVE_INFINITY });
+  const documents = useMemo(() => query.data && [...query.data, ...(native.data ?? [])], [query.data, native.data]);
+  const selected = selectAdapterSchema(documents ?? [], selection);
   return <div className="h-full overflow-auto">
     <div className="mx-auto flex w-full max-w-[110rem] flex-col gap-density-4 p-density-4 md:p-density-6">
       <header className="space-y-density-2">
         <h1 className="text-2xl font-semibold tracking-tight">Adapter schemas</h1>
         <p className="text-sm text-muted-foreground">Explore native provider resources and portable Captain configuration. Try form inputs locally and inspect their JSON or YAML.</p>
       </header>
-      {query.isLoading ? <StateMessage>Loading schemas...</StateMessage>
+      {native.error && <StateMessage tone="error">Native provider resources are unavailable: {errorMessage(native.error)}</StateMessage>}
+      {query.isLoading || (!selected && native.isLoading) ? <StateMessage>Loading schemas...</StateMessage>
         : query.error ? <StateMessage tone="error">{errorMessage(query.error)}</StateMessage>
-        : selected && query.data ? <AdapterSchemaWorkspace documents={query.data} selected={selected} locationSearch={search} onNavigate={onNavigate} />
-        : <StateMessage tone="error">{query.data?.length ? `Unknown schema: ${selection.provider}/${selection.mode}` : "The schema catalog returned no schemas."}</StateMessage>}
+        : selected && documents ? <AdapterSchemaWorkspace documents={documents} selected={selected} locationSearch={search} onNavigate={onNavigate} />
+        : <StateMessage tone="error">{documents?.length ? `Unknown schema: ${selection.provider}/${selection.mode}` : "The schema catalog returned no schemas."}</StateMessage>}
     </div>
   </div>;
 }

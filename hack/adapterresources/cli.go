@@ -16,7 +16,7 @@ func inventoryCLIOptions() {
 		{"openai", "codex", "codex-cli 0.164.0"},
 		{"google", "gemini", "gemini-cli 0.64.0"},
 	} {
-		raw, err := os.ReadFile(".tmp/adapter-schema-sources/" + provider.help + "-help.txt")
+		raw, err := os.ReadFile(sourcePath(provider.help + "-help.txt"))
 		must(err)
 		path := "pkg/adapters/" + provider.name + "/cli.schema.json"
 		schema := readObject(path)

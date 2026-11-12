@@ -1,3 +1,5 @@
-# Native resource schema snapshots
+# Captain resource schemas
 
-These snapshots come from versioned upstream configuration schemas and Captain's pinned Claude Agent SDK declarations. `go run ./hack/adapterresources` imports captured sources from `.tmp/adapter-schema-sources`; see the [adapter resource guide](../../../docs/adapter-resource-schemas.md) for capture commands. The catalog exposes reusable resource projections without copying their definitions.
+`captain-backends.json` describes Captain's own sandbox backends and is embedded in the binary.
+
+Native provider resource schemas (OpenAI, Anthropic, Google) are not committed or embedded. The `Adapter schemas` workflow generates them with `go run ./hack/adapterresources resources` and publishes them to the `schemas` branch, where the web UI loads `adapters/native-resources.json`. See the [adapter resource guide](../../../docs/adapter-resource-schemas.md).

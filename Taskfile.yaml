@@ -128,6 +128,13 @@ tasks:
     cmds:
       - go test -tags=e2e -count=1 -v -timeout=8m ./tests/e2e/mcp2cli
 
+  schemas:generate:
+    desc: Generate and check the native adapter resource schemas the schemas branch publishes
+    cmds:
+      - ./hack/adapterresources/fetch-sources.sh
+      - go run ./hack/adapterresources resources -out .tmp/adapter-schemas
+      - CAPTAIN_ADAPTER_RESOURCES=$PWD/.tmp/adapter-schemas go test -tags adapterresources -count=1 ./pkg/adapters
+
   test:fixtures:
     desc: Run gavel fixture tests
     deps: [build]

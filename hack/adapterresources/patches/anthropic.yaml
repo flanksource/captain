@@ -1,0 +1,44 @@
+# RFC 6902 JSON Patch over the captured Claude Agent SDK settings schema
+# (.tmp/adapter-schema-sources/claude-settings.json, before root flattening).
+# Every path is in the SDK's `Settings` definition, so each change reaches the
+# settings, sandbox and permissions projections alike. `test` ops pin the
+# upstream value a change depends on: when the SDK changes it, generation fails.
+
+# Help text: the SDK declares the sandbox block and its switches without descriptions.
+- op: add
+  path: /definitions/Settings/properties/sandbox/description
+  value: Run Bash commands inside Claude Code's sandbox, restricting their filesystem and network access.
+- op: test
+  path: /definitions/Settings/properties/sandbox/properties/enabled
+  value: {type: boolean}
+- op: add
+  path: /definitions/Settings/properties/sandbox/properties/enabled/description
+  value: Run Bash commands in the sandbox. Default false.
+- op: test
+  path: /definitions/Settings/properties/sandbox/properties/autoAllowBashIfSandboxed
+  value: {type: boolean}
+- op: add
+  path: /definitions/Settings/properties/sandbox/properties/autoAllowBashIfSandboxed/description
+  value: Approve Bash commands without a permission prompt when they run sandboxed. Default true.
+
+# Typing: transcript retention is a whole number of days, minimum 1 (per its description).
+- op: test
+  path: /definitions/Settings/properties/cleanupPeriodDays/type
+  value: number
+- op: replace
+  path: /definitions/Settings/properties/cleanupPeriodDays/type
+  value: integer
+- op: add
+  path: /definitions/Settings/properties/cleanupPeriodDays/minimum
+  value: 1
+
+# Enum: the description accepts 'manual' as an alias for 'default', the enum omits it.
+- op: test
+  path: /definitions/Settings/properties/permissions/properties/defaultMode/enum
+  value: [acceptEdits, auto, bypassPermissions, default, dontAsk, plan]
+- op: replace
+  path: /definitions/Settings/properties/permissions/properties/defaultMode/enum
+  value: [acceptEdits, auto, bypassPermissions, default, dontAsk, plan, manual]
+- op: add
+  path: /definitions/Settings/properties/permissions/properties/defaultMode/x-enum-labels
+  value: {manual: Manual (alias of Default)}

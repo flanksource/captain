@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/flanksource/captain/pkg/adapters"
 	"github.com/flanksource/clicky/rpc"
@@ -30,6 +31,27 @@ var _ = Describe("adapter schema viewer API", func() {
 		Expect(documents[0].Mode).To(Equal("api"))
 		Expect(documents[0].Schema).NotTo(BeEmpty())
 	})
+
+	DescribeTable("validates a value against an embedded or carried schema",
+		func(body string, status int, valid bool) {
+			mux := http.NewServeMux()
+			registerAdapterSchemaHandlers(mux)
+			response := httptest.NewRecorder()
+
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/captain/ai/adapter-schemas/validate", strings.NewReader(body)))
+
+			Expect(response.Code).To(Equal(status), response.Body.String())
+			if status == http.StatusOK {
+				var result adapters.ValidationResult
+				Expect(json.Unmarshal(response.Body.Bytes(), &result)).To(Succeed())
+				Expect(result.Valid).To(Equal(valid))
+			}
+		},
+		Entry("embedded Captain resource", `{"id":"captain/permissions","value":{"tools":{"Bash":"unknown"}}}`, http.StatusOK, false),
+		Entry("published native resource carrying its schema", `{"id":"anthropic/sandbox","schema":{"type":"object","properties":{"enabled":{"type":"boolean"}}},"value":{"enabled":true}}`, http.StatusOK, true),
+		Entry("published native resource without its schema", `{"id":"anthropic/sandbox","value":{"enabled":true}}`, http.StatusNotFound, false),
+		Entry("carried schema that is not an object", `{"id":"anthropic/sandbox","schema":[],"value":{}}`, http.StatusBadRequest, false),
+	)
 
 	It("publishes the viewer catalog in OpenAPI", func() {
 		spec := &rpc.OpenAPISpec{}
