@@ -70,7 +70,7 @@ var _ = Describe("whoami disabled model visibility", func() {
 
 		Expect(pretty.ANSI()).To(ContainSubstring("\x1b[9m"))
 		Expect(pretty.ANSI()).To(ContainSubstring("retired [disabled]"))
-		Expect(pretty.Markdown()).To(ContainSubstring("~~retired [disabled]~~"))
+		Expect(pretty.Markdown()).To(ContainSubstring(`~~retired \[disabled\]~~`), "Markdown escapes the marker's brackets so they stay literal")
 		Expect(pretty.String()).To(ContainSubstring("retired [disabled]"))
 	})
 

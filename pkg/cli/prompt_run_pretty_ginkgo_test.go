@@ -105,7 +105,8 @@ var _ = Describe("Jev prompt response", func() {
 			ContainSubstring("Low 0%, Medium 75%, High 25%"),
 			ContainSubstring("no 10%, yes 90%"),
 		))
-		Expect(pretty.HTML()).To(And(ContainSubstring("new gridjs.Grid"), ContainSubstring("1.25 / 2")))
+		Expect(pretty.HTML()).To(And(ContainSubstring("<table"), ContainSubstring("<th class=\"border border-gray-300 px-3 py-2 text-left font-semibold\">Confidence</th>"), ContainSubstring("1.25 / 2")),
+			"a non-interactive clicky table renders as a static HTML table")
 	})
 
 	Context("a batched run's block", func() {

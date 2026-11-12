@@ -12,6 +12,10 @@ import (
 
 var _ = Describe("prompt help", func() {
 	BeforeEach(func() {
+		// UseFlags (e.g. forceObservationOutput in other specs) leaves a
+		// process-wide NoColor default that clicky.Format merges in.
+		DeferCleanup(clicky.UseFormatter, clicky.Flags.FormatOptions)
+		clicky.UseFormatter(clicky.FormatOptions{})
 		GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "1")
 		GinkgoT().Setenv("NO_COLOR", "")
 		GinkgoT().Setenv("TERM", "xterm-256color")
@@ -32,14 +36,6 @@ var _ = Describe("prompt help", func() {
 	}
 
 	It("renders colored terminal help for a human session", func() {
-		// UseFlags (e.g. forceObservationOutput in other specs) leaves a
-		// process-wide NoColor default that clicky.Format merges in.
-		DeferCleanup(clicky.UseFormatter, clicky.Flags.FormatOptions)
-		clicky.UseFormatter(clicky.FormatOptions{})
-		GinkgoT().Setenv("CLICKY_FORCE_INTERACTIVE", "1")
-		GinkgoT().Setenv("NO_COLOR", "")
-		GinkgoT().Setenv("COLOR", "")
-		GinkgoT().Setenv("TERM", "xterm-256color")
 		output, err := renderPromptHelp(promptCommand(), promptHelpRenderOptions{})
 
 		Expect(err).NotTo(HaveOccurred())
@@ -76,8 +72,10 @@ var _ = Describe("prompt help", func() {
 		Entry("child redirected", "run", "redirected"),
 	)
 
+	// Content is checked in plain output: Markdown escapes [, ] and _ in prose,
+	// so `runtimes[]` reads as runtimes\[\] in the Markdown source.
 	It("documents the complete prompt-file authoring contract", func() {
-		output, err := renderPromptHelp(promptCommand(), promptHelpRenderOptions{LLMSession: true})
+		output, err := renderPromptHelp(promptCommand(), promptHelpRenderOptions{NoColor: true})
 
 		Expect(err).NotTo(HaveOccurred())
 		for _, required := range []string{
@@ -111,7 +109,9 @@ var _ = Describe("prompt help", func() {
 		} {
 			Expect(output).To(ContainSubstring(required), "missing prompt help detail %q", required)
 		}
-		Expect(strings.Count(output, "```yaml")).To(BeNumerically(">=", 1))
+		markdown, err := renderPromptHelp(promptCommand(), promptHelpRenderOptions{LLMSession: true})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(strings.Count(markdown, "```yaml")).To(BeNumerically(">=", 1))
 	})
 
 	It("selects Markdown when an LLM environment marker is present", func() {
@@ -132,7 +132,7 @@ var _ = Describe("prompt help", func() {
 	})
 
 	It("documents prompt lookup locations in list help", func() {
-		output, err := renderPromptHelp(&cobra.Command{Use: "list"}, promptHelpRenderOptions{LLMSession: true})
+		output, err := renderPromptHelp(&cobra.Command{Use: "list"}, promptHelpRenderOptions{NoColor: true})
 
 		Expect(err).NotTo(HaveOccurred())
 		for _, location := range []string{"Prompt lookup locations", "~/.captain.yaml", "prompts.dirs", ".captain/prompts", "~/.config/captain/prompts", "$XDG_CONFIG_HOME/captain/prompts"} {
