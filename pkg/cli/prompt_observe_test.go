@@ -15,7 +15,10 @@ import (
 	"github.com/flanksource/captain/pkg/ai/observation"
 	aiprovider "github.com/flanksource/captain/pkg/ai/provider"
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/clicky"
+	"github.com/flanksource/clicky/task"
 	"github.com/flanksource/commons-db/shell"
+	"github.com/flanksource/commons/logger"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -364,8 +367,28 @@ func TestObservationKubernetesCaptureBlocksOnlyFailedLocalCLIInterception(t *tes
 	}
 }
 
+// defaultTaskMaxConcurrent is clicky's task manager default, which no getter exposes.
+const defaultTaskMaxConcurrent = 4
+
+// restoreObservationGlobals undoes forceObservationOutput's process-wide
+// changes — JSON format, fatal log level, discarded logs and the flag set's
+// MaxConcurrent of 1 — so later tests in the package see the defaults.
+func restoreObservationGlobals(t *testing.T) {
+	flags := *clicky.Flags
+	output := logger.GetOutput()
+	level := logger.StandardLogger().GetLevel()
+	t.Cleanup(func() {
+		*clicky.Flags = flags
+		clicky.UseFormatter(flags.FormatOptions)
+		logger.StandardLogger().SetLogLevel(level)
+		logger.SetOutput(output)
+		task.SetMaxConcurrent(defaultTaskMaxConcurrent)
+	})
+}
+
 func TestObservationSetupFailuresDoNotConstructProvider(t *testing.T) {
 	isolateSavedAI(t)
+	restoreObservationGlobals(t)
 	providerBuilt := false
 	api.RegisterProvider(api.RuntimeOf(api.OpenAI, api.ModeCLI), func(ai.Config) (ai.Provider, error) {
 		providerBuilt = true

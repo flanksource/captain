@@ -32,7 +32,7 @@ func (p *interruptProviderStub) Interrupt(context.Context) error {
 var _ = Describe("prompt chat lifecycle", func() {
 	It("starts chat orchestration while the only ordinary worker is occupied", func() {
 		task.SetMaxConcurrent(1)
-		DeferCleanup(task.SetMaxConcurrent, 4)
+		DeferCleanup(task.SetMaxConcurrent, defaultTaskMaxConcurrent)
 		started, release := make(chan struct{}), make(chan struct{})
 		blocker := task.StartTask("occupied worker", func(_ flanksourceContext.Context, _ *task.Task) (bool, error) {
 			close(started)
