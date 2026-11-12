@@ -134,6 +134,15 @@ var _ = Describe("Service tunnel", func() {
 			Expect(err).NotTo(HaveOccurred(), "the refusal arrives with the first read")
 			_, err = roundTrip(conn, "intrusion")
 			Expect(err).To(MatchError(ContainSubstring(`not dispatched to agent "worker-2"`)))
+
+			conn, err = gitagent.DialService(context.Background(), target(strangerKey), tunnelTask, "tools")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(conn.Close)
+			Eventually(func() error {
+				_, err := io.WriteString(conn, "intrusion\n")
+				return err
+			}).Should(MatchError(ContainSubstring(`not dispatched to agent "worker-2"`)),
+				"a write after the server closed the refused session carries the reason, not EOF")
 		})
 
 		It("relays local connections through a forwarder", func() {

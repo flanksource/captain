@@ -108,29 +108,50 @@ func dialSSHService(endpoint *url.URL, target TransportTarget, task, service str
 }
 
 // sshServiceConn is a tunnel over one SSH exec session. A refused tunnel
-// surfaces at the first read, as the server's reason rather than a bare EOF.
+// surfaces at the first read or write, as the server's reason rather than a
+// bare EOF: the server may close the session before the client writes.
 type sshServiceConn struct {
-	client  *gossh.Client
-	session *gossh.Session
-	stdin   io.WriteCloser
-	stdout  io.Reader
-	service string
-	stderr  bytes.Buffer
-	once    sync.Once
+	client   *gossh.Client
+	session  *gossh.Session
+	stdin    io.WriteCloser
+	stdout   io.Reader
+	service  string
+	stderr   bytes.Buffer
+	once     sync.Once
+	waitOnce sync.Once
+	waitErr  error
+}
+
+// refusal waits for the ended session once — a second Session.Wait blocks
+// forever — and returns the server's reason when it exited non-zero.
+func (c *sshServiceConn) refusal() error {
+	c.waitOnce.Do(func() { c.waitErr = c.session.Wait() })
+	if c.waitErr == nil {
+		return nil
+	}
+	return fmt.Errorf("tunnel to %s: %s", c.service, strings.TrimSpace(c.stderr.String()))
 }
 
 func (c *sshServiceConn) Read(p []byte) (int, error) {
 	n, err := c.stdout.Read(p)
 	if errors.Is(err, io.EOF) {
-		if waitErr := c.session.Wait(); waitErr != nil {
-			return n, fmt.Errorf("tunnel to %s: %s", c.service, strings.TrimSpace(c.stderr.String()))
+		if refused := c.refusal(); refused != nil {
+			return n, refused
 		}
 	}
 	return n, err
 }
 
-func (c *sshServiceConn) Write(p []byte) (int, error) { return c.stdin.Write(p) }
-func (c *sshServiceConn) CloseWrite() error           { return c.stdin.Close() }
+func (c *sshServiceConn) Write(p []byte) (int, error) {
+	n, err := c.stdin.Write(p)
+	if errors.Is(err, io.EOF) {
+		if refused := c.refusal(); refused != nil {
+			return n, refused
+		}
+	}
+	return n, err
+}
+func (c *sshServiceConn) CloseWrite() error { return c.stdin.Close() }
 
 func (c *sshServiceConn) Close() error {
 	var err error
