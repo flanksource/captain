@@ -44,7 +44,7 @@ export function AdapterSchemaPreview({ document, view, draft, onChange }: {
         request.current?.abort();
         const controller = new AbortController(); request.current = controller;
         setLoading(true); setError(""); setResult(undefined);
-        try { const next = await validateAdapterSchema(document.id, current.value, controller.signal); if (!controller.signal.aborted) setResult(next); }
+        try { const next = await validateAdapterSchema(document, current.value, controller.signal); if (!controller.signal.aborted) setResult(next); }
         catch (failure) { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : String(failure)); }
         finally { if (!controller.signal.aborted) setLoading(false); }
       }}>Validate schema</Button>

@@ -4,28 +4,25 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/flanksource/captain/pkg/adapters"
 )
 
+type catalogDocument struct {
+	ID string `json:"id"`
+}
+
 func main() {
-	response, err := (&http.Client{Timeout: 20 * time.Second}).Get("http://localhost:9020/api/captain/ai/adapter-schemas")
-	check(err)
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		panic(response.Status)
-	}
-	var documents []struct {
-		ID string `json:"id"`
-	}
-	check(json.NewDecoder(response.Body).Decode(&documents))
-	if len(documents) == 0 {
-		panic("empty resource catalog")
-	}
+	native := flag.String("native-catalog", adapters.NativeResourceCatalogURL, "published native resource catalog the web UI loads")
+	flag.Parse()
+	documents := append(fetchCatalog("http://localhost:9020/api/captain/ai/adapter-schemas"), fetchCatalog(*native)...)
 	for _, document := range documents {
 		parts := strings.SplitN(document.ID, "/", 2)
 		if len(parts) != 2 {
@@ -52,6 +49,21 @@ func browser(args ...string) string {
 		panic(fmt.Sprintf("agent-browser %v: %v\n%s", args, err, raw))
 	}
 	return string(raw)
+}
+
+func fetchCatalog(location string) []catalogDocument {
+	response, err := (&http.Client{Timeout: 20 * time.Second}).Get(location)
+	check(err)
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		panic(location + ": " + response.Status)
+	}
+	var documents []catalogDocument
+	check(json.NewDecoder(response.Body).Decode(&documents))
+	if len(documents) == 0 {
+		panic("empty resource catalog: " + location)
+	}
+	return documents
 }
 
 func check(err error) {

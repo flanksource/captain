@@ -1,0 +1,65 @@
+name: Adapter schemas
+
+# Generates the native provider resource schemas from their pinned upstream
+# sources (Claude Agent SDK type declarations, Codex and Gemini CLI release
+# schemas) plus the declarative patches in hack/adapterresources/patches, checks
+# the result, and on main publishes it to the orphan `schemas` branch that the
+# web UI loads from. The Captain binary does not embed these schemas.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - hack/adapterresources/**
+      - pkg/adapters/**
+      - .github/workflows/adapter-schemas.yml
+  pull_request:
+    paths:
+      - hack/adapterresources/**
+      - pkg/adapters/**
+      - .github/workflows/adapter-schemas.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-go
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Capture pinned upstream sources
+        run: ./hack/adapterresources/fetch-sources.sh
+      - name: Generate native resource schemas
+        run: go run ./hack/adapterresources resources -out .tmp/adapter-schemas
+      - name: Check the generated catalog
+        run: go test -tags adapterresources -count=1 -run TestAdapters ./pkg/adapters
+        env:
+          CAPTAIN_ADAPTER_RESOURCES: ${{ github.workspace }}/.tmp/adapter-schemas
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adapter-schemas
+          path: .tmp/adapter-schemas
+          if-no-files-found: error
+
+  publish:
+    needs: generate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: adapter-schemas-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: adapter-schemas
+          path: ${{ runner.temp }}/adapter-schemas
+      - name: Publish to the schemas branch
+        run: ./hack/adapterresources/publish-schemas-branch.sh "${{ runner.temp }}/adapter-schemas" "${{ github.sha }}"

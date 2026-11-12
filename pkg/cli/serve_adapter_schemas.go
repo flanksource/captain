@@ -17,12 +17,17 @@ func registerAdapterSchemaHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/captain/ai/adapter-schemas/validate", handleAdapterSchemaValidation)
 }
 
+// adapterSchemaValidationLimit fits a carried native resource schema (the Claude
+// settings projection alone is over 1 MiB) plus its value.
+const adapterSchemaValidationLimit = 16 << 20
+
 func handleAdapterSchemaValidation(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		ID    string          `json:"id"`
-		Value json.RawMessage `json:"value"`
+		ID     string          `json:"id"`
+		Schema json.RawMessage `json:"schema"`
+		Value  json.RawMessage `json:"value"`
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, adapterSchemaValidationLimit))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		http.Error(w, fmt.Sprintf("invalid validation request: %v", err), http.StatusBadRequest)
@@ -40,16 +45,23 @@ func handleAdapterSchemaValidation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "value is required", http.StatusBadRequest)
 		return
 	}
+	if len(request.Schema) > 0 && !bytes.HasPrefix(bytes.TrimSpace(request.Schema), []byte("{")) {
+		http.Error(w, "schema must be a JSON object", http.StatusBadRequest)
+		return
+	}
 	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(request.Value))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	result, err := adapters.ValidateResource(request.ID, value)
+	result, err := adapters.ValidateResource(adapters.ValidationRequest{ID: request.ID, Schema: request.Schema, Value: value})
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, adapters.ErrUnknownSchema) {
+		switch {
+		case errors.Is(err, adapters.ErrUnknownSchema):
 			status = http.StatusNotFound
+		case errors.Is(err, adapters.ErrInvalidSchema):
+			status = http.StatusBadRequest
 		}
 		http.Error(w, err.Error(), status)
 		return

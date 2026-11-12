@@ -4,12 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/adapters/presentation"
 )
 
-func enrichRuntimeSchemas() {
+func enrichRuntimeSchemas(resources string) {
 	path := "pkg/adapters/openai/agent.schema.json"
 	schema := readObject(path)
 	definitions := map[string]any{}
@@ -20,7 +21,7 @@ func enrichRuntimeSchemas() {
 		{"threadResume", "v2/ThreadResumeParams", "thread/resume"},
 		{"turnStart", "v2/TurnStartParams", "turn/start"},
 	} {
-		native := readObject(".tmp/adapter-schema-sources/codex-protocol/" + operation.file + ".json")
+		native := readObject(sourcePath("codex-protocol/" + operation.file + ".json"))
 		renameReferences(native, "OpenAIAgent")
 		for key, value := range native["definitions"].(map[string]any) {
 			definitions["OpenAIAgent"+key] = value
@@ -59,11 +60,11 @@ func enrichRuntimeSchemas() {
 	presentation.AnnotateSchema(schema, "https://learn.chatgpt.com/docs/developers/app-server")
 	markNativeUnions(schema)
 	writeObject(path, schema)
-	enrichClaudeRuntime()
+	enrichClaudeRuntime(resources)
 }
 
-func enrichClaudeRuntime() {
-	source := readObject("pkg/adapters/resources/anthropic.json")
+func enrichClaudeRuntime(resources string) {
+	source := readObject(filepath.Join(resources, "anthropic.json"))
 	definitions := source["definitions"].(map[string]any)
 	settings := definitions["Settings"].(map[string]any)
 	path := "pkg/adapters/anthropic/agent.schema.json"

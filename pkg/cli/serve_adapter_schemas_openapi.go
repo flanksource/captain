@@ -11,7 +11,8 @@ func addAdapterSchemaValidationPath(spec *rpc.OpenAPISpec) {
 		Tags: []string{"Adapter schemas"}, Summary: "Validate a local preview value without executing or saving it", OperationID: "validateAdapterSchema",
 		RequestBody: &rpc.OpenAPIRequestBody{Required: true, Content: map[string]rpc.OpenAPIMediaType{
 			"application/json": {Schema: &rpc.OpenAPISchema{Type: "object", Required: []string{"id", "value"},
-				Properties: map[string]*rpc.OpenAPISchema{"id": {Type: "string"}, "value": {}},
+				Properties: map[string]*rpc.OpenAPISchema{"id": {Type: "string"}, "value": {},
+					"schema": {Type: "object", Description: "Schema of a published native resource document; embedded documents are looked up by id"}},
 			}},
 		}},
 		Responses: map[string]rpc.OpenAPIResponse{
@@ -19,8 +20,8 @@ func addAdapterSchemaValidationPath(spec *rpc.OpenAPISpec) {
 				Properties: map[string]*rpc.OpenAPISchema{
 					"valid": {Type: "boolean"}, "errors": {Type: "array", Items: issue},
 				}}),
-			"400": {Description: "Malformed request, missing value or body larger than 1 MiB"},
-			"404": {Description: "Unknown schema id"}, "500": {Description: "Embedded schema is invalid"},
+			"400": {Description: "Malformed request, missing value, uncompilable carried schema or body larger than 16 MiB"},
+			"404": {Description: "Unknown embedded schema id"}, "500": {Description: "Embedded schema is invalid"},
 		},
 	}}
 }
