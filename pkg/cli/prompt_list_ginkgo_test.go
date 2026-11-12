@@ -47,7 +47,9 @@ var _ = Describe("Prompt list lookup locations", func() {
 		out, err := promptLookupFooter(ctx, clicky.FormatOptions{Format: "markdown"})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(out).To(ContainSubstring("**Lookup locations**"))
-		configured := strings.Index(out, filepath.Join(filepath.Dir(configPath), "configured-prompts"))
+		// Markdown escapes "_" in the temp paths (CI's /home/runner/work/_temp),
+		// so order is checked on the unescaped directory names.
+		configured := strings.Index(out, "configured-prompts")
 		host := strings.Index(out, "host-prompts")
 		workspace := strings.Index(out, filepath.Join(".captain", "prompts"))
 		Expect(configured).To(BeNumerically(">=", 0), out)
