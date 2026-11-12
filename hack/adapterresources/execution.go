@@ -21,6 +21,7 @@ func annotateExecutionSchemas() {
 			"google":    "https://geminicli.com/docs/reference/configuration/",
 			"deepseek":  "https://api-docs.deepseek.com/api/create-chat-completion/",
 			"jev":       "https://github.com/flanksource/captain",
+			"bash":      "https://www.gnu.org/software/bash/manual/bash.html#Invoking-Bash",
 		}[provider]
 		presentation.AnnotateSchema(schema, docs)
 		markNativeUnions(schema)

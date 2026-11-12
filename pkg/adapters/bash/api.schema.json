@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "BashAPIOptions",
+  "title": "Bash API options",
   "description": "The command Captain's bash runtime runs with bash -c in the run's directory; its output is the response and its exit code the structured output.",
   "type": "object",
   "additionalProperties": false,
@@ -8,21 +8,70 @@
     "provider": "bash",
     "mode": "api",
     "sources": [
-      {"kind": "official-docs", "reference": "https://www.gnu.org/software/bash/manual/bash.html#Invoking-Bash", "version": "retrieved 2026-11-06"},
-      {"kind": "implementation", "reference": "pkg/ai/provider/bash/provider.go", "version": "working tree 2026-11-06 based on b0d2ff31d41eeea6ae7ead0db81987b133ec6aeb"}
+      {
+        "kind": "official-docs",
+        "reference": "https://www.gnu.org/software/bash/manual/bash.html#Invoking-Bash",
+        "version": "retrieved 2026-11-06"
+      },
+      {
+        "kind": "implementation",
+        "reference": "pkg/ai/provider/bash/provider.go",
+        "version": "working tree 2026-11-06 based on b0d2ff31d41eeea6ae7ead0db81987b133ec6aeb"
+      }
     ]
   },
-  "required": ["command"],
+  "required": [
+    "command"
+  ],
   "properties": {
     "command": {
-      "title": "Command", "description": "The bash command the run runs, as bash -c's argument.",
-      "type": "string", "minLength": 1, "x-clicky-section": "prompt", "x-clicky-order": 10,
-      "x-captain-option": {"nativeName": "-c", "support": "mapped", "specPath": "prompt.user"}
+      "title": "Command",
+      "description": "The bash command the run runs, as bash -c's argument.",
+      "type": "string",
+      "minLength": 1,
+      "x-clicky-section": "prompt",
+      "x-clicky-order": 10,
+      "x-captain-option": {
+        "nativeName": "-c",
+        "support": "mapped",
+        "specPath": "prompt.user"
+      },
+      "x-help": {
+        "links": [
+          {
+            "label": "Documentation",
+            "href": "https://www.gnu.org/software/bash/manual/bash.html#Invoking-Bash"
+          }
+        ]
+      }
     },
     "dir": {
-      "title": "Directory", "description": "The directory the command runs in.",
-      "type": "string", "x-clicky-section": "workspace", "x-clicky-order": 20,
-      "x-captain-option": {"nativeName": "dir", "support": "mapped", "specPath": "setup.cwd"}
+      "title": "Directory",
+      "description": "The directory the command runs in.",
+      "type": "string",
+      "x-clicky-section": "workspace",
+      "x-clicky-order": 20,
+      "x-captain-option": {
+        "nativeName": "dir",
+        "support": "mapped",
+        "specPath": "setup.cwd"
+      },
+      "x-help": {
+        "links": [
+          {
+            "label": "Documentation",
+            "href": "https://www.gnu.org/software/bash/manual/bash.html#Invoking-Bash"
+          }
+        ]
+      }
     }
+  },
+  "x-help": {
+    "links": [
+      {
+        "label": "Documentation",
+        "href": "https://www.gnu.org/software/bash/manual/bash.html#Invoking-Bash"
+      }
+    ]
   }
 }
