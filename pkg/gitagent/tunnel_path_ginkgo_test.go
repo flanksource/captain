@@ -33,6 +33,15 @@ var _ = Describe("task services registry path", func() {
 		Entry("absolute path", "/etc"),
 	)
 
+	DescribeTable("refuses a task state read outside the task state directory",
+		func(task string) {
+			_, _, err := loadTaskStateUnlocked(repo, task)
+			Expect(err).To(MatchError(ContainSubstring("not a local path")))
+		},
+		Entry("parent traversal", "../x"),
+		Entry("absolute path", "/etc"),
+	)
+
 	It("reads a valid task's registry from inside the task state directory", func() {
 		Expect(WriteServices(repo, "t-1", Services{"tools": "127.0.0.1:1"})).To(Succeed())
 

@@ -171,7 +171,7 @@ func (cfg HTTPServerConfig) advertise(w http.ResponseWriter, r *http.Request, re
 		refuse(w, http.StatusForbidden, "service "+service+" is not served: this endpoint speaks "+receivePackService+" only (R2.3)")
 		return
 	}
-	proc := exec.CommandContext(r.Context(), "git", "receive-pack", "--stateless-rpc", "--advertise-refs", repo)
+	proc := exec.CommandContext(r.Context(), "git", "receive-pack", "--stateless-rpc", "--advertise-refs", "--", repo)
 	proc.Env = cfg.processEnv(agent)
 	var stderr strings.Builder
 	proc.Stderr = &stderr
@@ -199,7 +199,7 @@ func (cfg HTTPServerConfig) receivePack(w http.ResponseWriter, r *http.Request, 
 	}
 	defer body.Close()
 
-	proc := exec.CommandContext(r.Context(), "git", "receive-pack", "--stateless-rpc", repo)
+	proc := exec.CommandContext(r.Context(), "git", "receive-pack", "--stateless-rpc", "--", repo)
 	proc.Env = cfg.processEnv(agent)
 	proc.Stdin = body
 	// Flushed per write so hook output reaches the client while the push is

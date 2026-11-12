@@ -248,4 +248,40 @@ var _ = Describe("the git-agent SSH endpoint", func() {
 			Expect(err).To(HaveOccurred(), "path %q must be rejected", evil)
 		}
 	})
+
+	Describe("containment of the resolved repo path", func() {
+		var root, rootResolved, outside string
+
+		BeforeEach(func() {
+			base := GinkgoT().TempDir()
+			root, outside = filepath.Join(base, "served"), filepath.Join(base, "outside")
+			Expect(os.MkdirAll(root, 0o755)).To(Succeed())
+			Expect(os.MkdirAll(filepath.Join(outside, "x.git"), 0o755)).To(Succeed())
+			var err error
+			rootResolved, err = filepath.EvalSymlinks(root)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		DescribeTable("refuses a path that resolves outside the served root",
+			func(arg func() string) {
+				_, err := gitagent.ResolveRepoPath(root, arg())
+				Expect(err).To(HaveOccurred())
+			},
+			Entry("parent traversal", func() string { return "../outside/x.git" }),
+			Entry("absolute path outside the root", func() string { return "/../../" + filepath.Base(outside) + "/x.git" }),
+			Entry("symlink that escapes the root", func() string {
+				Expect(os.Symlink(filepath.Join(outside, "x.git"), filepath.Join(root, "escape.git"))).To(Succeed())
+				return "escape.git"
+			}),
+		)
+
+		It("accepts a name containing .. that stays inside the root, rebuilt on the resolved root", func() {
+			Expect(os.MkdirAll(filepath.Join(root, "a..b.git"), 0o755)).To(Succeed())
+
+			resolved, err := gitagent.ResolveRepoPath(root, "/a..b.git")
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resolved).To(Equal(filepath.Join(rootResolved, "a..b.git")))
+		})
+	})
 })
