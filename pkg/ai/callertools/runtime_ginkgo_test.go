@@ -3,7 +3,9 @@ package callertools_test
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/url"
 	"sync/atomic"
 	"time"
 
@@ -222,6 +224,27 @@ var _ = Describe("Authenticated caller-tool runtime", func() {
 		Expect(err).To(HaveOccurred())
 		Expect(hiddenCalls.Load()).To(BeZero())
 	})
+
+	It("closes without error while a client holds a connection that never sent a request", func(ctx SpecContext) {
+		runtime, err := callertools.New(callertools.Options{
+			Context: ctx,
+			Definitions: []api.ToolDefinition{{
+				Name: "lookup", DefaultPermission: api.ToolPolicyAllow,
+				Handler: func(context.Context, map[string]any) (any, error) { return "ok", nil },
+			}},
+			SessionID: "idle-connection-session",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		endpoint, err := url.Parse(runtime.Endpoint().URL)
+		Expect(err).NotTo(HaveOccurred())
+		// An HTTP transport can dial a spare connection it never uses; the
+		// server sees it in StateNew, which Shutdown does not treat as idle.
+		idle, err := net.Dial("tcp", endpoint.Host)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(idle.Close)
+
+		Expect(runtime.Close()).To(Succeed())
+	}, SpecTimeout(10*time.Second))
 
 	It("brokers ask tools and applies updated input", func(ctx SpecContext) {
 		var calls atomic.Int32

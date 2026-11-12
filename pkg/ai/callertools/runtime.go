@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -204,6 +205,12 @@ func (r *Runtime) Close() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		r.closeErr = r.server.Shutdown(ctx)
+		// Shutdown counts a connection that never sent a request as busy for
+		// 5s (net/http closeIdleConns), longer than this drain. Revoke has
+		// already cancelled every call, so whatever is left is closed outright.
+		if errors.Is(r.closeErr, context.DeadlineExceeded) {
+			r.closeErr = r.server.Close()
+		}
 	})
 	return r.closeErr
 }
