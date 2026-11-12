@@ -251,7 +251,7 @@ func handleGit(s ssh.Session, root string, cfg ServerConfig, fingerprint string,
 		_ = s.Exit(1)
 		return
 	}
-	proc := exec.CommandContext(s.Context(), "git", "receive-pack", repo)
+	proc := exec.CommandContext(s.Context(), "git", "receive-pack", "--", repo)
 	proc.Env = envWith(os.Environ(), EnvAgentName+"="+agent, EnvRole+"="+string(cfg.Role))
 	proc.Stdin = s
 	proc.Stdout = s
@@ -307,8 +307,10 @@ func ResolveRepoPath(root, arg string) (string, error) {
 		return "", err
 	}
 	rel, err := filepath.Rel(rootResolved, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+	if err != nil || !filepath.IsLocal(rel) {
 		return "", fmt.Errorf("repository path %q escapes the served root (H13)", arg)
 	}
-	return resolved, nil
+	// Rebuilt from the trusted root and the proven-local remainder, so nothing
+	// the client sent reaches a path or a git argument unchecked.
+	return filepath.Join(rootResolved, rel), nil
 }
