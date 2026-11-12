@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,8 +113,28 @@ func RemoveServices(repo, task string) error {
 	return nil
 }
 
+// containedServicesPath builds a task's registry path and proves it stays
+// inside the repo's task state directory, at the read itself: task and repo
+// arrive from the network, and a caller-side check is not proof here.
+func containedServicesPath(repo, task string) (string, error) {
+	if !taskIDRe.MatchString(task) {
+		return "", fmt.Errorf("task id %q must match %s", task, taskIDRe)
+	}
+	root := filepath.Join(repo, "captain", "tasks")
+	path := filepath.Join(root, task, servicesFile)
+	rel, err := filepath.Rel(root, path)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("task %s services path %q escapes %s", task, path, root)
+	}
+	return filepath.Join(root, rel), nil
+}
+
 func readServices(repo, task string) (Services, error) {
-	data, err := os.ReadFile(servicesPath(repo, task))
+	path, err := containedServicesPath(repo, task)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("task %s publishes no services", task)
 	}
