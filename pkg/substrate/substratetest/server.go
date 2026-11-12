@@ -3,6 +3,7 @@
 package substratetest
 
 import (
+	"cmp"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -49,7 +50,8 @@ type Server struct {
 	// StreamLimit, when positive, ends every StreamProcessOutput stream after that many output
 	// messages, as Substrate's router ends a long stream, so a client has to reconnect.
 	StreamLimit int
-	// ListPageSize, when positive, caps every ListActors page, so a client has to page.
+	// ListPageSize, when positive, caps every ListActors and ListWorkers page, so a client has to
+	// page.
 	ListPageSize int
 
 	envAddr, controlAddr string
@@ -59,6 +61,7 @@ type Server struct {
 	envs     map[string]*Environment
 	policies map[string]*ateapipb.EgressPolicy
 	deleted  []string
+	workers  []*ateapipb.Worker
 }
 
 // Environment is one environment the server created.
@@ -122,6 +125,22 @@ func (s *Server) Policy(atespace, id string) (*ateapipb.EgressPolicy, bool) {
 	defer s.mu.Unlock()
 	policy, ok := s.policies[atespace+"/"+id]
 	return policy, ok
+}
+
+// AddWorker adds worker to the workers the control plane lists.
+func (s *Server) AddWorker(worker substrate.Worker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	resources := func(r substrate.Resources) *ateapipb.WorkerResources {
+		return &ateapipb.WorkerResources{CpuMillicores: r.CPUMillicores, MemoryBytes: r.MemoryBytes, Actors: r.Actors}
+	}
+	s.workers = append(s.workers, &ateapipb.Worker{
+		Metadata: &ateapipb.ResourceMetadata{Name: worker.Name}, WorkerPool: worker.Pool, NodeName: worker.Node,
+		Status: &ateapipb.WorkerStatus{
+			State:    ateapipb.WorkerState(ateapipb.WorkerState_value["WORKER_STATE_"+strings.ToUpper(worker.State)]),
+			Capacity: resources(worker.Capacity), Allocated: resources(worker.Allocated),
+		},
+	})
 }
 
 // Deleted lists the environments deleted so far, as atespace/id.
@@ -224,43 +243,71 @@ func (c control) CreateActorEgressPolicy(_ context.Context, req *ateapipb.Create
 	return req.GetEgressPolicy(), nil
 }
 
-// ListActors lists the actors of the atespace's environments, in name order, a page at a time:
-// the page token is the index of the page's first actor.
+// ListActors lists the actors of the atespace's environments, or of every environment when the
+// request names no atespace, in atespace and name order, a page at a time. Every actor is running.
 func (c control) ListActors(_ context.Context, req *ateapipb.ListActorsRequest) (*ateapipb.ListActorsResponse, error) {
 	s := c.s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var envs []*Environment
 	for _, env := range s.envs {
-		if env.Atespace == req.GetAtespace() {
+		if req.GetAtespace() == "" || env.Atespace == req.GetAtespace() {
 			envs = append(envs, env)
 		}
 	}
-	slices.SortFunc(envs, func(a, b *Environment) int { return strings.Compare(a.ID, b.ID) })
-	start := 0
-	if token := req.GetOptions().GetPageToken(); token != "" {
-		var err error
-		if start, err = strconv.Atoi(token); err != nil || start < 0 || start > len(envs) {
-			return nil, status.Errorf(codes.InvalidArgument, "page token %q", token)
+	slices.SortFunc(envs, func(a, b *Environment) int {
+		return cmp.Or(strings.Compare(a.Atespace, b.Atespace), strings.Compare(a.ID, b.ID))
+	})
+	start, end, next, err := s.page(req.GetOptions(), len(envs))
+	if err != nil {
+		return nil, err
+	}
+	response := &ateapipb.ListActorsResponse{NextPageToken: next}
+	for _, env := range envs[start:end] {
+		response.Actors = append(response.Actors, &ateapipb.Actor{
+			Metadata: &ateapipb.ResourceMetadata{Atespace: env.Atespace, Name: env.ID, CreateTime: timestamppb.New(env.Created)},
+			Status:   &ateapipb.ActorStatus{State: ateapipb.ActorState_ACTOR_STATE_RUNNING},
+		})
+	}
+	return response, nil
+}
+
+// ListWorkers lists the workers added with AddWorker, in the order they were added, a page at a
+// time.
+func (c control) ListWorkers(_ context.Context, req *ateapipb.ListWorkersRequest) (*ateapipb.ListWorkersResponse, error) {
+	s := c.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	start, end, next, err := s.page(req.GetOptions(), len(s.workers))
+	if err != nil {
+		return nil, err
+	}
+	response := &ateapipb.ListWorkersResponse{NextPageToken: next}
+	for _, worker := range s.workers[start:end] {
+		response.Workers = append(response.Workers, proto.Clone(worker).(*ateapipb.Worker))
+	}
+	return response, nil
+}
+
+// page is the range of a list of n items that options' page covers, and the token of the page
+// after it: a page token is the index of the page's first item.
+func (s *Server) page(options *ateapipb.ListOptions, n int) (start, end int, next string, err error) {
+	if token := options.GetPageToken(); token != "" {
+		if start, err = strconv.Atoi(token); err != nil || start < 0 || start > n {
+			return 0, 0, "", status.Errorf(codes.InvalidArgument, "page token %q", token)
 		}
 	}
-	end := len(envs)
-	if size := int(req.GetOptions().GetPageSize()); size > 0 && start+size < end {
+	end = n
+	if size := int(options.GetPageSize()); size > 0 && start+size < end {
 		end = start + size
 	}
 	if s.ListPageSize > 0 && start+s.ListPageSize < end {
 		end = start + s.ListPageSize
 	}
-	response := &ateapipb.ListActorsResponse{}
-	for _, env := range envs[start:end] {
-		response.Actors = append(response.Actors, &ateapipb.Actor{Metadata: &ateapipb.ResourceMetadata{
-			Atespace: env.Atespace, Name: env.ID, CreateTime: timestamppb.New(env.Created),
-		}})
+	if end < n {
+		next = strconv.Itoa(end)
 	}
-	if end < len(envs) {
-		response.NextPageToken = strconv.Itoa(end)
-	}
-	return response, nil
+	return start, end, next, nil
 }
 
 // process is one process started in an environment, with its output spooled.

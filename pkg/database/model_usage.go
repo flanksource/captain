@@ -32,17 +32,20 @@ type ModelUsageQuery struct {
 	Schemas []string
 }
 
-// modelUsageTotalsSelect mirrors api.Cost.Total() and the captain_session_costs
-// view: prefer the provider-reported cost per call, with the list-price bucket
-// sum as the fallback. Decided per row, not per group, so a mix of list-priced
-// and provider-reported calls still totals. Non-USD calls contribute tokens but
-// no cost — there is no rate table to convert them, and adding EUR to USD would
-// be worse than reporting less.
-const modelUsageTotalsSelect = `COALESCE(SUM(calls.input_tokens + calls.output_tokens + calls.reasoning_tokens + calls.cache_read_tokens + calls.cache_write_tokens), 0) AS total_tokens,
-	COALESCE(SUM(CASE WHEN upper(calls.currency) = 'USD' THEN
+// ModelCallCostUSD is SQL for the USD cost of one row of captain_model_calls aliased calls. It
+// mirrors api.Cost.Total() and the captain_session_costs view: the provider-reported cost when
+// there is one, else the sum of the list-price buckets. Decided per row, not per group, so a mix
+// of list-priced and provider-reported calls still totals. Non-USD calls cost nothing here: there
+// is no rate table to convert them, and adding EUR to USD would be worse than reporting less.
+const ModelCallCostUSD = `CASE WHEN upper(calls.currency) = 'USD' THEN
 		CASE WHEN calls.provider_cost_usd > 0 THEN calls.provider_cost_usd
 		ELSE calls.input_cost + calls.output_cost + calls.reasoning_cost + calls.cache_read_cost + calls.cache_write_cost END
-	ELSE 0 END), 0) AS total_cost_usd`
+	ELSE 0 END`
+
+// modelUsageTotalsSelect totals the selected calls' tokens and their ModelCallCostUSD. Non-USD
+// calls contribute tokens but no cost.
+const modelUsageTotalsSelect = `COALESCE(SUM(calls.input_tokens + calls.output_tokens + calls.reasoning_tokens + calls.cache_read_tokens + calls.cache_write_tokens), 0) AS total_tokens,
+	COALESCE(SUM(` + ModelCallCostUSD + `), 0) AS total_cost_usd`
 
 // ModelUsage aggregates Captain model calls in the selected schemas.
 // Configured schemas that have never been migrated have no usage and are
