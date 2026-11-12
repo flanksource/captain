@@ -382,7 +382,7 @@ func (b *assistantMessageBuilder) toolResult(event api.Event) error {
 	}
 	if event.Success {
 		part.State = "output-available"
-		part.Output, err = jsonValue(event.Text)
+		part.Output, err = toolOutputValue(event)
 		if err != nil {
 			return fmt.Errorf("marshal tool %q output: %w", event.Tool, err)
 		}
@@ -500,6 +500,18 @@ func applyApprovalDecision(part *UIPart, decision api.ToolApprovalDecision) erro
 		part.Output = append(json.RawMessage(nil), decision.Result.Output...)
 	}
 	return nil
+}
+
+// toolOutputValue is the UI value of a successful EventToolResult: its display
+// Output when the provider split one off, otherwise the model text.
+func toolOutputValue(event api.Event) (json.RawMessage, error) {
+	if len(event.Output) == 0 {
+		return jsonValue(event.Text)
+	}
+	if !json.Valid(event.Output) {
+		return nil, fmt.Errorf("display output is not valid JSON")
+	}
+	return event.Output, nil
 }
 
 func jsonValue(text string) (json.RawMessage, error) {

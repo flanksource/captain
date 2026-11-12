@@ -213,6 +213,25 @@ var _ = Describe("AI SDK v6 event stream", func() {
 		}))
 	})
 
+	It("streams a tool's display value as its output instead of the model text", func() {
+		display := `{"data":[{"id":"j-1"}],"page":{"limit":25}}`
+		recorder, err := recordEvents(
+			api.Event{Kind: api.EventToolUse, ToolCallID: "call-1", Tool: "journals"},
+			api.Event{Kind: api.EventToolResult, ToolCallID: "call-1", Tool: "journals", Text: "| id |\n| j-1 |", Output: json.RawMessage(display), Success: true},
+			api.Event{Kind: api.EventResult, Success: true},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		var output any
+		for _, part := range decodedDataLines(recorder.Body.String()) {
+			if part["type"] == "tool-output-available" {
+				output = part["output"]
+			}
+		}
+		encoded, err := json.Marshal(output)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(encoded).To(MatchJSON(display))
+	})
+
 	It("skips an event kind it does not know instead of failing the turn", func() {
 		recorder, err := recordEvents(
 			api.Event{Kind: api.EventText, Text: "done"},
