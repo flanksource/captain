@@ -3,18 +3,12 @@ package middleware
 import (
 	"context"
 	"encoding/json"
-	"testing"
 
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
-
-func TestJevConversion(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Jev Conversion Suite")
-}
 
 type jevRecordingProvider struct {
 	request ai.Request

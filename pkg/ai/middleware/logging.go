@@ -49,16 +49,15 @@ func (l *loggingProvider) Execute(ctx context.Context, req ai.Request) (*ai.Resp
 
 	resp, err := l.provider.Execute(ctx, req)
 	duration := time.Since(start)
-	if errors.Is(err, ai.ErrSchemaValidation) {
-		log.Debugf("%s response rejected after %v: %v", identity, duration.Round(time.Millisecond), err)
-		return resp, err
-	}
-
 	if err != nil {
-		log.Errorf("%v", clicky.Text("").
-			Add(icons.Error).
-			Append(" "+identity, "text-red-600 font-medium").
-			Append(fmt.Sprintf(" failed after %v: %v", duration.Round(time.Millisecond), err), "text-red-500"))
+		if errors.Is(err, ai.ErrSchemaValidation) {
+			log.Debugf("%s response rejected after %v: %v", identity, duration.Round(time.Millisecond), err)
+		} else {
+			log.Errorf("%v", clicky.Text("").
+				Add(icons.Error).
+				Append(" "+identity, "text-red-600 font-medium").
+				Append(fmt.Sprintf(" failed after %v: %v", duration.Round(time.Millisecond), err), "text-red-500"))
+		}
 		// A reply rejected as unparseable rides back with the error; the parse
 		// error names only the first bad byte, so show the reply itself.
 		if log.IsDebugEnabled() && resp != nil && resp.Text != "" {
