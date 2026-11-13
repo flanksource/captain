@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
@@ -46,6 +48,11 @@ type Recording struct {
 	// Runtime is what the host asked for: its run mode, driver and requested
 	// selection. The resolved selection is filled in when the run starts.
 	Runtime database.PromptRunRuntime
+	// Metadata is the host's own facts about the run (e.g. the commit or event
+	// it acts on), stored in captain_prompt_runs.metadata beside Captain's
+	// resolution metadata. Values are stored as their JSON encoding. A key
+	// Captain records itself (see RunMetadata) is refused.
+	Metadata map[string]any
 	// Link writes the host's own rows for the admitted run. It runs inside the
 	// admission transaction; an error rolls back the sessions and the run, and
 	// nothing is dispatched.
@@ -129,6 +136,9 @@ func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := mergeHostMetadata(metadata, rec.Metadata); err != nil {
+		return nil, err
+	}
 	var out *database.PromptRun
 	err = rec.DB.Transaction(ctx, func(tx *database.DB) error {
 		session, err := rec.Placement.resolve(ctx, tx)
@@ -190,6 +200,26 @@ func RunMetadata(resolved api.ResolvedSpec, presets *runtimeprofiles.PresetResol
 		}{Profile: profile.Profile, Presets: profile.Presets}
 	}
 	return jsonObject("run metadata", values)
+}
+
+// runMetadataKeys are the metadata keys RunMetadata owns; a host may not set them.
+var runMetadataKeys = []string{"specTrace", "specProvenance", "specWarnings", "runtimePresets", "runtimeProfile"}
+
+func mergeHostMetadata(metadata, host map[string]any) error {
+	if len(host) == 0 {
+		return nil
+	}
+	for key := range host {
+		if slices.Contains(runMetadataKeys, key) {
+			return fmt.Errorf("promptrun: recording metadata key %q is recorded by Captain", key)
+		}
+	}
+	encoded, err := jsonObject("recording metadata", host)
+	if err != nil {
+		return err
+	}
+	maps.Copy(metadata, encoded)
+	return nil
 }
 
 func jsonObject(what string, value any) (map[string]any, error) {
