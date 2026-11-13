@@ -512,6 +512,35 @@ var _ = Describe("a recorded prompt run", func() {
 			Expect(err).To(MatchError(promptrun.ErrRunFinished))
 		})
 
+		It("stores the host's metadata beside Captain's resolution metadata", func(ctx SpecContext) {
+			type event struct {
+				ID string `json:"id"`
+			}
+			rec := recording(nil)
+			rec.Metadata = map[string]any{"headSHA": "head-a", "context": event{ID: "conflict:head-a"}}
+
+			run, err := promptrun.Admit(ctx, promptrun.Input{Resolved: resolved, Record: rec})
+
+			Expect(err).NotTo(HaveOccurred())
+			stored, err := db.GetPromptRun(ctx, run.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored.Metadata).To(HaveKeyWithValue("headSHA", "head-a"))
+			Expect(stored.Metadata).To(HaveKeyWithValue("context", map[string]any{"id": "conflict:head-a"}))
+			Expect(stored.Metadata["specTrace"]).To(HaveLen(2), "host metadata must not replace Captain's")
+		})
+
+		It("refuses host metadata that names a key Captain records, admitting nothing", func(ctx SpecContext) {
+			rec := recording(nil)
+			rec.PromptRunID = uuid.New()
+			rec.Metadata = map[string]any{"specTrace": "forged"}
+
+			_, err := promptrun.Admit(ctx, promptrun.Input{Resolved: resolved, Record: rec})
+
+			Expect(err).To(MatchError(ContainSubstring(`"specTrace"`)))
+			_, err = db.GetPromptRun(ctx, rec.PromptRunID)
+			Expect(errors.Is(err, database.ErrPromptRunNotFound)).To(BeTrue(), "%v", err)
+		})
+
 		It("requires a recording to admit", func(ctx SpecContext) {
 			_, err := promptrun.Admit(ctx, promptrun.Input{Resolved: resolved})
 			Expect(err).To(MatchError(ContainSubstring("recording")))
