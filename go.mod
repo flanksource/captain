@@ -12,7 +12,7 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/firebase/genkit/go v1.13.1
-	github.com/flanksource/clicky v1.21.95-0.20261112060413-ae2c0bb79614
+	github.com/flanksource/clicky v1.21.95
 	github.com/flanksource/clicky/aichat v1.21.91
 	github.com/flanksource/commons v1.64.1
 	github.com/flanksource/commons-db v0.1.69
