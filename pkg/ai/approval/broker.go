@@ -175,16 +175,19 @@ func (b *Broker) OnApproval(
 	// exactly when it mattered. context.WithoutCancel is the point: ending the
 	// wait is the response to the cancellation, not a victim of it.
 	defer func() {
+		if err != nil {
+			err = b.abandon(ctx, pending.ID, err)
+		}
 		err = errors.Join(err, b.release(context.WithoutCancel(ctx)))
 	}()
 	if hookErr := b.observe(ctx, run, held); hookErr != nil {
-		return api.ApprovalDecision{}, b.abandon(ctx, pending.ID, hookErr)
+		return api.ApprovalDecision{}, hookErr
 	}
 	if notifyErr := b.Notify(ctx, api.Event{
 		Kind: api.EventPermission, Tool: req.Tool, ToolCallID: req.ToolUseID,
 		ApprovalID: pending.ID.String(), Input: req.Input, Request: &req,
 	}); notifyErr != nil {
-		return api.ApprovalDecision{}, b.abandon(ctx, pending.ID, notifyErr)
+		return api.ApprovalDecision{}, notifyErr
 	}
 	return b.wait(ctx, pending.ID)
 }
@@ -308,12 +311,12 @@ func (b *Broker) wait(ctx context.Context, requestID uuid.UUID) (api.ApprovalDec
 		// credential is the authority the tool would run under.
 		if request.CredentialID != nil {
 			if err := b.DB.ValidateCallerToolCredential(ctx, *request.CredentialID); err != nil {
-				return api.ApprovalDecision{}, b.abandon(ctx, request.ID, err)
+				return api.ApprovalDecision{}, err
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return api.ApprovalDecision{}, b.abandon(ctx, request.ID, ctx.Err())
+			return api.ApprovalDecision{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}
