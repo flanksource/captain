@@ -1,6 +1,6 @@
 module github.com/flanksource/captain
 
-go 1.27.1
+go 1.27.4
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.26.0
