@@ -333,6 +333,12 @@ func resources(mcpOff, skillsOn bool) map[ResourceKind]map[ResourceMode]Support 
 	}
 }
 
+func apiResources() map[ResourceKind]map[ResourceMode]Support {
+	result := resources(false, false)
+	result[ResourceKindMCP][ResourceDisabled] = nativeNote("", "API runtimes do not load ambient MCP servers; caller tools remain governed by toolPolicy")
+	return result
+}
+
 // access builds the permissions.access row. full adds nothing anywhere, so it is
 // native everywhere a compiler exists; read-only is the cell that differs.
 func access(readOnly Support) map[AccessLevel]Support {
@@ -466,38 +472,38 @@ var permissionCapabilities = map[Runtime]PermissionCapabilities{
 	RuntimeOf(Anthropic, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
-		Resources:    resources(false, false),
+		Resources:    apiResources(),
 		Access:       apiAccess(),
 	},
 	RuntimeOf(OpenAI, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
-		Resources:    resources(false, false),
+		Resources:    apiResources(),
 		Access:       apiAccess(),
 	},
 	RuntimeOf(Google, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
-		Resources:    resources(false, false),
+		Resources:    apiResources(),
 		Access:       apiAccess(),
 	},
 	RuntimeOf(DeepSeek, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), callerTools(), noToolFilter()),
-		Resources:    resources(false, false),
+		Resources:    apiResources(),
 		Access:       apiAccess(),
 	},
 	RuntimeOf(Jev, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
-		Resources:    resources(false, false),
+		Resources:    apiResources(),
 		Access:       apiAccess(),
 	},
 	// bash runs a command, with no tools to filter and no resources to load.
 	RuntimeOf(Bash, ModeAPI): {
 		Modes:        unsupportedModes(),
 		ToolPolicies: toolPolicies(noToolFilter(), noToolFilter(), noToolFilter()),
-		Resources:    resources(false, false),
+		Resources:    apiResources(),
 	},
 
 	// --- claude transports: the enum's native home.

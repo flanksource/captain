@@ -226,10 +226,10 @@ var _ = Describe("PermissionCapabilities", func() {
 	// The resource axis is asymmetric today and the table has to say so, because
 	// the opposite direction is accepted and then dropped in both cases.
 	Describe("resources", func() {
-		It("silences MCP only where a provider actually sends the empty server set", func() {
+		It("honours disabled MCP when ambient servers are absent or explicitly silenced", func() {
 			for _, runtime := range api.AllRuntimes() {
 				want := api.SupportUnsupported
-				if runtime.Mode != api.ModeAPI && runtime != (api.Runtime{Provider: "google", Mode: api.ModeCLI}) {
+				if runtime != (api.Runtime{Provider: "google", Mode: api.ModeCLI}) {
 					want = api.SupportNative
 				}
 				Expect(api.PermissionCapabilitiesFor(runtime).
