@@ -27,6 +27,13 @@ type PromptInvocation struct {
 	Group   *task.Group
 	Name    string
 	OnEvent func(int, ai.Event)
+	// OnComplete receives the terminal outcome, including failures before the
+	// provider emits its first event.
+	OnComplete func(PromptRunSummary)
+	// SessionKey merges invocations into one conversation, including while its
+	// first provider session is still starting. Fresh explicitly replaces it.
+	SessionKey string
+	Fresh      bool
 }
 
 // LaunchPrompt starts the prompt as an async run, the same run an HTTP
@@ -47,7 +54,8 @@ func LaunchPrompt(ctx context.Context, invocation PromptInvocation) (PromptRunRe
 	}
 	logRuntimeWarnings(rendered.Resolution.Warnings)
 	return launchRendered(ctx, promptLaunch{
-		ID: invocation.Reference, Rendered: rendered, Group: invocation.Group, Name: invocation.Name, OnEvent: invocation.OnEvent,
+		ID: invocation.Reference, Rendered: rendered, Group: invocation.Group, Name: invocation.Name, OnEvent: invocation.OnEvent, OnComplete: invocation.OnComplete,
+		SessionKey: invocation.SessionKey, Fresh: invocation.Fresh,
 	})
 }
 

@@ -68,12 +68,15 @@ func runPromptAction(ctx context.Context, id string, flags map[string]string) (P
 // id, whether it is a chat, and where its task goes (see PromptInvocation's
 // Group and Name).
 type promptLaunch struct {
-	ID       string
-	Rendered PromptRenderResult
-	Chat     bool
-	Group    *task.Group
-	Name     string
-	OnEvent  func(int, ai.Event)
+	ID         string
+	Rendered   PromptRenderResult
+	Chat       bool
+	Group      *task.Group
+	Name       string
+	OnEvent    func(int, ai.Event)
+	OnComplete func(PromptRunSummary)
+	SessionKey string
+	Fresh      bool
 }
 
 // runGroup is the group the launch's tasks join: the caller's, or a
@@ -135,13 +138,28 @@ var executePromptRequestFunc = executePromptRequest
 // run handle (the serve/web-UI contract).
 func launchAsyncRun(launch promptLaunch) (PromptRunResult, error) {
 	rendered, chat := launch.Rendered, launch.Chat
+	if launch.Fresh {
+		rendered.Input.SessionID, rendered.Config.SessionID = "", ""
+		launch.Rendered = rendered
+	}
 	timeout, err := renderedTimeout(rendered)
 	if err != nil {
 		return PromptRunResult{}, err
 	}
 	runID := uuid.NewString()
 	stream := promptRuns.create(runID)
-	stream.observer = launch.OnEvent
+	stream.resumeSession = rendered.Input.SessionID
+	var previous *runStream
+	if !chat {
+		previous = promptSessionQueue.enqueue(launch, stream)
+	}
+	stream.observer = func(iteration int, event ai.Event) {
+		promptSessionQueue.observeSession(stream, rendered, event)
+		if launch.OnEvent != nil {
+			launch.OnEvent(iteration, event)
+		}
+	}
+	stream.onComplete = launch.OnComplete
 	capabilities := chatCapabilitiesFor(rendered.Provider, rendered.Mode)
 	stream.setRun(PromptRunFrame{
 		RunID: runID, Status: "running", Chat: chat, Model: rendered.Model,
@@ -149,6 +167,28 @@ func launchAsyncRun(launch promptLaunch) (PromptRunResult, error) {
 	})
 
 	execute := func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		stream.setCancel(cancel)
+		if err := continuePromptSession(ctx, previous, &rendered); err != nil {
+			return failRun(t, stream, err)
+		}
+		if err := ctx.Err(); err != nil {
+			return failRun(t, stream, err)
+		}
+		stream.mu.Lock()
+		stream.resumeSession = rendered.Input.SessionID
+		stream.mu.Unlock()
+		if previous != nil {
+			turn := task.StartTask("continue session", func(_ flanksourceContext.Context, child *task.Task) (PromptRunSummary, error) {
+				return runPromptStream(child, rendered, timeout, runID, stream, nil)
+			}, task.WithContext(ctx), task.WithGroup(task.GroupFromContext(t.Context())), task.WithModel(rendered.Model))
+			summary, err := turn.GetResult()
+			if done, _, _ := stream.state(); err != nil && !done {
+				return failRun(t, stream, err)
+			}
+			return summary, err
+		}
 		return runPromptStream(t, rendered, timeout, runID, stream, nil)
 	}
 	taskOptions := []task.Option{task.WithGroup(launch.runGroup(runID, "")), task.WithModel(rendered.Model), task.WithPrompt(rendered.Input.Prompt.User)}
@@ -157,6 +197,9 @@ func launchAsyncRun(launch promptLaunch) (PromptRunResult, error) {
 		promptChats.register(chatSession)
 		chatSession.start(launch.taskName(""), taskOptions...)
 	} else {
+		if previous != nil {
+			taskOptions = append(taskOptions, task.WithSlots(0))
+		}
 		task.StartTask(launch.taskName(""), execute, taskOptions...)
 	}
 	return PromptRunResult{

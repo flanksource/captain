@@ -38,6 +38,11 @@ type runStream struct {
 	errMsg        string
 	endedAt       time.Time
 	observer      func(int, ai.Event)
+	onComplete    func(PromptRunSummary)
+	finished      chan struct{}
+	conversation  *promptConversation
+	previous      *runStream
+	resumeSession string
 	// session is the summary of the session the run drives; see
 	// prompt_run_stream_summary.go.
 	session runSessionSummary
@@ -45,6 +50,7 @@ type runStream struct {
 
 func newRunStream() *runStream {
 	return &runStream{
+		finished:  make(chan struct{}),
 		subs:      map[chan session.Message]struct{}{},
 		eventSubs: map[chan runStreamEvent]struct{}{},
 	}
@@ -149,8 +155,8 @@ func (s *runStream) fail(msg string) PromptRunSummary {
 
 func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.done {
+		s.mu.Unlock()
 		return
 	}
 	s.done = true
@@ -180,6 +186,10 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 		}
 	}
 	s.summary = sum
+	if sum != nil && sum.Success && s.resumeSession == "" {
+		s.resumeSession = sum.SessionID
+	}
+	close(s.finished)
 	for ch := range s.subs {
 		delete(s.subs, ch)
 		close(ch)
@@ -187,6 +197,11 @@ func (s *runStream) finish(sum *PromptRunSummary, errMsg string) {
 	for ch := range s.eventSubs {
 		delete(s.eventSubs, ch)
 		close(ch)
+	}
+	callback := s.onComplete
+	s.mu.Unlock()
+	if callback != nil && sum != nil {
+		callback(*sum)
 	}
 }
 
@@ -377,6 +392,7 @@ func prunePromptRuns(ctx context.Context, b *runBroker) {
 			return
 		case <-ticker.C:
 			b.prune(15 * time.Minute)
+			promptSessionQueue.prune()
 		}
 	}
 }

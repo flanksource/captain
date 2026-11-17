@@ -72,18 +72,30 @@ func launchAsyncBatch(ctx context.Context, launch promptLaunch) (PromptRunResult
 
 	task.StartTask("finalize prompt batch", func(_ flanksourceContext.Context, t *task.Task) (PromptRunSummary, error) {
 		succeeded, failed := 0, 0
+		var failures error
 		for i := range handles {
 			summary, runErr := handles[i].GetResult()
 			if runErr != nil || !summary.Success {
 				failed++
+				if runErr == nil {
+					runErr = fmt.Errorf("run %s did not succeed: %s", summary.RunID, summary.Error)
+				}
+				failures = errors.Join(failures, runErr)
 			} else {
 				succeeded++
 			}
 		}
 		reason := fmt.Sprintf("%d succeeded, %d failed", succeeded, failed)
 		updatePromptSessionLifecycle(context.WithoutCancel(t.Context()), batch.ID, batchLifecycle(succeeded, failed), reason)
+		summary := PromptRunSummary{RunID: batch.ID.String(), SessionID: batch.ID.String(), Success: failed == 0}
+		if failures != nil {
+			summary.Error = failures.Error()
+		}
+		if launch.OnComplete != nil {
+			launch.OnComplete(summary)
+		}
 		t.Success()
-		return PromptRunSummary{RunID: batch.ID.String(), Success: failed == 0}, nil
+		return summary, nil
 	}, task.WithIdentity("prompt-batch-finalize-"+batch.ID.String()), task.WithSlots(0))
 	return result, nil
 }
