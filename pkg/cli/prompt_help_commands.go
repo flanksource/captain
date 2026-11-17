@@ -71,7 +71,7 @@ var promptCommandHelp = map[string]struct {
 	},
 	"run": {
 		Description: "Render, validate and execute a prompt. Supply one positional source, inline --prompt/-p, or stdin. Inline text is literal unless variables or {{input}} enable templating. Repeat -M for parallel runtimes. Foreground single-runtime agent runs can broker questions when stdin and stderr are terminals.",
-		Examples:    "captain prompt run --model agent:sonnet -p 'Explain this repository'\ncaptain prompt run review.prompt -V target=pkg/cli --access read-only\ngit diff | captain prompt run review.prompt -V patch=-\ncaptain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.1-sol\ncaptain prompt run review.prompt --no-stream --json",
+		Examples:    "captain prompt run --model agent:sonnet -p 'Explain this repository'\ncaptain prompt run review.prompt -V target=pkg/cli --access read-only\ngit diff | captain prompt run review.prompt -V patch=-\ncaptain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.2-sol\ncaptain prompt run review.prompt --no-stream --json",
 	},
 	"observe": {
 		Description: "Execute exactly one --runtime and emit a captain.observation/v1 JSON document for profiling and evaluation. This CLI-only action refuses --model, --mode, fallbacks, parallel matrices and workflow-backed prompts. Optional --mcp-config and --capture-kubernetes flags capture external tool traffic.",

@@ -5,8 +5,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("GPT-6.1 Sol", func() {
-	const model = "gpt-6.1-sol"
+var _ = Describe("GPT-6.2 Sol", func() {
+	const model = "gpt-6.2-sol"
 
 	DescribeTable("resolves the current Sol on every OpenAI runtime", func(mode RuntimeMode) {
 		for _, token := range []string{model, "sol", "codex", "openai/" + model} {

@@ -417,7 +417,7 @@ func TestProbeAdaptersFallsBackToRegistryWhenCodexDebugFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeAdapters: %v", err)
 	}
-	if len(adapters) != 1 || !stringSliceContains(adapters[0].Models, "gpt-6-astra") {
+	if len(adapters) != 1 || !stringSliceContains(adapters[0].Models, "gpt-6.2-astra") {
 		t.Fatalf("registry fallback models = %+v", adapters)
 	}
 }

@@ -13,7 +13,7 @@ Captain reads saved defaults from `~/.captain.yaml`. Run `captain configure` for
 
 ```sh
 captain configure
-captain configure openai --mode agent --model gpt-6.1-sol --effort high --active
+captain configure openai --mode agent --model gpt-6.2-sol --effort high --active
 captain configure anthropic --mode agent --model sonnet --effort default
 captain whoami --models=false
 ```
@@ -27,7 +27,7 @@ ai:
   providers:
     openai:
       mode: agent
-      model: gpt-6.1-sol
+      model: gpt-6.2-sol
       reasoningEffort: high
   timeout: 20m
 prompts:
