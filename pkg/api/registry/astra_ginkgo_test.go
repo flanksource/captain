@@ -5,8 +5,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("GPT-6 Astra", func() {
-	const model = "gpt-6-astra"
+var _ = Describe("GPT-6.2 Astra", func() {
+	const model = "gpt-6.2-astra"
 
 	DescribeTable("resolves the exact ID and alias on every OpenAI runtime", func(mode RuntimeMode) {
 		for _, token := range []string{model, "astra", "openai/" + model} {
@@ -33,7 +33,7 @@ var _ = Describe("GPT-6 Astra", func() {
 		Expect(entry.SupportedEfforts).To(Equal([]Effort{EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax}))
 		price, ok := CostFor(model)
 		Expect(ok).To(BeTrue())
-		Expect(price).To(Equal(ModelCost{Input: 10, Output: 50, CacheRead: 1, CacheWrite: 12.5}))
+		Expect(price).To(Equal(ModelCost{Input: 8, Output: 40, CacheRead: 0.4, CacheWrite: 10}))
 	})
 
 	It("sends reasoning effort without unsupported temperature", func() {

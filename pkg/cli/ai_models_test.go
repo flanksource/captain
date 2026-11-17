@@ -241,6 +241,8 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 					{"id": "gpt-6.1-sol"},
 					{"id": "gpt-6-luna"},
 					{"id": "gpt-6-astra"},
+					{"id": "gpt-6.2-sol"},
+					{"id": "gpt-6.2-astra"},
 					{"id": "gpt-5-mini"},
 					{"id": "gpt-5-codex"},
 					{"id": "gpt-5.5-pro"},
@@ -270,9 +272,8 @@ func TestRunAIModels_HidesLegacyByDefault(t *testing.T) {
 	}
 	res := got.(AIModelsResult)
 
-	// Suffixed ids survive only while the catalog marks them preferred: the
-	// gpt-6 generation is, and the superseded gpt-5.6 variants are hidden.
-	want := []string{"gpt-5", "gpt-5.1", "gpt-6-astra", "gpt-6-luna", "gpt-6.1-sol"}
+	// Suffixed IDs survive only while the catalog marks them preferred.
+	want := []string{"gpt-5", "gpt-5.1", "gpt-6-luna", "gpt-6.2-astra", "gpt-6.2-sol"}
 	if len(res.Rows) != len(want) {
 		t.Fatalf("rows = %d, want %d (%v)", len(res.Rows), len(want), res.Rows)
 	}

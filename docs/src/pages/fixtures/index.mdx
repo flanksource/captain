@@ -52,7 +52,7 @@ These proxies capture real traffic; they do not turn a mutating tool into a read
 
 ```sh
 captain prompt observe --runtime agent:sonnet -p 'Explain this repository' > .tmp/observation.json
-captain prompt observe review.prompt --runtime api:gpt-6.1-sol -V target=pkg/cli
+captain prompt observe review.prompt --runtime api:gpt-6.2-sol -V target=pkg/cli
 ```
 
 `observe` is CLI-only and emits one `captain.observation/v1` JSON document. `--runtime` is required and cannot be combined with `--model` or `--mode`. Fallback chains, parallel matrices and workflow-backed prompts are rejected. `--mcp-config` and `--capture-kubernetes` request external capture; availability and capture coverage are recorded explicitly rather than treating missing measurements as zero.

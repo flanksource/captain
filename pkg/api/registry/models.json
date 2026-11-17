@@ -460,6 +460,84 @@
     "supersededBy": "claude-sonnet-4-6"
   },
   {
+    "id": "gpt-6.2-astra",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "6.2-astra",
+    "label": "GPT-6.2 Astra",
+    "releaseDate": "2026-11-17",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 8,
+      "output": 40,
+      "cacheRead": 0.4,
+      "cacheWrite": 10
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "availability": [
+      "api",
+      "cli",
+      "agent",
+      "cmux"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "defaultEffort": "medium",
+    "priority": 2,
+    "aliases": [
+      "astra"
+    ]
+  },
+  {
+    "id": "gpt-6.2-sol",
+    "provider": "openai",
+    "family": "gpt",
+    "version": "6.2-sol",
+    "label": "GPT-6.2 Sol",
+    "releaseDate": "2026-11-17",
+    "reasoning": true,
+    "contextWindow": 1050000,
+    "cost": {
+      "input": 2,
+      "output": 10,
+      "cacheRead": 0.1,
+      "cacheWrite": 2.5
+    },
+    "inputMediaTypes": [
+      "image/*",
+      "application/pdf"
+    ],
+    "preferred": true,
+    "availability": [
+      "api",
+      "cli",
+      "agent",
+      "cmux"
+    ],
+    "supportedEfforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "defaultEffort": "medium",
+    "priority": 1,
+    "aliases": [
+      "sol"
+    ]
+  },
+  {
     "id": "gpt-6.1-terra",
     "provider": "openai",
     "family": "gpt",
@@ -517,7 +595,6 @@
       "image/*",
       "application/pdf"
     ],
-    "preferred": true,
     "availability": [
       "api",
       "cli",
@@ -531,11 +608,7 @@
       "xhigh",
       "max"
     ],
-    "defaultEffort": "medium",
-    "priority": 1,
-    "aliases": [
-      "sol"
-    ]
+    "defaultEffort": "medium"
   },
   {
     "id": "gpt-6-luna",
@@ -627,7 +700,6 @@
       "image/*",
       "application/pdf"
     ],
-    "preferred": true,
     "availability": [
       "api",
       "cli",
@@ -640,10 +712,6 @@
       "high",
       "xhigh",
       "max"
-    ],
-    "priority": 2,
-    "aliases": [
-      "astra"
     ]
   },
   {
