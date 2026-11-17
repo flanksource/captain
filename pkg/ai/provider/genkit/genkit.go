@@ -258,6 +258,21 @@ func isSchemaMismatch(err error) bool {
 // chunks stay internal; their validated final value is carried by EventResult.
 func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai.Event, error) {
 	ch := make(chan ai.Event, 16)
+	emitCtx, cancelEmit := context.WithCancel(ctx)
+	var emitMu sync.Mutex
+	send := func(event ai.Event) error {
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		if err := emitCtx.Err(); err != nil {
+			return err
+		}
+		select {
+		case ch <- event:
+			return nil
+		case <-emitCtx.Done():
+			return emitCtx.Err()
+		}
+	}
 	correlation := newToolEventCorrelation()
 	cb := func(_ context.Context, chunk *gkai.ModelResponseChunk) error {
 		events, err := chunkToEvents(chunk, p.cfg.Model.Name, correlation)
@@ -268,10 +283,8 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 			if req.Prompt.HasSchema() && ev.Kind == ai.EventText {
 				continue
 			}
-			select {
-			case ch <- ev:
-			case <-ctx.Done():
-				return ctx.Err()
+			if err := send(ev); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -279,20 +292,23 @@ func (p *Provider) ExecuteStream(ctx context.Context, req ai.Request) (<-chan ai
 	// emit lets in-process caller-tool execution publish tool_use/permission/
 	// tool_result events onto the same stream as the model's text chunks.
 	emit := func(ev ai.Event) {
-		select {
-		case ch <- ev:
-		case <-ctx.Done():
-		}
+		_ = send(ev)
 	}
 
 	turns := newTurnLog(p.provider, p.cfg.Model.Name, emit)
 	opts, err := p.correlatedGenerateOptions(req, cb, emit, correlation, turns)
 	if err != nil {
+		cancelEmit()
 		return nil, err
 	}
 	go func() {
-		defer close(ch)
 		resp, err := p.generate(ctx, opts)
+		// Genkit can return a tool error before sibling tools finish. Stop their
+		// callbacks and serialize the terminal event and closure with active sends.
+		cancelEmit()
+		emitMu.Lock()
+		defer emitMu.Unlock()
+		defer close(ch)
 		usage := turns.total()
 		costUSD := 0.0
 		if usage != nil {
