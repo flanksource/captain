@@ -54,18 +54,30 @@
   "claude-haiku-4-5": {
     "preferred": false
   },
-  "gpt-6-astra": {
+  "gpt-6.2-astra": {
     "preferred": true,
     "availability": ["api", "cli", "agent", "cmux"],
     "priority": 2,
+    "defaultEffort": "medium",
     "aliases": ["astra"]
   },
-  "gpt-6.1-sol": {
+  "gpt-6.2-sol": {
     "preferred": true,
     "availability": ["api", "cli", "agent", "cmux"],
     "priority": 1,
     "defaultEffort": "medium",
     "aliases": ["sol"]
+  },
+  "gpt-6-astra": {
+    "preferred": false,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "aliases": null
+  },
+  "gpt-6.1-sol": {
+    "preferred": false,
+    "availability": ["api", "cli", "agent", "cmux"],
+    "defaultEffort": "medium",
+    "aliases": null
   },
   "gpt-6-sol": {
     "preferred": false,

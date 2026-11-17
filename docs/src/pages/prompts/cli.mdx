@@ -62,7 +62,7 @@ Without a batch, every input file goes to one run. `--batch=N` splits them into 
 ```sh
 captain prompt run review.prompt --preset Plan
 captain prompt render review.prompt --no-presets --json
-captain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.1-sol
+captain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.2-sol
 captain prompt run review.prompt --no-stream --json
 captain prompt observe --runtime agent:sonnet -p 'Explain this repository'
 ```

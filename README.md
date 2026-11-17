@@ -43,7 +43,7 @@ Save as `review.prompt`, preview the effective request, then execute:
 captain lint promptfile review.prompt
 captain prompt render review.prompt -V target=pkg/promptrun --json
 captain prompt run review.prompt -V target=pkg/promptrun
-captain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.1-sol
+captain prompt run review.prompt -M agent:sonnet -M agent:gpt-6.2-sol
 ```
 
 Render performs no model call or setup. Files are templates; inline `-p` and piped text are literal unless variables or `{{input}}` opt into templating. Piped input binds to `input`, a named `-V key=-`, or is appended when unused. Use `--attach` for files/URLs, `--preset` for reusable runtime layers and `--no-stream --json` for a buffered structured result.
@@ -70,7 +70,7 @@ captain prompt --schema
 | Isolation | `container`, `sandbox`, `sandbox credentials`, `sandbox git-agent` | [Sandboxes](docs/src/pages/sandboxes/index.mdx) |
 | Gavel integration | `gavel todos` embeds Captain | [TODO lifecycle](docs/src/pages/todos/index.mdx) |
 
-`captain ai prompt` aliases `captain prompt run`. Other AI utilities include `ai agent` for explicit generate/verify workflows, `ai models`, `ai test`, `ai tokens` and `ai mock`. Use each command's help for its current flags. A runtime is `(model, mode)`; mode is `api`, `agent`, `cli` or `cmux`, with provider derived from the model. Configure provider defaults with `captain configure openai --mode agent --model gpt-6.1-sol --effort high --active`.
+`captain ai prompt` aliases `captain prompt run`. Other AI utilities include `ai agent` for explicit generate/verify workflows, `ai models`, `ai test`, `ai tokens` and `ai mock`. Use each command's help for its current flags. A runtime is `(model, mode)`; mode is `api`, `agent`, `cli` or `cmux`, with provider derived from the model. Configure provider defaults with `captain configure openai --mode agent --model gpt-6.2-sol --effort high --active`.
 
 ## Verification and embedding
 

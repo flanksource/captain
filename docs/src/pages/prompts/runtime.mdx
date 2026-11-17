@@ -144,7 +144,7 @@ A converted intent is applied only on runtimes that speak another dialect, so a 
 The built-in presets themselves are unchanged. To see what a prompt becomes on each runtime, or to rewrite a block into the portable form, use:
 
 <CodeExample client:load language="bash" title="Explain and convert" source={`
-captain permissions explain proposal-review --model agent:sonnet --model agent:gpt-6.1-sol
+captain permissions explain proposal-review --model agent:sonnet --model agent:gpt-6.2-sol
 captain permissions convert .captain/presets/read-only.yaml          # prints the diff
 captain permissions convert .captain/presets/read-only.yaml --write  # rewrites the file
 `} />
