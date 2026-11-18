@@ -96,7 +96,7 @@ func PreparePrompt(ctx context.Context, options PreparePromptOptions) (*Prepared
 	if err != nil {
 		return nil, err
 	}
-	if rendered.ValidationError != "" {
+	if rendered.FanOut == nil && rendered.ValidationError != "" {
 		return nil, errors.New(rendered.ValidationError)
 	}
 	return &PreparedPrompt{rendered: rendered, detail: detail}, nil

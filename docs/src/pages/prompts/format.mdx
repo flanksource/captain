@@ -127,6 +127,27 @@ batch: {size: 1, concurrency: 4}
 Classify {{file}}.
 ```
 
+### Command fan-out
+
+Use `fanout.exec` to run a script once before launching sessions. It runs on the Captain host in the prompt's resolved working directory, before any per-session sandbox setup. As with inline tools, a shebang selects the interpreter. The script receives the caller's template variables as a JSON object on stdin. Write exactly one JSON array to stdout and send diagnostics to stderr. Captain renders the same prompt once per array element and runs each in a fresh session. Use `{{item.name}}` to read a field or `{{{itemJSON}}}` to insert the complete element, including scalars and arrays.
+
+```yaml
+---
+model: api:sonnet
+fanout:
+  exec: |
+    printf '%s\n' '[{"name":"docs"},{"name":"tests"}]'
+  concurrency: 2
+---
+List three ways to improve the project's {{item.name}}.
+```
+
+Save the example as `classify.prompt` and run `captain prompt run ./classify.prompt`. The default concurrency is one. Results follow the array's order even when sessions finish out of order. An empty array starts no sessions. If the command fails or prints invalid JSON, Captain starts no sessions. If a session fails after launch, the other sessions still run and the CLI reports the result of each one.
+
+Rendering or previewing a prompt never runs the command. For a preview, supply a sample `item` or `itemJSON` as a template variable. Fan-out runs use their own sessions with a single runtime. File batching, chat, and session resumption are unavailable for these runs.
+
+In the prompt workbench, open the **Fan-out** tab to edit the script and optional concurrency limit. **Apply to draft** updates the YAML in **Source**. Select **Save** to persist the draft, or open **Run** to try the draft first. **Remove from draft** deletes the `fanout` block.
+
 ## Inline tools
 
 `tools` declares tools the model can call, keyed by tool name. Each tool runs its `exec` script and returns the result to the model. Inline tools are caller tools: API runtimes call them in-process and agent runtimes reach them through Captain's caller-tool MCP endpoint. A runtime that cannot expose caller tools (for example `google cli`) refuses the run before the first model call. Jev is the exception: it ignores tools and leaves them to hooks (see [Jev typed decisions](#jev-typed-decisions)).

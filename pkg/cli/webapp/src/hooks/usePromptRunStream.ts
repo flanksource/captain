@@ -26,6 +26,7 @@ export interface PromptRunHandle {
 export interface PromptBatchRunHandle {
   runId: string;
   sessionId: string;
+  fanOutIndex?: number;
   selector?: string;
   status: string;
   model?: string;
@@ -44,7 +45,12 @@ export interface PromptBatchHandle {
   runs: PromptBatchRunHandle[];
 }
 
-export type PromptExecutionHandle = PromptRunHandle | PromptBatchHandle;
+export interface PromptNoSessionResult {
+  status: "completed" | "skipped";
+  skipReason?: string;
+}
+
+export type PromptExecutionHandle = PromptRunHandle | PromptBatchHandle | PromptNoSessionResult;
 
 export function isPromptBatchHandle(
   handle: PromptExecutionHandle,

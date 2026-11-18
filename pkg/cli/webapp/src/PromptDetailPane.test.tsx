@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimePreset, RuntimeProfile } from "@flanksource/clicky-ui/ai";
 import { PromptDetailPane } from "./PromptDetailPane";
@@ -84,5 +84,35 @@ describe("PromptDetailPane runtime presets", () => {
 
     expect(screen.queryByLabelText("Runtime presets")).not.toBeInTheDocument();
     expect(runEditorProps[0]).not.toHaveProperty("presets");
+  });
+});
+
+describe("PromptDetailPane fan-out", () => {
+  const source = "---\n# keep this comment\nmodel: api:sonnet\n---\nReview {{item.name}}.\n";
+  const detail = { ...SCRATCH_PROMPT, id: "review", writable: true, content: source };
+
+  it("applies a script and concurrency to the prompt draft", () => {
+    const props = baseProps();
+    render(<PromptDetailPane {...props} detail={detail} draft={source} tab="fanout" />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: /^Script/ }), { target: { value: "printf '[]'" } });
+    fireEvent.change(screen.getByLabelText("Concurrent sessions (optional)"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply to draft" }));
+
+    expect(props.onDraftChange).toHaveBeenCalledWith(expect.stringMatching(
+      /# keep this comment[\s\S]*fanout:[\s\S]*exec: printf '\[\]'[\s\S]*concurrency: 2[\s\S]*Review \{\{item.name\}\}\./,
+    ));
+  });
+
+  it("keeps invalid fan-out settings out of the draft", () => {
+    const props = baseProps();
+    render(<PromptDetailPane {...props} detail={detail} draft={source} tab="fanout" />);
+
+    fireEvent.change(screen.getByLabelText("Concurrent sessions (optional)"), { target: { value: "1.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply to draft" }));
+
+    expect(screen.getByText("Enter a script.")).toBeInTheDocument();
+    expect(screen.getByText("Enter a whole number of at least 1.")).toBeInTheDocument();
+    expect(props.onDraftChange).not.toHaveBeenCalled();
   });
 });

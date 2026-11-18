@@ -19,6 +19,7 @@ import {
   batchChatTargetState,
   batchChatTargets,
   batchSessionCollection,
+  promptBatchDisplay,
 } from "./sessionCollection";
 
 export function PromptBatchInspector({
@@ -100,7 +101,7 @@ export function PromptBatchInspector({
       ))}
       <div className="flex shrink-0 items-center justify-between gap-density-2">
         <div>
-          <div className="text-sm font-semibold">Multi-model run</div>
+          <div className="text-sm font-semibold">{promptBatchDisplay(handle).title}</div>
           <div className="font-mono text-xs text-muted-foreground">
             {handle.batchId}
           </div>
