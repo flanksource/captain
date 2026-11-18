@@ -48,6 +48,7 @@ export type PromptDetailState = {
   previewResult?: PromptPreviewResult;
   activeRunID?: string;
   activeBatch?: PromptBatchHandle;
+  runNotice?: string;
   actionError?: string;
   actionLoading?: "save" | "preview" | "run" | "delete";
 };
@@ -77,6 +78,7 @@ export type PromptDetailStateAction =
     }
   | { type: "active-run"; detail?: PromptDetail; value?: string }
   | { type: "active-batch"; detail?: PromptDetail; value?: PromptBatchHandle }
+  | { type: "run-notice"; detail?: PromptDetail; value?: string }
   | { type: "action-error"; detail?: PromptDetail; value?: string }
   | {
       type: "action-loading";
@@ -99,9 +101,9 @@ function applyAction(
 ): PromptDetailState {
   switch (action.type) {
     case "draft":
-      return { ...current, draft: action.value, previewResult: undefined };
+      return { ...current, draft: action.value, previewResult: undefined, runNotice: undefined };
     case "run-request":
-      return { ...current, runRequest: action.value, previewResult: undefined };
+      return { ...current, runRequest: action.value, previewResult: undefined, runNotice: undefined };
     case "variables-validity":
       return { ...current, variablesValid: action.value };
     case "schema-validity":
@@ -119,6 +121,8 @@ function applyAction(
       return { ...current, activeRunID: action.value };
     case "active-batch":
       return { ...current, activeBatch: action.value };
+    case "run-notice":
+      return { ...current, runNotice: action.value };
     case "action-error":
       return { ...current, actionError: action.value };
     case "action-loading":

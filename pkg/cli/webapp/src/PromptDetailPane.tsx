@@ -25,11 +25,12 @@ import { resolveProvider } from "./promptWorkbenchHelpers";
 import { PromptRunStream } from "./PromptRunStream";
 import { PromptBatchInspector } from "./PromptBatchInspector";
 import { PromptSchemaEditor } from "./PromptSchemaEditor";
+import { PromptFanOutEditor } from "./PromptFanOutEditor";
 import { RunningPromptsRunsTab } from "./RunningPrompts";
 import { PromptSourceMarkdownEditor } from "./PromptWriteModal";
 import type { PromptBatchHandle } from "./hooks/usePromptRunStream";
 import type { PromptDetail, PromptPreviewResult } from "./promptData";
-import type { PromptSchemaKind } from "./promptSchemaSource";
+import { promptDeclaresFanOut, type PromptSchemaKind } from "./promptSchemaSource";
 import { isScratchPrompt, promptRuntimeForDisplay } from "./promptDetailState";
 import {
   CAPTAIN_SECRET_SELECTOR,
@@ -38,11 +39,12 @@ import {
   type PromptSchemaDoc,
 } from "./promptWorkbenchApi";
 
-export type DetailTab = "source" | "runner" | "schema" | "runs";
+export type DetailTab = "source" | "runner" | "schema" | "runs" | "fanout";
 
 const RUN_TAB = { id: "runner", label: "Run", icon: UiPlay };
 const SCHEMA_TAB = { id: "schema", label: "Schema", icon: UiListTree };
 const SOURCE_TAB = { id: "source", label: "Source", icon: UiCode2 };
+const FANOUT_TAB = { id: "fanout", label: "Fan-out", icon: UiTerminal };
 const RUNS_TAB = { id: "runs", label: "Runs", icon: UiTerminal };
 
 export function PromptDetailPane({
@@ -73,6 +75,7 @@ export function PromptDetailPane({
   onResolveProfile,
   previewResult,
   activeRunID,
+  runNotice,
   activeBatch,
   onEditBatch,
   onSelectRun,
@@ -112,6 +115,7 @@ export function PromptDetailPane({
   onResolveProfile?: (request: RuntimeProfileResolveRequest) => Promise<ResolvedRuntimeProfile>;
   previewResult?: PromptPreviewResult;
   activeRunID?: string;
+  runNotice?: string;
   activeBatch?: PromptBatchHandle;
   onEditBatch: () => void;
   onSelectRun: (id: string | undefined) => void;
@@ -154,12 +158,13 @@ export function PromptDetailPane({
     ? [RUN_TAB, RUNS_TAB]
     : repair
       ? [SOURCE_TAB]
-      : [RUN_TAB, SCHEMA_TAB, SOURCE_TAB, RUNS_TAB];
+      : [RUN_TAB, SCHEMA_TAB, FANOUT_TAB, SOURCE_TAB, RUNS_TAB];
   const activeTab = repair
     ? "source"
-    : scratch && (tab === "source" || tab === "schema")
+    : scratch && tab !== "runner" && tab !== "runs"
       ? "runner"
       : tab;
+  const fanout = !scratch && promptDeclaresFanOut(draft);
   const schema = scratch
     ? undefined
     : normalizeObjectSchema(detail.inputSchema);
@@ -225,6 +230,11 @@ export function PromptDetailPane({
             onSourceChange={onDraftChange}
             onValidityChange={onSchemaValidityChange}
           />
+        ) : activeTab === "fanout" ? (
+          <div className="space-y-density-3">
+            <PromptFanOutEditor source={draft} onChange={onDraftChange} onEditSource={() => onTabChange("source")} />
+            {draftDirty && <p className="text-xs text-muted-foreground">This prompt has unsaved changes.</p>}
+          </div>
         ) : (
           <div className="grid min-h-full gap-density-4 xl:grid-cols-[minmax(340px,0.9fr)_minmax(0,1.1fr)]">
             <div className="space-y-density-4">
@@ -263,6 +273,12 @@ export function PromptDetailPane({
                   : {})}
               />
 
+              {fanout && (
+                <div className="flex flex-wrap items-center justify-between gap-density-2 rounded-md border border-border px-density-3 py-density-2">
+                  <p className="text-sm text-muted-foreground">Render previews the template. Run fan-out executes the script.</p>
+                  <Button size="sm" variant="outline" onClick={() => onTabChange("fanout")}>Edit fan-out</Button>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-density-2">
                 <Button
                   size="sm"
@@ -287,7 +303,7 @@ export function PromptDetailPane({
                   onClick={onRun}
                 >
                   <Icon icon={UiPlay} className="size-4" />
-                  Run
+                  {fanout ? "Run fan-out" : "Run"}
                 </Button>
                 {draftDirty && (
                   <span
@@ -303,6 +319,7 @@ export function PromptDetailPane({
             <RunnerOutput
               previewResult={previewResult}
               activeRunID={activeRunID}
+              runNotice={runNotice}
             />
           </div>
         )}
@@ -341,12 +358,17 @@ function SourceEditor({
 function RunnerOutput({
   previewResult,
   activeRunID,
+  runNotice,
 }: {
   previewResult?: PromptPreviewResult;
   activeRunID?: string;
+  runNotice?: string;
 }) {
   if (activeRunID) {
     return <PromptRunStream runID={activeRunID} />;
+  }
+  if (runNotice) {
+    return <p role="status" className="rounded-md border border-border p-density-3 text-sm">{runNotice}</p>;
   }
   if (previewResult) {
     return (

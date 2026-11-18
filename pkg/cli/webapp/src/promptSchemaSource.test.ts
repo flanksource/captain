@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseSchemaEditorValue,
+  promptDeclaresFanOut,
   readPromptSchemas,
   updatePromptSchemaSource,
   updatePromptSchemaTypeSource,
@@ -24,6 +25,13 @@ output:
 {{role "user"}}
 Write about {{topic}}.
 `;
+
+describe("promptDeclaresFanOut", () => {
+  it("reads the command declaration only from frontmatter", () => {
+    expect(promptDeclaresFanOut("---\nfanout:\n  exec: |\n    printf '[]'\n---\nCheck {{item}}.")).toBe(true);
+    expect(promptDeclaresFanOut("fanout:\n  exec: |\n    printf '[]'")).toBe(false);
+  });
+});
 
 describe("updatePromptSchemaSource", () => {
   it("updates only the selected prompt-file schema", () => {

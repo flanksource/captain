@@ -64,6 +64,7 @@ import {
   submitPromptOperation,
 } from "./promptWorkbenchApi";
 import { AGENT_TOOLS } from "./promptAgentTools";
+import { promptDeclaresFanOut } from "./promptSchemaSource";
 import { usePromptRuntimeProfiles } from "./runtimeProfilesData";
 import { useWhoamiCatalog } from "./whoamiCatalog";
 
@@ -197,6 +198,7 @@ function usePromptWorkbenchView({
   });
   const scratch = isScratchPrompt(detail);
   const dirty = Boolean(detail) && isPromptDirty(selectedDetailState, detail);
+  const fanout = !scratch && promptDeclaresFanOut(selectedDetailState.draft);
   const repair = Boolean(detail?.parseError);
   const writableSources = useMemo<PromptWriteSource[]>(
     () =>
@@ -248,6 +250,7 @@ function usePromptWorkbenchView({
   }
 
   function selectRun(id: string | undefined) {
+    dispatchDetailState({ type: "run-notice", detail });
     dispatchDetailState({ type: "active-batch", detail, value: undefined });
     dispatchDetailState({ type: "active-run", detail, value: id });
     if (id) setTab("runner");
@@ -259,6 +262,7 @@ function usePromptWorkbenchView({
     return {
       ...selectedDetailState.runRequest,
       ...(dirty ? { content: selectedDetailState.draft } : {}),
+      ...(fanout ? { chat: false } : {}),
     };
   }
 
@@ -303,6 +307,7 @@ function usePromptWorkbenchView({
 
   async function previewPrompt() {
     if (!detail || !promptOps.preview) return;
+    dispatchDetailState({ type: "run-notice", detail });
     dispatchDetailState({ type: "action-error", detail, value: undefined });
     dispatchDetailState({ type: "action-loading", detail, value: "preview" });
     try {
@@ -327,6 +332,7 @@ function usePromptWorkbenchView({
 
   async function runPrompt() {
     if (!detail || !promptOps.run) return;
+    dispatchDetailState({ type: "run-notice", detail });
     dispatchDetailState({ type: "action-error", detail, value: undefined });
     dispatchDetailState({ type: "action-loading", detail, value: "run" });
     try {
@@ -344,8 +350,15 @@ function usePromptWorkbenchView({
         dispatchDetailState({
           type: "active-run",
           detail,
-          value: handle.runId,
+          value: "runId" in handle ? handle.runId : undefined,
         });
+        if (!("runId" in handle)) {
+          dispatchDetailState({
+            type: "run-notice",
+            detail,
+            value: handle.skipReason ?? (fanout ? "The script returned an empty array. No sessions started." : "The prompt completed without starting a session."),
+          });
+        }
       }
       setTab("runner");
     } catch (error) {
@@ -483,6 +496,7 @@ function usePromptWorkbenchView({
           {...runtimeProfiles.editorProps}
           previewResult={selectedDetailState.previewResult}
           activeRunID={selectedDetailState.activeRunID}
+          runNotice={selectedDetailState.runNotice}
           activeBatch={selectedDetailState.activeBatch}
           onEditBatch={() => dispatchDetailState({ type: "active-batch", detail, value: undefined })}
           onSelectRun={selectRun}

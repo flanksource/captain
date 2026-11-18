@@ -57,6 +57,17 @@ Arguments after the prompt are input files; the shell expands globs. Each must b
 
 Without a batch, every input file goes to one run. `--batch=N` splits them into runs of N files, so `--batch=1` processes files one at a time; under a batch the `--attach` files are split too, each run attaching only its own. `--batch-concurrency=M` runs M batches at once (default 1). The flags override the prompt's `batch` field. Each batch is its own recorded run, and its input hooks may skip it. The result lists one row per batch with its inputs, status and answer, skip reason or error. The totals count succeeded, failed and skipped runs; tokens and cost are summed over the runs that executed. When any batch fails, the others still run and the command exits non-zero. A batch cannot be combined with a multi-runtime run (`runtimes:` or `-M`).
 
+## Command fan-out
+
+Save the [fan-out example](/prompts/format/#command-fan-out) as `classify.prompt`. Preview it with one sample object, then run the script and inspect the sessions it starts.
+
+```sh
+captain prompt render ./classify.prompt --vars '{"item":{"name":"docs"}}' --json
+captain prompt run ./classify.prompt --json
+```
+
+`render` uses the sample without executing `fanout.exec`. Omit the sample when running so the script can supply each item. Run output includes `batchId` and an ordered `runs` list with each item's one-based `fanOutIndex` and `sessionId`. If the script returns `[]`, the run completes without starting any sessions.
+
 ## Runtime and output
 
 ```sh

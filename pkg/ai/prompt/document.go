@@ -28,6 +28,8 @@ type Document struct {
 	Spec api.Spec
 	// Runtimes are the prompt's default parallel execution targets.
 	Runtimes []api.Model
+	// FanOut is execution metadata, separate from the model request.
+	FanOut *FanOut
 	// Presets are the ordered reusable task specs selected by the prompt.
 	Presets    []string
 	PresetsSet bool
@@ -103,6 +105,10 @@ func parseRendered(source, rendered string) (*Document, error) {
 		return nil, fmt.Errorf("decode prompt runtimes: %w", err)
 	}
 	doc.Runtimes = runtimes
+	doc.FanOut, err = decodePromptFanOut(raw)
+	if err != nil {
+		return nil, err
+	}
 	doc.Presets, doc.PresetsSet, err = decodePromptPresets(raw)
 	if err != nil {
 		return nil, fmt.Errorf("decode prompt presets: %w", err)

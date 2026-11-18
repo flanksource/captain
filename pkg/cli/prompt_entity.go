@@ -147,6 +147,8 @@ type PromptRenderResult struct {
 	OutputSchemaType api.SchemaType `json:"outputSchemaType,omitempty"`
 	Runtimes         []api.Model    `json:"runtimes,omitempty"`
 	variants         []AIRuntimeResolved
+	FanOut           *promptlib.FanOut `json:"fanout,omitempty"`
+	fanOutSource     *promptFanOutSource
 	// Resolution is the layer trace the render resolved through; its Spec is
 	// the final request after saved defaults, so the trace explains Input.
 	Resolution      api.ResolvedSpec `json:"resolution"`

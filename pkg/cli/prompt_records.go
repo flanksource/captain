@@ -246,6 +246,7 @@ func parsedPromptDetail(record promptRecord, content string) (PromptDetail, erro
 	if err != nil {
 		return PromptDetail{}, err
 	}
+	_, fanOut := inspection.Metadata["fanout"]
 	summary.Version = promptVersion(content)
 	spec := &api.Spec{Model: api.Model{
 		Name: summary.Model,
@@ -266,7 +267,7 @@ func parsedPromptDetail(record promptRecord, content string) (PromptDetail, erro
 			RuntimeProfile: summary.RuntimeProfile,
 			Spec:           spec,
 			Runtimes:       promptRunModels(summary.Runtimes),
-			Chat:           len(inspection.OutputSchema) == 0,
+			Chat:           !fanOut && len(inspection.OutputSchema) == 0,
 		},
 	}, nil
 }

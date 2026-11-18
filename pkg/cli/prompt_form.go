@@ -19,7 +19,11 @@ func PromptFormSchema(detail PromptDetail) (map[string]any, error) {
 			return nil, err
 		}
 		properties := map[string]any{}
+		_, fanOut := detail.Metadata["fanout"]
 		for _, name := range names {
+			if fanOut && (name == "item" || name == "itemJSON") {
+				continue
+			}
 			properties[name] = map[string]any{"type": "string"}
 		}
 		return map[string]any{"type": "object", "properties": properties, "additionalProperties": false}, nil

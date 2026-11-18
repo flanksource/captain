@@ -16,8 +16,24 @@ type promptSessionBinding struct {
 }
 
 type promptBatchRun struct {
-	SessionID uuid.UUID
-	Runtime   api.Model
+	SessionID   uuid.UUID
+	Runtime     api.Model
+	FanOutIndex int
+}
+
+func (r promptBatchRun) selector() string {
+	if r.FanOutIndex > 0 {
+		return fmt.Sprintf("item %d", r.FanOutIndex)
+	}
+	return runtimeSelector(r.Runtime)
+}
+
+func (r promptBatchRun) item() PromptRunItem {
+	return PromptRunItem{
+		SessionID: r.SessionID.String(), Selector: r.selector(), FanOutIndex: r.FanOutIndex,
+		Model: r.Runtime.Name, Provider: providerName(r.Runtime.Provider), Mode: string(r.Runtime.Mode),
+		Effort: string(r.Runtime.Effort),
+	}
 }
 
 type promptBatchSession struct {
@@ -27,10 +43,6 @@ type promptBatchSession struct {
 
 func createPromptBatchSessions(ctx context.Context, rendered PromptRenderResult, runtimes []api.Model) (promptBatchSession, error) {
 	if err := validatePromptRuntimes(runtimes); err != nil {
-		return promptBatchSession{}, err
-	}
-	db, err := captainDefaultDB(ctx)
-	if err != nil {
 		return promptBatchSession{}, err
 	}
 	batch := promptBatchSession{ID: uuid.New(), Runs: make([]promptBatchRun, len(runtimes))}
@@ -44,18 +56,32 @@ func createPromptBatchSessions(ctx context.Context, rendered PromptRenderResult,
 			AgentType: "model", Description: runtimeSelector(runtime),
 		}
 	}
-	_, err = db.CreateSessionTree(ctx, database.CreateSessionTreeInput{
-		Root: database.CreateSessionInput{
-			ID: batch.ID, Source: "captain", Provider: "multi-model", HostID: captainHostID(),
-			CWD: rendered.Input.Cwd(), Title: rendered.Name, InitialPrompt: rendered.Input.Prompt.User,
-			AgentType: "batch", Description: fmt.Sprintf("%d model comparison", len(runtimes)),
-		},
-		Children: children,
-	})
-	if err != nil {
+	root := database.CreateSessionInput{
+		ID: batch.ID, Source: "captain", Provider: "multi-model", HostID: captainHostID(),
+		CWD: rendered.Input.Cwd(), Title: rendered.Name, InitialPrompt: rendered.Input.Prompt.User,
+		AgentType: "batch", Description: fmt.Sprintf("%d model comparison", len(runtimes)),
+	}
+	if err := createPromptSessionTree(ctx, root, children); err != nil {
 		return promptBatchSession{}, err
 	}
 	return batch, nil
+}
+
+func createPromptSessionTree(ctx context.Context, root database.CreateSessionInput, children []database.CreateSessionInput) error {
+	db, err := captainDefaultDB(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = db.CreateSessionTree(ctx, database.CreateSessionTreeInput{
+		Root:     root,
+		Children: children,
+	})
+	return err
+}
+
+func finishPromptBatch(ctx context.Context, id uuid.UUID, succeeded, failed int) {
+	reason := fmt.Sprintf("%d succeeded, %d failed", succeeded, failed)
+	updatePromptSessionLifecycle(context.WithoutCancel(ctx), id, batchLifecycle(succeeded, failed), reason)
 }
 
 func validatePromptRuntimes(runtimes []api.Model) error {

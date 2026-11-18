@@ -260,7 +260,7 @@ func decodeSpecFields(raw map[string]any, req *ai.Request) error {
 	specRaw := map[string]any{}
 	for key, value := range raw {
 		switch key {
-		case "config", "input", "output", "name", "description", "runtimes", "presets", "runtimeProfile", "hook":
+		case "config", "input", "output", "name", "description", "runtimes", "fanout", "presets", "runtimeProfile", "hook":
 			continue
 		default:
 			specRaw[key] = value
