@@ -43,6 +43,7 @@ type PromptRunResult struct {
 type PromptRunItem struct {
 	RunID            string           `json:"runId,omitempty" pretty:"label=Run"`
 	Inputs           []string         `json:"inputs,omitempty" pretty:"label=Inputs"`
+	FanOutIndex      int              `json:"fanOutIndex,omitempty" pretty:"label=Item"`
 	Selector         string           `json:"selector,omitempty" pretty:"label=Selector"`
 	Status           string           `json:"status,omitempty" pretty:"label=Status"`
 	SkipReason       string           `json:"skipReason,omitempty" pretty:"label=Skipped"`

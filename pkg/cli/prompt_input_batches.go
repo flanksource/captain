@@ -51,7 +51,7 @@ func runInputFiles(ctx context.Context, invocation PromptInvocation) (PromptRunR
 	if err != nil {
 		return PromptRunResult{}, err
 	}
-	if plan.Input.Batch == nil {
+	if plan.Input.Batch == nil || plan.FanOut != nil {
 		invocation.Stdin = strings.NewReader(stdin)
 		rendered, err := RenderPrompt(ctx, invocation)
 		if err != nil {

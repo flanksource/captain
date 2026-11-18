@@ -34,15 +34,16 @@ export function batchSessionCollection(
     result?.sessions.map((item) => [item.captainId, item]) ?? [],
   );
   const root = persisted.get(handle.batchId);
+  const { title, provider } = promptBatchDisplay(handle);
   const sessions: SessionCollectionItem[] = [
     root
       ? sessionCollectionItem(root)
       : {
           id: handle.batchId,
-          label: "Multi-model run",
+          label: title,
           status: handle.status,
-          summary: { provider: "multi-model", status: handle.status },
-          session: emptySession(handle.batchId, "captain", "Multi-model run"),
+          summary: { provider, status: handle.status },
+          session: emptySession(handle.batchId, "captain", title),
         },
     ...handle.runs.map((run) => {
       const saved = persisted.get(run.sessionId);
@@ -77,6 +78,12 @@ export function batchSessionCollection(
     defaultSelectedSessionIds: handle.runs.map((run) => run.sessionId),
     sessions,
   };
+}
+
+export function promptBatchDisplay(handle: PromptBatchHandle) {
+  return handle.runs.some((run) => run.fanOutIndex !== undefined)
+    ? { title: "Command fan-out", provider: "fan-out" }
+    : { title: "Multi-model run", provider: "multi-model" };
 }
 
 export function batchChatTargets(handle: PromptBatchHandle) {

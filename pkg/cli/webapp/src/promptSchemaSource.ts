@@ -54,6 +54,37 @@ export function updatePromptSchemaTypeSource(
   return `${prefix}---\n${document.toString()}---\n${body}`;
 }
 
+export function promptDeclaresFanOut(source: string) {
+  const document = parseDocument(splitPromptSource(source).frontmatter);
+  return isMap(document.contents) && document.has("fanout");
+}
+
+type PromptFanOut = { exec: string; concurrency?: number };
+
+export function readPromptFanOut(source: string): PromptFanOut | undefined {
+  const document = parsePromptFrontmatter(splitPromptSource(source).frontmatter);
+  if (!document.has("fanout")) return undefined;
+  const exec = document.getIn(["fanout", "exec"]);
+  const concurrency = document.getIn(["fanout", "concurrency"]);
+  if (typeof exec !== "string" || (concurrency !== undefined && typeof concurrency !== "number")) {
+    throw new Error("Fix the fanout.exec or fanout.concurrency declaration in Source.");
+  }
+  return concurrency === undefined ? { exec } : { exec, concurrency };
+}
+
+export function updatePromptFanOutSource(source: string, fanout?: PromptFanOut): string {
+  const { prefix, frontmatter, body } = splitPromptSource(source);
+  const document = parsePromptFrontmatter(frontmatter);
+  if (fanout) {
+    document.setIn(["fanout", "exec"], fanout.exec);
+    if (fanout.concurrency === undefined) document.deleteIn(["fanout", "concurrency"]);
+    else document.setIn(["fanout", "concurrency"], fanout.concurrency);
+  } else {
+    document.delete("fanout");
+  }
+  return `${prefix}---\n${document.toString()}---\n${body}`;
+}
+
 export function readPromptSchemas(source: string) {
   const document = parsePromptFrontmatter(splitPromptSource(source).frontmatter);
   const frontmatter = document.toJS() as Record<string, unknown>;

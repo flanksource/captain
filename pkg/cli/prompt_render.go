@@ -44,16 +44,27 @@ func renderPrompt(ctx context.Context, id string, renderReq PromptRenderRequest)
 	if vars == nil {
 		vars = map[string]any{}
 	}
-	frontmatter, _, skip, err := promptrun.RenderTemplate(ctx, promptlib.Load(content), promptlib.RenderOptions{Data: vars, Declared: true, Dir: promptDir(record)}, ai.Config{})
-	if err != nil {
-		return PromptRenderResult{}, err
-	}
-	frontmatter.Prompt.Source = record.Rel
-	resolved, warnings, err := renderLayers(ctx, record.Rel, content, frontmatter, renderReq, saved)
-	if err != nil {
-		return PromptRenderResult{}, err
-	}
-	return completePromptRender(promptRenderInput{Directory: renderReq.Directory, Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved, Skip: skip})
+	return renderWithFanOut(ctx, content, vars, func(ctx context.Context, data map[string]any, deferHooks bool) (PromptRenderResult, error) {
+		opts := promptlib.RenderOptions{Data: data, Declared: true, Dir: promptDir(record)}
+		tmpl := promptlib.Load(content)
+		var frontmatter ai.Request
+		var skip *promptrun.Skip
+		var err error
+		if deferHooks {
+			frontmatter, _, err = tmpl.Render(opts)
+		} else {
+			frontmatter, _, skip, err = promptrun.RenderTemplate(ctx, tmpl, opts, ai.Config{})
+		}
+		if err != nil {
+			return PromptRenderResult{}, err
+		}
+		frontmatter.Prompt.Source = record.Rel
+		resolved, warnings, err := renderLayers(ctx, record.Rel, content, frontmatter, renderReq, saved)
+		if err != nil {
+			return PromptRenderResult{}, err
+		}
+		return completePromptRender(promptRenderInput{Directory: renderReq.Directory, Record: record, Content: content, Layers: resolved, Warnings: warnings, Runtimes: renderReq.Runtimes, Saved: saved, Skip: skip})
+	})
 }
 
 func renderEphemeralPrompt(ctx context.Context, renderReq PromptRenderRequest) (PromptRenderResult, error) {
@@ -157,11 +168,19 @@ func renderPromptCLI(ctx context.Context, id string, opts AIPromptOptions, varsJ
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
-	layers, warnings, skip, err := renderLoadedLayers(ctx, body, vars, stdin, opts, saved)
-	if err != nil {
-		return PromptRenderResult{}, err
+	render := func(ctx context.Context, data map[string]any, deferHooks bool) (PromptRenderResult, error) {
+		childOpts, childVars := opts, vars
+		childOpts.deferInputHooks, childVars.Data = deferHooks || opts.deferInputHooks, data
+		layers, warnings, skip, err := renderLoadedLayers(ctx, body, childVars, stdin, childOpts, saved)
+		if err != nil {
+			return PromptRenderResult{}, err
+		}
+		return completePromptRender(promptRenderInput{Record: body.Record, Content: body.Text, Literal: body.Literal, Layers: layers, Warnings: warnings, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved, Skip: skip})
 	}
-	return completePromptRender(promptRenderInput{Record: body.Record, Content: body.Text, Literal: body.Literal, Layers: layers, Warnings: warnings, Runtimes: fallbackModelsFromFlags(opts.MultiModels), Options: opts, Saved: saved, Skip: skip})
+	if body.Literal {
+		return render(ctx, vars.Data, false)
+	}
+	return renderWithFanOut(ctx, body.Text, vars.Data, render)
 }
 
 // literalOrParsedDetail describes the prompt behind a render. A literal body is

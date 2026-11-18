@@ -82,8 +82,11 @@ type promptLaunch struct {
 // runGroup is the group the launch's tasks join: the caller's, or a
 // `prompt <name>` run group of its own keyed by groupID.
 func (l promptLaunch) runGroup(groupID, mode string, opts ...task.TaskGroupOption) *task.Group {
-	if l.Group != nil {
+	if l.Group != nil && mode != "fan-out" {
 		return l.Group
+	}
+	if l.Group != nil {
+		opts = append(opts, task.WithParentGroup(l.Group))
 	}
 	return task.StartGroup[PromptRunSummary]("prompt "+l.Rendered.Name, append([]task.TaskGroupOption{
 		task.WithGroupID(groupID),
@@ -111,6 +114,9 @@ func (l promptLaunch) taskName(selector string) string {
 // and LaunchPrompt share.
 func launchRendered(ctx context.Context, launch promptLaunch) (PromptRunResult, error) {
 	rendered, chat := launch.Rendered, launch.Chat
+	if rendered.FanOut != nil {
+		return launchPromptFanOut(ctx, launch)
+	}
 	if rendered.Skip != nil {
 		return skippedRunResult(rendered), nil
 	}
@@ -522,7 +528,9 @@ func promptTaskLabels(rendered PromptRenderResult, mode string) map[string]strin
 	if mode != "multi" {
 		labels["model"] = rendered.Model
 		labels["provider"] = rendered.Provider
-		labels["mode"] = rendered.Mode
+		if mode != "fan-out" {
+			labels["mode"] = rendered.Mode
+		}
 	}
 	if rendered.Name != "" {
 		labels["prompt"] = rendered.Name

@@ -40,6 +40,19 @@ const HANDLE: PromptBatchHandle = {
 };
 
 describe("batch session collection", () => {
+  it("identifies a command fan-out before the batch session has loaded", () => {
+    const collection = batchSessionCollection({
+      ...HANDLE,
+      total: 1,
+      runs: [{ runId: "run-1", sessionId: "session-1", status: "running", fanOutIndex: 1, selector: "item 1" }],
+    });
+
+    expect(collection.sessions).toMatchObject([
+      { label: "Command fan-out", summary: { provider: "fan-out" } },
+      { label: "item 1", parentId: "batch-1" },
+    ]);
+  });
+
   it("selects every direct model session by default", () => {
     const collection = batchSessionCollection(HANDLE);
 

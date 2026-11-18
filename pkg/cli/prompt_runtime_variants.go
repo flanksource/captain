@@ -95,6 +95,11 @@ func (rendered PromptRenderResult) withCallerTools(tools []api.ToolDefinition) (
 	if len(tools) == 0 {
 		return rendered, nil
 	}
+	if rendered.fanOutSource != nil {
+		source := *rendered.fanOutSource
+		source.tools = slices.Concat(source.tools, tools)
+		rendered.fanOutSource = &source
+	}
 	configs := []*api.Config{&rendered.Config}
 	rendered.variants = slices.Clone(rendered.variants)
 	for i := range rendered.variants {

@@ -106,6 +106,10 @@ Rendering accepts template variables and an optional runtime `spec` overlay. It 
 
 The `run` action renders synchronously, creates a prompt run id, then streams session entries through `/api/captain/prompt/runs/{runId}/stream`. A snapshot endpoint at `/api/captain/prompt/runs/{runId}` lets the UI recover entries, completion state, summary, and error text.
 
+For a [fan-out prompt](/prompts/format/#command-fan-out), send `chat: false` or omit `chat`. The run action executes `fanout.exec` once and returns `batchId` plus an ordered `runs` array. Each entry includes `fanOutIndex`, `sessionId`, and the child `runId` to use with the stream endpoint. An empty array produces `{"status":"completed"}` without a run or batch ID. The render action can accept a sample in `variables.item` and leaves the script untouched.
+
+In the workbench, **Render** previews the current draft and **Run fan-out** starts its sessions. A **Command fan-out** group in the **Run** tab lets you inspect each child session. The workbench reports when an empty array starts no sessions.
+
 Send `chat: true` in the run request to keep a managed chat available for follow-up messages. Each chat runs as a supervisor, so starting another chat does not wait for an existing chat to finish or leave its idle period. This applies to single runs and multi-runtime chat batches. `POST /api/captain/prompt/runs/{runId}/stop` also cancels a chat that has not started: its stream becomes terminal and its queued task cannot later launch a provider.
 
 A workflow that declares `workflow.verify` also publishes its own `verify` SSE event: `{"report": <VerifyReport>, "done": boolean}`. Only the newest snapshot is kept — a late subscriber gets the run's current verification state on connect, the same way it gets `run` and `state` — and it stops updating once the run is done. See [Verification](/agents/verification/) for the report shape and how it is persisted.

@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
-	"github.com/flanksource/captain/pkg/ai"
 	"io"
 
+	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/clicky/task"
 )
@@ -22,8 +22,9 @@ type PromptInvocation struct {
 	// Group places a launched run's task in the caller's own run group instead
 	// of a `prompt <name>` group of its own; the group's concurrency then governs
 	// it. Name names that task (default: the prompt's name); each variant of a
-	// multi-runtime prompt joins as `<Name>:<selector>`. Only LaunchPrompt reads
-	// them.
+	// multi-runtime prompt joins as `<Name>:<selector>`. A fan-out creates a
+	// child group to enforce its own concurrency within Group. Only LaunchPrompt
+	// reads them.
 	Group   *task.Group
 	Name    string
 	OnEvent func(int, ai.Event)
@@ -39,7 +40,7 @@ type PromptInvocation struct {
 // LaunchPrompt starts the prompt as an async run, the same run an HTTP
 // `prompt run` starts, and returns its handle without waiting for it:
 // PromptRunHandler serves RunID, and AwaitPromptRun blocks on it. A
-// multi-runtime prompt launches a batch whose BatchID is not itself a run; each
+// multi-runtime or fan-out prompt launches a batch whose BatchID is not itself a run; each
 // Runs[i].RunID is.
 func LaunchPrompt(ctx context.Context, invocation PromptInvocation) (PromptRunResult, error) {
 	var rendered PromptRenderResult
@@ -96,6 +97,9 @@ func RunPrompt(ctx context.Context, invocation PromptInvocation) (PromptRunResul
 // runRendered runs a rendered prompt, or reports the skip its input hooks
 // asked for without calling a model or recording a run.
 func runRendered(ctx context.Context, rendered PromptRenderResult, opts AIPromptOptions) (PromptRunResult, error) {
+	if rendered.FanOut != nil {
+		return runPromptFanOut(ctx, rendered, opts)
+	}
 	if rendered.Skip != nil {
 		return skippedRunResult(rendered), nil
 	}
