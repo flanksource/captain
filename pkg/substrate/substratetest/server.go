@@ -1,5 +1,6 @@
 // Package substratetest serves Substrate's environment and control APIs in-process for tests:
-// each environment is a temp directory, and its processes are real processes run in it.
+// each environment is a temp directory, and its processes are real processes run in it, and actor
+// templates are kept as Substrate validates them.
 package substratetest
 
 import (
@@ -29,6 +30,7 @@ import (
 	"github.com/flanksource/captain/pkg/substrate"
 	ateapipb "github.com/flanksource/captain/pkg/substrate/internal/ateapi"
 	"github.com/flanksource/captain/pkg/substrate/internal/ateenvv1alpha"
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -62,6 +64,8 @@ type Server struct {
 	policies map[string]*ateapipb.EgressPolicy
 	deleted  []string
 	workers  []*ateapipb.Worker
+	// templates are the actor templates, by atespace/name.
+	templates map[string]*ateapipb.ActorTemplate
 }
 
 // Environment is one environment the server created.
@@ -80,7 +84,7 @@ type Environment struct {
 // Start serves an in-process Substrate until t ends.
 func Start(t testing.TB) *Server {
 	t.Helper()
-	s := &Server{root: t.TempDir(), envs: map[string]*Environment{}, policies: map[string]*ateapipb.EgressPolicy{}}
+	s := &Server{root: t.TempDir(), envs: map[string]*Environment{}, policies: map[string]*ateapipb.EgressPolicy{}, templates: map[string]*ateapipb.ActorTemplate{}}
 
 	envServer := grpc.NewServer()
 	ateenvv1alpha.RegisterEnvironmentServiceServer(envServer, environments{s: s})
@@ -141,6 +145,43 @@ func (s *Server) AddWorker(worker substrate.Worker) {
 			Capacity: resources(worker.Capacity), Allocated: resources(worker.Allocated),
 		},
 	})
+}
+
+// AddTemplate adds an actor template of size to atespace, as ate-env manifest template registers
+// one: a guest container on its image volume, a trust bundle, and golden snapshots built under a
+// golden egress policy.
+func (s *Server) AddTemplate(atespace, name string, size substrate.Size) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.templates[atespace+"/"+name] = &ateapipb.ActorTemplate{
+		Metadata:       &ateapipb.ResourceMetadata{Atespace: atespace, Name: name, Uid: uuid.NewString(), CreateTime: timestamppb.Now()},
+		WorkerSelector: &ateapipb.Selector{MatchLabels: map[string]string{"workload": "ate-env"}},
+		Containers: []*ateapipb.Container{{
+			Name: "guest", Image: "localhost:5001/gavel-runner@sha256:0f40", Command: []string{"/ate/ko-app/ate-env-guest"},
+			VolumeMounts: []*ateapipb.VolumeMount{{Name: "guest", MountPath: "/ate"}, {Name: "system-info", MountPath: "/run/ate/egress-trust-bundle"}},
+		}},
+		Volumes: []*ateapipb.Volume{
+			{Name: "guest", Image: &ateapipb.ImageVolumeSource{Reference: "localhost:5001/ate-env-guest@sha256:c1d3"}},
+			{Name: "system-info", SystemInfo: &ateapipb.SystemInfoVolumeSource{}},
+		},
+		SnapshotConfig: &ateapipb.SnapshotConfig{
+			PreferredFidelity:    ateapipb.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY,
+			GoldenSnapshotConfig: &ateapipb.GoldenSnapshotConfig{Mode: ateapipb.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_ENABLED},
+		},
+		Resources:          &ateapipb.ResourceRequirements{Limits: &ateapipb.Resources{CpuMillicores: size.CPUMillicores, MemoryBytes: size.MemoryBytes}},
+		GoldenEgressPolicy: &ateapipb.EgressPolicyTemplate{},
+	}
+}
+
+// Template returns the actor template name in atespace.
+func (s *Server) Template(atespace, name string) (*ateapipb.ActorTemplate, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	template, ok := s.templates[atespace+"/"+name]
+	if !ok {
+		return nil, false
+	}
+	return proto.Clone(template).(*ateapipb.ActorTemplate), true
 }
 
 // Deleted lists the environments deleted so far, as atespace/id.
@@ -265,8 +306,9 @@ func (c control) ListActors(_ context.Context, req *ateapipb.ListActorsRequest) 
 	response := &ateapipb.ListActorsResponse{NextPageToken: next}
 	for _, env := range envs[start:end] {
 		response.Actors = append(response.Actors, &ateapipb.Actor{
-			Metadata: &ateapipb.ResourceMetadata{Atespace: env.Atespace, Name: env.ID, CreateTime: timestamppb.New(env.Created)},
-			Status:   &ateapipb.ActorStatus{State: ateapipb.ActorState_ACTOR_STATE_RUNNING},
+			Metadata:      &ateapipb.ResourceMetadata{Atespace: env.Atespace, Name: env.ID, CreateTime: timestamppb.New(env.Created)},
+			ActorTemplate: &ateapipb.ObjectRef{Atespace: env.Atespace, Name: env.Template},
+			Status:        &ateapipb.ActorStatus{State: ateapipb.ActorState_ACTOR_STATE_RUNNING},
 		})
 	}
 	return response, nil
@@ -287,6 +329,79 @@ func (c control) ListWorkers(_ context.Context, req *ateapipb.ListWorkersRequest
 		response.Workers = append(response.Workers, proto.Clone(worker).(*ateapipb.Worker))
 	}
 	return response, nil
+}
+
+// GetActorTemplate returns the named actor template.
+func (c control) GetActorTemplate(_ context.Context, req *ateapipb.GetActorTemplateRequest) (*ateapipb.ActorTemplate, error) {
+	ref := req.GetActorTemplate()
+	template, ok := c.s.Template(ref.GetAtespace(), ref.GetName())
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "actor template %s/%s not found", ref.GetAtespace(), ref.GetName())
+	}
+	return template, nil
+}
+
+// CreateActorTemplate keeps the template with a new UID, refusing what Substrate refuses: a taken
+// name, a size without CPU or memory, and a golden egress policy without golden snapshots.
+func (c control) CreateActorTemplate(_ context.Context, req *ateapipb.CreateActorTemplateRequest) (*ateapipb.ActorTemplate, error) {
+	s := c.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	template := proto.Clone(req.GetActorTemplate()).(*ateapipb.ActorTemplate)
+	key := template.GetMetadata().GetAtespace() + "/" + template.GetMetadata().GetName()
+	if _, ok := s.templates[key]; ok {
+		return nil, status.Errorf(codes.AlreadyExists, "actor template %s already exists", key)
+	}
+	if limits := template.GetResources().GetLimits(); limits.GetCpuMillicores() <= 0 || limits.GetMemoryBytes() <= 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "actor template %s: resources.limits needs both cpu_millicores and memory_bytes", key)
+	}
+	if template.GetGoldenEgressPolicy() != nil && template.GetSnapshotConfig().GetGoldenSnapshotConfig().GetMode() == ateapipb.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_DISABLED {
+		return nil, status.Errorf(codes.InvalidArgument, "actor template %s: golden_egress_policy may not be set when golden snapshots are disabled", key)
+	}
+	template.Metadata.Uid = uuid.NewString()
+	template.Metadata.CreateTime = timestamppb.Now()
+	s.templates[key] = template
+	return proto.Clone(template).(*ateapipb.ActorTemplate), nil
+}
+
+// ListActorTemplates lists the atespace's actor templates in name order, a page at a time.
+func (c control) ListActorTemplates(_ context.Context, req *ateapipb.ListActorTemplatesRequest) (*ateapipb.ListActorTemplatesResponse, error) {
+	s := c.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var templates []*ateapipb.ActorTemplate
+	for _, template := range s.templates {
+		if template.GetMetadata().GetAtespace() == req.GetAtespace() {
+			templates = append(templates, template)
+		}
+	}
+	slices.SortFunc(templates, func(a, b *ateapipb.ActorTemplate) int {
+		return strings.Compare(a.GetMetadata().GetName(), b.GetMetadata().GetName())
+	})
+	start, end, next, err := s.page(req.GetOptions(), len(templates))
+	if err != nil {
+		return nil, err
+	}
+	response := &ateapipb.ListActorTemplatesResponse{NextPageToken: next}
+	for _, template := range templates[start:end] {
+		response.ActorTemplates = append(response.ActorTemplates, proto.Clone(template).(*ateapipb.ActorTemplate))
+	}
+	return response, nil
+}
+
+// DeleteActorTemplate deletes the named actor template.
+func (c control) DeleteActorTemplate(_ context.Context, req *ateapipb.DeleteActorTemplateRequest) (*ateapipb.ActorTemplate, error) {
+	s := c.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ref := req.GetActorTemplate()
+	key := ref.GetAtespace() + "/" + ref.GetName()
+	template, ok := s.templates[key]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "actor template %s not found", key)
+	}
+	delete(s.templates, key)
+	return template, nil
 }
 
 // page is the range of a list of n items that options' page covers, and the token of the page
