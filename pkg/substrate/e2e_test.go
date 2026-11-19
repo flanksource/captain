@@ -1,5 +1,6 @@
 // The substrate client against a live cluster: files go in and come out of an environment intact,
-// whatever their size, a process in it works on them, and the caller may list what a sweep and an inventory need.
+// whatever their size, a process in it works on them, the caller may list what a sweep and an
+// inventory need, and a copy of a template runs environments at its own size.
 package substrate_test
 
 import (
@@ -7,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -114,4 +116,48 @@ func TestInventoryOfACluster(t *testing.T) {
 	assert.NotEmpty(t, workers, "a cluster that runs environments has workers")
 	_, err = client.ListActors(ctx, "")
 	require.NoError(t, err)
+}
+
+// A copy of the cluster's template, at its own memory, is accepted, and an environment asked for at
+// once runs from it, sees that memory, and is listed with it as its template.
+func TestACopiedTemplateAgainstACluster(t *testing.T) {
+	cluster := substratetest.FromEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	client, err := substrate.Dial(cluster.Options)
+	require.NoError(t, err)
+	defer client.Close()
+
+	name := "captain-e2e-" + uuid.NewString()[:8]
+	size := substrate.Size{CPUMillicores: 1000, MemoryBytes: 1 << 30}
+	copied, err := client.CopyTemplate(ctx, cluster.Options.Template, name, size)
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.DeleteTemplate(context.WithoutCancel(ctx), name)) }()
+	assert.Equal(t, size, copied.Size)
+	read, err := client.Template(ctx, name)
+	require.NoError(t, err)
+	assert.Equal(t, copied, read)
+
+	options := cluster.Options
+	options.Template = name
+	sized, err := substrate.Dial(options)
+	require.NoError(t, err)
+	defer sized.Close()
+	env, err := sized.Create(ctx, substrate.Environment{ID: name})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, env.Delete(context.WithoutCancel(ctx))) }()
+
+	proc, err := env.Start(ctx, substrate.Process{Command: []string{"sh", "-c", "grep MemTotal /proc/meminfo"}})
+	require.NoError(t, err)
+	assert.Contains(t, readAll(t, proc.Output(ctx)), fmt.Sprintf("%d kB", size.MemoryBytes>>10))
+
+	actors, err := client.ListActors(ctx, options.Atespace)
+	require.NoError(t, err)
+	var template string
+	for _, actor := range actors {
+		if actor.Name == name {
+			template = actor.Template
+		}
+	}
+	assert.Equal(t, name, template)
 }
