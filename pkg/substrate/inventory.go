@@ -15,6 +15,9 @@ import (
 type Actor struct {
 	Atespace string `json:"atespace"`
 	Name     string `json:"name"`
+	// Template is the name of the actor template the actor was created from, in its atespace;
+	// empty when Substrate doesn't say.
+	Template string `json:"template,omitempty"`
 	// State is resuming, running, suspending, suspended, crashed, deleting or reverting;
 	// unspecified when Substrate doesn't say, or the state's number for one this client doesn't know.
 	State string `json:"state"`
@@ -62,7 +65,10 @@ func (c *Client) ListActors(ctx context.Context, atespace string) ([]Actor, erro
 		actors := make([]Actor, 0, len(page.GetActors()))
 		for _, actor := range page.GetActors() {
 			metadata := actor.GetMetadata()
-			listed := Actor{Atespace: metadata.GetAtespace(), Name: metadata.GetName(), State: stateName(actor.GetStatus().GetState().String(), "ACTOR_STATE_")}
+			listed := Actor{
+				Atespace: metadata.GetAtespace(), Name: metadata.GetName(), Template: actor.GetActorTemplate().GetName(),
+				State: stateName(actor.GetStatus().GetState().String(), "ACTOR_STATE_"),
+			}
 			if metadata.GetCreateTime() != nil {
 				listed.Created = metadata.GetCreateTime().AsTime()
 			}

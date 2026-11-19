@@ -80,10 +80,10 @@ func TestInventoryEncodesAsJSON(t *testing.T) {
 
 	created := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
 	actors, err := json.Marshal([]substrate.Actor{
-		{Atespace: "ate-env", Name: "run-1", State: "running", Created: created},
+		{Atespace: "ate-env", Name: "run-1", Template: "gavel-runner", State: "running", Created: created},
 		{Atespace: "ate-env", Name: "run-2", State: "crashed"},
 	})
 	require.NoError(t, err)
-	assert.JSONEq(t, `[{"atespace":"ate-env","name":"run-1","state":"running","created":"2026-11-11T10:00:00Z"},
-		{"atespace":"ate-env","name":"run-2","state":"crashed"}]`, string(actors), "a zero creation time is left out")
+	assert.JSONEq(t, `[{"atespace":"ate-env","name":"run-1","template":"gavel-runner","state":"running","created":"2026-11-11T10:00:00Z"},
+		{"atespace":"ate-env","name":"run-2","state":"crashed"}]`, string(actors), "a zero creation time and no template are left out")
 }

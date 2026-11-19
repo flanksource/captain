@@ -30,7 +30,16 @@ nothing). It waits for its exit code (`Wait`) and kills its process group (`Kill
 `Client.ListActors(atespace)` lists the actors of an atespace, or of every atespace when it is
 empty, with their state and create time. `Client.ListWorkers()` lists the workers they run on, with
 each one's pool, node, state, and capacity and allocation (CPU, memory and actor slots). `Sweep`
-deletes the environments a dead caller left behind, from the atespace's actor list.
+deletes the environments a dead caller left behind, from the atespace's actor list. Each listed
+actor names the template it was created from.
+
+`Client.Template(name)` and `ListTemplates()` read the actor templates of the client's atespace,
+with each one's UID (new each time a name is created) and size (CPU and memory, which Substrate
+books against a worker and holds the actor to). `CopyTemplate(from, to, size)` creates a copy that
+runs what `from` runs at another size, without a golden snapshot: its actors boot from the image,
+at once, even right after the copy is made. A taken name is refused with `ErrTemplateExists`.
+`DeleteTemplate(name)` deletes one; delete only a template no actor runs, since env can't delete
+an environment whose template is gone (it suspends it first, which Substrate then refuses).
 
 ## Generated API
 
