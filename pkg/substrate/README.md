@@ -69,5 +69,9 @@ rest. For a Substrate behind a client-certificate ingress, set
 when its certificate isn't signed by a system root. `CAPTAIN_SUBSTRATE_ATESPACE` overrides
 `ate-env`.
 
+`TestACopiedTemplateAgainstACluster` copies `CAPTAIN_SUBSTRATE_TEMPLATE` at 1 CPU and 1 GiB,
+runs an environment from the copy and checks the memory it sees, then deletes both; the token's
+identity must be allowed to create and delete actor templates (atespace `editor` is).
+
 `TestLargeFilesRoundTripAgainstACluster` moves a 50 MiB file in and back out, comparing checksums
 on both sides, so a proxy that buffers or cuts gRPC streams shows.
