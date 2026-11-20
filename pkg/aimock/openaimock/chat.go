@@ -5,11 +5,8 @@ package openaimock
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/flanksource/commons/logger"
 
 	"github.com/flanksource/captain/pkg/aimock"
 )
@@ -35,16 +32,11 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	model := modelOrDefault(wire.Model)
 	completionID := s.nextWireID("chatcmpl", model)
 	if wire.Stream {
-		note := ""
-		cancelled := false
-		if err := streamChat(r.Context(), w, completionID, model, respond); err != nil {
-			cancelled = aimock.IsClientCancellation(r.Context(), err)
-			if !cancelled {
-				note = fmt.Sprintf("stream aborted: %v", err)
-				logger.Errorf("openaimock: %s", note)
-			}
-		}
-		s.recordOutcome(r, norm, http.StatusOK, note, cancelled)
+		aimock.RecordStream(r.Context(), "openaimock", func(complete func()) error {
+			return streamChat(r.Context(), w, completionID, model, respond, complete)
+		}, func(miss string, cancelled bool) {
+			s.recordOutcome(r, norm, http.StatusOK, miss, cancelled)
+		})
 		return
 	}
 
@@ -100,8 +92,9 @@ func chatToolCallPayload(respond Respond, completionID string) map[string]any {
 
 // streamChat renders respond as chat.completion.chunk frames: an opening role
 // delta, one delta per content chunk, a terminal finish_reason delta, a
-// usage-only chunk, then the [DONE] sentinel.
-func streamChat(ctx context.Context, w http.ResponseWriter, completionID, model string, respond Respond) error {
+// usage-only chunk, then the [DONE] sentinel. complete is called just before
+// [DONE].
+func streamChat(ctx context.Context, w http.ResponseWriter, completionID, model string, respond Respond, complete func()) error {
 	sse, err := aimock.NewSSE(w)
 	if err != nil {
 		return err
@@ -152,6 +145,7 @@ func streamChat(ctx context.Context, w http.ResponseWriter, completionID, model 
 		return err
 	}
 
+	complete()
 	return sse.Done()
 }
 
