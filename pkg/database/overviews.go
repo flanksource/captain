@@ -9,8 +9,8 @@ import (
 // EnsureOverviews completes the UNLOGGED overview tables (migrations 88 and
 // 89) after crash recovery truncated them. Writes recompute the rows they
 // touch, so this fills in only the sessions and runs nothing has written to
-// since; it runs where Captain starts writing, on Open with migrations and when
-// a monitor takes the writer lock.
+// since; it runs where Captain starts writing: in the background once a monitor
+// takes the writer lock, and before a one-shot monitor pass.
 func (db *DB) EnsureOverviews(ctx context.Context) error {
 	sessions, err := db.EnsureSessionOverview(ctx)
 	if err != nil {

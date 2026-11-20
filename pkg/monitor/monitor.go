@@ -252,12 +252,6 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 	// Another monitor may have held the lock since this one last wrote, so the
 	// remembered samples no longer describe the rows.
 	m.samples.reset()
-	// The writer completes the UNLOGGED overviews a PostgreSQL restart
-	// truncated; it is the one process every Captain host runs.
-	if err := m.db.EnsureOverviews(runCtx); err != nil {
-		cancel()
-		return err
-	}
 
 	// Arm live transcript directories before the historical scan. Backfill can
 	// take minutes on a cold database; it must never prevent fsnotify events or
@@ -269,6 +263,17 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 
 	backfillRequests := make(chan struct{}, 1)
 	var backfillWG sync.WaitGroup
+	// The writer completes the UNLOGGED overviews a PostgreSQL restart
+	// truncated; it is the one process every Captain host runs. A full rebuild
+	// reads every message on a cold cache, so it runs beside the live loops
+	// instead of holding up startup; writes keep the sessions they touch current.
+	backfillWG.Add(1)
+	go func() {
+		defer backfillWG.Done()
+		if err := m.db.EnsureOverviews(runCtx); err != nil && runCtx.Err() == nil {
+			log.Errorf("complete Captain overviews after crash recovery: %v", err)
+		}
+	}()
 	backfillWG.Add(1)
 	go func() {
 		defer backfillWG.Done()
