@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -41,12 +42,15 @@ var _ = Describe("ChooseChannel", func() {
 		Entry("claude with a messaging socket, in cmux",
 			Target{Source: "claude", SessionID: claudeSessionID, Environment: claudeEnvironment("/tmp/cc.sock"), Surface: cmuxSurface},
 			ChannelClaudeSocket),
-		Entry("codex with a thread id, in cmux",
-			Target{Source: "codex", SessionID: codexThreadID, Environment: map[string]string{"CODEX_THREAD_ID": codexThreadID}, Surface: cmuxSurface},
+		Entry("codex in cmux, through cmux's hook-delivered agent inbox",
+			Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface},
+			ChannelCmuxMessage),
+		Entry("codex outside cmux, queued on its thread by session id alone",
+			Target{Source: "codex", SessionID: codexThreadID},
 			ChannelCodexQueue),
 		Entry("claude without a messaging socket, in cmux",
 			Target{Source: "claude", SessionID: claudeSessionID, Surface: cmuxSurface},
-			ChannelCmux),
+			ChannelCmuxMessage),
 	)
 
 	DescribeTable("names what is missing when no channel reaches the session",
@@ -60,9 +64,9 @@ var _ = Describe("ChooseChannel", func() {
 		Entry("a socket without its token",
 			Target{Source: "claude", SessionID: claudeSessionID, Environment: map[string]string{EnvMessagingSocket: "/tmp/cc.sock"}},
 			EnvMessagingToken),
-		Entry("codex outside cmux without a thread id",
+		Entry("codex outside cmux without a session id",
 			Target{Source: "codex"},
-			"CODEX_THREAD_ID"),
+			"no session id"),
 	)
 })
 
@@ -119,49 +123,46 @@ var _ = Describe("Deliver", func() {
 		Expect(err).To(MatchError(ContainSubstring(socket)))
 	})
 
-	It("queues the message on the codex thread", func() {
+	It("queues the message on the codex thread named by its session id", func() {
 		var args []string
 		deliverer := Deliverer{Codex: func(_ context.Context, argv ...string) error {
 			args = argv
 			return nil
 		}}
 
-		result, err := deliverer.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Environment: map[string]string{"CODEX_THREAD_ID": codexThreadID}}, threadText)
+		result, err := deliverer.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID}, threadText)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(Result{Channel: ChannelCodexQueue, Status: StatusQueued}))
 		Expect(args).To(Equal([]string{"queue", "--thread", codexThreadID, "--message", threadText}))
 	})
 
-	It("pastes into the agent's cmux surface and presses Enter until its session log grows", func() {
-		sessionLog := filepath.Join(GinkgoT().TempDir(), "session.jsonl")
-		Expect(os.WriteFile(sessionLog, []byte("{}\n"), 0o600)).To(Succeed())
-		screen := "> "
-		var sent [][]string
+	It("hands the message to cmux's agent inbox for the surface instead of typing into its prompt", func() {
+		var calls [][]string
 		client := cmux.NewClient("")
 		client.Runner = func(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
-			switch args[0] {
-			case "read-screen":
-				return screen, nil
-			case "send":
-				sent = append(sent, args)
-				screen = "> " + args[len(args)-1]
-			case "send-key":
-				sent = append(sent, args)
-				appendLine(sessionLog, `{"type":"user"}`)
-			}
+			calls = append(calls, args)
 			return "", nil
 		}
-		target := Target{Source: "claude", SessionID: claudeSessionID, SessionFile: sessionLog, Surface: cmuxSurface}
 
-		result, err := Deliverer{Cmux: client}.Deliver(ctx, target, threadText)
+		result, err := Deliverer{Cmux: client}.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface}, threadText)
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result).To(Equal(Result{Channel: ChannelCmux, Status: StatusSent}))
-		Expect(sent).To(Equal([][]string{
-			{"send", "--workspace", cmuxSurface.WorkspaceID, "--surface", cmuxSurface.SurfaceID, "--", threadText},
-			{"send-key", "--workspace", cmuxSurface.WorkspaceID, "--surface", cmuxSurface.SurfaceID, "Enter"},
+		Expect(result).To(Equal(Result{Channel: ChannelCmuxMessage, Status: StatusQueued}))
+		Expect(calls).To(Equal([][]string{
+			{"agent", "message", cmuxSurface.SurfaceID, "--from", messageSender, "--", threadText},
 		}))
+	})
+
+	It("names the surface when cmux refuses the agent message", func() {
+		client := cmux.NewClient("")
+		client.Runner = func(_ context.Context, _, _ string, _ time.Duration, _ ...string) (string, error) {
+			return "", errors.New("cmux agent message failed (exit 1): agent messages are off")
+		}
+
+		_, err := Deliverer{Cmux: client}.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface}, threadText)
+
+		Expect(err).To(MatchError(And(ContainSubstring(cmuxSurface.SurfaceID), ContainSubstring("agent messages are off"))))
 	})
 })
 
@@ -172,14 +173,6 @@ func shortTempDir() string {
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(os.RemoveAll, dir)
 	return dir
-}
-
-func appendLine(path, line string) {
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-	Expect(err).NotTo(HaveOccurred())
-	defer file.Close()
-	_, err = file.WriteString(line + "\n")
-	Expect(err).NotTo(HaveOccurred())
 }
 
 // listenLines accepts one connection on socket and reports the JSON lines it

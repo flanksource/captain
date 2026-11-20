@@ -7,14 +7,17 @@ import (
 	"github.com/flanksource/captain/pkg/ai/provider/cmux"
 )
 
-func (d Deliverer) submitCmux(ctx context.Context, target Target, text string) error {
+// messageSender is the --from name the agent sees on a cmux agent message. It
+// is fixed so delivery never depends on the sender itself running in cmux.
+const messageSender = "captain"
+
+func (d Deliverer) messageCmux(ctx context.Context, target Target, text string) error {
 	client := d.Cmux
 	if client == nil {
 		client = cmux.NewClient("")
 	}
-	ref := cmux.WorkspaceRef{WorkspaceID: target.Surface.WorkspaceID, SurfaceID: target.Surface.SurfaceID}
-	if err := cmux.SubmitToSurface(ctx, client, ref, target.SessionFile, text); err != nil {
-		return fmt.Errorf("type into cmux surface %s: %w", target.Surface.SurfaceID, err)
+	if err := client.AgentMessage(ctx, target.Surface.SurfaceID, messageSender, text); err != nil {
+		return fmt.Errorf("cmux agent message to surface %s: %w", target.Surface.SurfaceID, err)
 	}
 	return nil
 }

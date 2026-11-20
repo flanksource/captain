@@ -3,6 +3,7 @@ package cmux
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -14,6 +15,18 @@ import (
 )
 
 const defaultCommandTimeout = 30 * time.Second
+
+// maxEchoedArgLen caps how much of one argument a failed-command error echoes, so
+// a pasted payload doesn't bury cmux's own stderr at the end of the message.
+const maxEchoedArgLen = 120
+
+// promptBusyMarker is the phrase cmux uses when it refuses a send because the
+// agent composer already holds unsent text.
+const promptBusyMarker = "holds text someone is typing"
+
+// ErrPromptBusy reports that cmux refused a send because the agent's prompt holds
+// unsent text. Retrying cannot help until someone clears or submits that text.
+var ErrPromptBusy = errors.New("agent prompt holds unsent text; clear or submit it, then retry")
 
 // Runner executes the cmux CLI. Tests inject this to assert command arguments
 // without requiring a live cmux.app instance.
@@ -236,6 +249,23 @@ func (c *Client) SendSurface(ctx context.Context, workspaceRef, surfaceRef, text
 		return fmt.Errorf("surface reference is required")
 	}
 	_, err := c.run(ctx, "", "send", "--workspace", workspaceRef, "--surface", surfaceRef, "--", text)
+	if err != nil && strings.Contains(err.Error(), promptBusyMarker) {
+		return fmt.Errorf("%w: surface %s: %w", ErrPromptBusy, surfaceRef, err)
+	}
+	return err
+}
+
+// AgentMessage hands text to cmux's inbox for the agent on surfaceRef. cmux
+// delivers it through that agent's hooks rather than typing into its terminal,
+// so it never lands in a half-typed prompt.
+func (c *Client) AgentMessage(ctx context.Context, surfaceRef, from, text string) error {
+	if strings.TrimSpace(surfaceRef) == "" {
+		return fmt.Errorf("surface reference is required")
+	}
+	if strings.TrimSpace(from) == "" {
+		return fmt.Errorf("sender name is required")
+	}
+	_, err := c.run(ctx, "", "agent", "message", surfaceRef, "--from", from, "--", text)
 	return err
 }
 
@@ -399,7 +429,14 @@ func defaultRunner(_ context.Context, cwd, binary string, timeout time.Duration,
 		if msg == "" && result.Error != nil {
 			msg = result.Error.Error()
 		}
-		return result.Stdout, fmt.Errorf("%s %s failed (exit %d): %s", binary, strings.Join(args, " "), result.ExitCode, msg)
+		echoed := make([]string, len(args))
+		for i, arg := range args {
+			echoed[i] = arg
+			if len(arg) > maxEchoedArgLen {
+				echoed[i] = fmt.Sprintf("<%d bytes>", len(arg))
+			}
+		}
+		return result.Stdout, fmt.Errorf("%s %s failed (exit %d): %s", binary, strings.Join(echoed, " "), result.ExitCode, msg)
 	}
 	return result.Stdout, nil
 }
