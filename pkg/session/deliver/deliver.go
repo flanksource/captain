@@ -1,8 +1,8 @@
 // Package deliver sends a message into an agent session that is already running
 // and that captain did not launch, through the channel that agent listens on:
-// Claude Code's messaging socket, the Codex message queue, or, for any agent in
-// a cmux pane, typing into its surface. It never resumes the session in a
-// second process.
+// Claude Code's messaging socket, cmux's hook-delivered agent inbox for any
+// agent in a cmux pane, or the Codex message queue. It never types into the
+// agent's prompt and never resumes the session in a second process.
 package deliver
 
 import (
@@ -20,12 +20,12 @@ type Channel string
 const (
 	ChannelClaudeSocket Channel = "claude-socket"
 	ChannelCodexQueue   Channel = "codex-queue"
-	ChannelCmux         Channel = "cmux"
+	ChannelCmuxMessage  Channel = "cmux-message"
 )
 
 // Status is how far delivery is known to have got: sent into the agent's input
-// (neither the socket nor the surface acknowledges more), or queued by codex for
-// its next turn.
+// (the socket acknowledges no more), or queued by cmux or codex for the agent to
+// read at its next step.
 type Status string
 
 const (
@@ -41,8 +41,9 @@ const (
 )
 
 // MessagingKeys are the environment variables a delivery reads off the live
-// agent process. They are read at delivery time and never stored, since the
-// token authenticates to the agent's inbox.
+// agent process: claude's socket and token, plus the session identity keys that
+// prove the process still runs the target session. They are read at delivery
+// time and never stored, since the token authenticates to the agent's inbox.
 var MessagingKeys = []string{"CLAUDE_CODE_SESSION_ID", envCodexThread, EnvClaudePID, EnvMessagingSocket, EnvMessagingToken}
 
 // ClaudeMessagingEnvironment picks the environment claude exported to its
@@ -67,8 +68,6 @@ type Target struct {
 	Source string
 	// SessionID is the provider's session id (claude session, codex thread).
 	SessionID string
-	// SessionFile is the agent's transcript, which cmux delivery watches grow.
-	SessionFile string
 	// Environment is the live process's MessagingKeys.
 	Environment map[string]string
 	Surface     *process.Surface
@@ -89,7 +88,10 @@ type Deliverer struct {
 	Dial  func(ctx context.Context, socket string) (net.Conn, error)
 }
 
-// ChooseChannel picks the agent's native channel, else its cmux surface.
+// ChooseChannel picks claude's messaging socket, else cmux's agent inbox for an
+// agent in a cmux pane, else the codex queue. cmux's inbox goes before the codex
+// queue because cmux installs the hooks that drain it into every codex it
+// launches, and it also wakes an idle agent.
 func ChooseChannel(target Target) (Channel, error) {
 	env := target.Environment
 	switch {
@@ -98,14 +100,14 @@ func ChooseChannel(target Target) (Channel, error) {
 			return "", fmt.Errorf("claude session %s has %s but no %s", target.SessionID, EnvMessagingSocket, EnvMessagingToken)
 		}
 		return ChannelClaudeSocket, nil
-	case target.Source == "codex" && env[envCodexThread] != "":
+	case target.Surface != nil && target.Surface.SurfaceID != "":
+		return ChannelCmuxMessage, nil
+	case target.Source == "codex" && target.SessionID != "":
 		return ChannelCodexQueue, nil
-	case target.Surface != nil && target.Surface.SurfaceID != "" && target.Surface.WorkspaceID != "":
-		return ChannelCmux, nil
 	case target.Source == "claude":
 		return "", fmt.Errorf("claude session %s has no child process carrying its %s and is not in a cmux pane", target.SessionID, EnvMessagingSocket)
 	case target.Source == "codex":
-		return "", fmt.Errorf("codex session %s has no %s and is not in a cmux pane", target.SessionID, envCodexThread)
+		return "", fmt.Errorf("codex session has no session id and is not in a cmux pane")
 	default:
 		return "", fmt.Errorf("session %s (%s) has no delivery channel: not claude, codex, or in a cmux pane", target.SessionID, target.Source)
 	}
@@ -120,11 +122,11 @@ func (d Deliverer) Deliver(ctx context.Context, target Target, text string) (Res
 	case ChannelClaudeSocket:
 		err = d.sendClaudeSocket(ctx, target.Environment[EnvMessagingSocket], target.Environment[EnvMessagingToken], text)
 		return Result{Channel: channel, Status: StatusSent}, err
-	case ChannelCodexQueue:
-		err = d.queueCodex(ctx, target.Environment[envCodexThread], text)
+	case ChannelCmuxMessage:
+		err = d.messageCmux(ctx, target, text)
 		return Result{Channel: channel, Status: StatusQueued}, err
 	default:
-		err = d.submitCmux(ctx, target, text)
-		return Result{Channel: channel, Status: StatusSent}, err
+		err = d.queueCodex(ctx, target.SessionID, text)
+		return Result{Channel: channel, Status: StatusQueued}, err
 	}
 }

@@ -2,6 +2,7 @@ package cmux
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -18,16 +19,10 @@ import (
 var replReadyRe = regexp.MustCompile(`(?m)^\s*(?:[│|]\s*)?[>❯](?:\s|$)`)
 
 // submitConfirm describes how a submit confirms it actually took (the agent began
-// the turn). The initial prompt waits for the session log to appear; feedback
-// waits for it to grow past the byte offset captured before the send. Both also
-// accept the terminal surface advancing past the just-submitted screen.
+// the turn): the session log appearing at logPath, or the terminal surface
+// advancing past the just-submitted screen.
 type submitConfirm struct {
 	logPath string
-	// baseOffset is the session-log size captured before the send. When growth is
-	// set, confirmation requires the log to grow beyond it (feedback resumes an
-	// existing log); otherwise the log merely appearing confirms (initial start).
-	baseOffset int64
-	growth     bool
 }
 
 // submitAndConfirm pastes text onto the surface, presses Enter, and confirms the
@@ -43,18 +38,6 @@ func (r *run) submitAndConfirm(ctx context.Context, ref WorkspaceRef, label, tex
 		return err
 	}
 	return r.confirmSubmitted(ctx, ref, label, sc)
-}
-
-// SubmitToSurface sends text to an agent that is already running on the cmux
-// surface at ref, which captain did not launch. It is the same paste, Enter and
-// confirmation as a captain-launched run's feedback: confirmation waits for the
-// agent's session log (sessionLog, empty when unknown) to grow, or the surface to
-// advance.
-func SubmitToSurface(ctx context.Context, client *Client, ref WorkspaceRef, sessionLog, text string) error {
-	r := &run{client: client, emit: func(ai.Event) {}}
-	return r.submitAndConfirm(ctx, ref, "message", text, submitConfirm{
-		logPath: sessionLog, baseOffset: fileSize(sessionLog), growth: true,
-	})
 }
 
 // confirmSubmitted re-presses Enter until the submit is confirmed (or the
@@ -101,11 +84,7 @@ func (r *run) confirmSubmitted(ctx context.Context, ref WorkspaceRef, label stri
 // jsonl (authoritative — claude writes it as the turn progresses) and, as a
 // fallback, the surface having advanced past the post-send baseline.
 func (r *run) confirmStarted(ctx context.Context, ref WorkspaceRef, sc submitConfirm, postSend string) (bool, string) {
-	if sc.growth {
-		if fileSize(sc.logPath) > sc.baseOffset {
-			return true, "session log grew past pre-send offset"
-		}
-	} else if _, err := os.Stat(sc.logPath); err == nil {
+	if _, err := os.Stat(sc.logPath); err == nil {
 		return true, "session log appeared"
 	}
 	screen := r.readScreen(ctx, ref)
@@ -142,7 +121,7 @@ func (r *run) sendSurfaceText(ctx context.Context, ref WorkspaceRef, label, text
 		before := r.readScreen(ctx, ref)
 		if err := r.client.SendSurface(ctx, workspaceRef, surfaceRef, text); err != nil {
 			lastErr = err
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || errors.Is(err, ErrPromptBusy) {
 				return err
 			}
 			if attempt < attempts {
