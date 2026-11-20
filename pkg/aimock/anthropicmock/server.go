@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/flanksource/commons/logger"
-
 	"github.com/flanksource/captain/pkg/aimock"
 )
 
@@ -142,19 +140,11 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wire.Stream {
-		// The 200 and the first frames are already on the wire by the time a
-		// stream can fail, so there is no status left to set — the note goes in
-		// the journal, where a test asserting on Requests() will see it.
-		note := ""
-		cancelled := false
-		if err := streamMessage(r.Context(), w, model, respond); err != nil {
-			cancelled = aimock.IsClientCancellation(r.Context(), err)
-			if !cancelled {
-				note = fmt.Sprintf("stream aborted: %v", err)
-				logger.Errorf("anthropicmock: %s", note)
-			}
-		}
-		s.recordOutcome(r, norm, http.StatusOK, note, cancelled)
+		aimock.RecordStream(r.Context(), "anthropicmock", func(complete func()) error {
+			return streamMessage(r.Context(), w, model, respond, complete)
+		}, func(miss string, cancelled bool) {
+			s.recordOutcome(r, norm, http.StatusOK, miss, cancelled)
+		})
 		return
 	}
 

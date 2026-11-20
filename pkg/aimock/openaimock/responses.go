@@ -5,11 +5,8 @@ package openaimock
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/flanksource/commons/logger"
 
 	"github.com/flanksource/captain/pkg/aimock"
 )
@@ -40,19 +37,11 @@ func (s *Server) handleResponses(w http.ResponseWriter, r *http.Request) {
 	model := modelOrDefault(wire.Model)
 	responseID := s.nextWireID("resp", model)
 	if wire.Stream {
-		// The 200 and the first frames are already on the wire by the time a
-		// stream can fail, so there is no status left to set — the note goes in
-		// the journal, where a test asserting on Requests() will see it.
-		note := ""
-		cancelled := false
-		if err := streamResponses(r.Context(), w, responseID, model, respond); err != nil {
-			cancelled = aimock.IsClientCancellation(r.Context(), err)
-			if !cancelled {
-				note = fmt.Sprintf("stream aborted: %v", err)
-				logger.Errorf("openaimock: %s", note)
-			}
-		}
-		s.recordOutcome(r, norm, http.StatusOK, note, cancelled)
+		aimock.RecordStream(r.Context(), "openaimock", func(complete func()) error {
+			return streamResponses(r.Context(), w, responseID, model, respond, complete)
+		}, func(miss string, cancelled bool) {
+			s.recordOutcome(r, norm, http.StatusOK, miss, cancelled)
+		})
 		return
 	}
 
@@ -98,7 +87,8 @@ func inProgressResponse(responseID, model string) map[string]any {
 // streamResponses renders respond as the documented Responses API event
 // sequence: response.created / .in_progress → per item (output_item.added, the
 // item's own delta and done frames, output_item.done) → response.completed.
-func streamResponses(ctx context.Context, w http.ResponseWriter, responseID, model string, respond Respond) error {
+// complete is called just before response.completed.
+func streamResponses(ctx context.Context, w http.ResponseWriter, responseID, model string, respond Respond, complete func()) error {
 	sse, err := aimock.NewSSE(w)
 	if err != nil {
 		return err
@@ -121,6 +111,7 @@ func streamResponses(ctx context.Context, w http.ResponseWriter, responseID, mod
 		return err
 	}
 
+	complete()
 	return sse.Event("response.completed", map[string]any{
 		"type":     "response.completed",
 		"response": completedResponse(responseID, model, respond),

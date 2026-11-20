@@ -12,7 +12,39 @@ import (
 	"net/http"
 	"strings"
 	"syscall"
+
+	"github.com/flanksource/commons/logger"
 )
+
+// RecordStream serves a stream and records its request once its outcome is known. A stream that
+// completes calls complete just before its last frame, so a client that has read the whole stream
+// finds its request in Requests(). One that fails is recorded with what failed it, or as cancelled
+// when its client went away. name prefixes what is logged.
+func RecordStream(ctx context.Context, name string, stream func(complete func()) error, record func(miss string, cancelled bool)) {
+	recorded := false
+	err := stream(func() {
+		record("", false)
+		recorded = true
+	})
+	switch {
+	case err == nil && !recorded:
+		record("", false)
+	case err == nil:
+	case recorded:
+		if !IsClientCancellation(ctx, err) {
+			logger.Errorf("%s: the stream's last frame failed after its request was recorded: %v", name, err)
+		}
+	case IsClientCancellation(ctx, err):
+		record("", true)
+	default:
+		// The 200 and the first frames are already on the wire by the time a stream can fail, so
+		// there is no status left to set: the note goes in the journal, where a test asserting on
+		// Requests() will see it.
+		note := fmt.Sprintf("stream aborted: %v", err)
+		logger.Errorf("%s: %s", name, note)
+		record(note, false)
+	}
+}
 
 func WaitForCancellation(ctx context.Context, hold bool) error {
 	if !hold {

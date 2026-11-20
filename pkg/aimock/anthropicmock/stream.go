@@ -21,8 +21,9 @@ const toolInputChunk = 24
 // content_block_stop) → message_delta → message_stop.
 //
 // An error here arrives after the 200 and the first frames are already on the
-// wire, so it cannot become a status — the caller journals it instead.
-func streamMessage(ctx context.Context, w http.ResponseWriter, model string, respond Respond) error {
+// wire, so it cannot become a status — the caller journals it instead. complete
+// is called just before message_stop.
+func streamMessage(ctx context.Context, w http.ResponseWriter, model string, respond Respond, complete func()) error {
 	sse, err := aimock.NewSSE(w)
 	if err != nil {
 		return err
@@ -75,6 +76,7 @@ func streamMessage(ctx context.Context, w http.ResponseWriter, model string, res
 		return err
 	}
 
+	complete()
 	return sse.Event("message_stop", map[string]string{"type": "message_stop"})
 }
 
