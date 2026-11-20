@@ -378,7 +378,7 @@ func (p *Proc) Stderr(ctx context.Context) io.ReadCloser { return p.follow(ctx, 
 const skipped = math.MaxInt64
 
 // follow follows the process's stdout, stderr or both until it exits. Substrate's router ends a
-// long stream, so it reconnects from the offsets it has read.
+// long stream, so it reconnects from the offsets it has read, unless the environment is gone.
 func (p *Proc) follow(ctx context.Context, withStdout, withStderr bool) io.ReadCloser {
 	ctx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
@@ -401,6 +401,10 @@ func (p *Proc) follow(ctx context.Context, withStdout, withStderr bool) io.ReadC
 			}
 			for {
 				message, err := stream.Recv()
+				if gone(err) {
+					writer.CloseWithError(fmt.Errorf("follow the output of %s in substrate environment %s: %w", p.id, p.env.name(), err))
+					return
+				}
 				if err != nil {
 					break
 				}
@@ -427,6 +431,18 @@ func (p *Proc) follow(ctx context.Context, withStdout, withStderr bool) io.ReadC
 		}
 	}()
 	return &output{PipeReader: reader, cancel: cancel}
+}
+
+// gone reports whether err says the process's environment can't come back, so following it again
+// would only fail the same way: ate-env-api answers FailedPrecondition for a crashed environment
+// and NotFound for a deleted one. Anything else, such as the router ending a long stream or
+// Unavailable from a frozen environment, is worth reconnecting after.
+func gone(err error) bool {
+	switch status.Code(err) {
+	case codes.FailedPrecondition, codes.NotFound:
+		return true
+	}
+	return false
 }
 
 type output struct {
