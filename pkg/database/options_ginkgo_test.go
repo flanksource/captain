@@ -28,10 +28,6 @@ var _ = Describe("Open options", func() {
 				calls = append(calls, "open:"+dsn)
 				return opened, nil
 			},
-			ensure: func(context.Context, *DB) error {
-				calls = append(calls, "ensure")
-				return nil
-			},
 		}
 	})
 
@@ -48,7 +44,7 @@ var _ = Describe("Open options", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(db.Gorm()).To(BeIdenticalTo(opened))
-		Expect(calls).To(Equal([]string{"migrate:postgres://captain:public", "open:postgres://captain", "ensure"}))
+		Expect(calls).To(Equal([]string{"migrate:postgres://captain:public", "open:postgres://captain"}))
 	})
 
 	It("scopes migrations and Captain-owned pools to the selected schema", func(ctx SpecContext) {
@@ -63,7 +59,6 @@ var _ = Describe("Open options", func() {
 		Expect(calls).To(Equal([]string{
 			"migrate:postgres://captain/database?sslmode=disable:agent_namespace_context",
 			"open:postgres://captain/database?search_path=agent_namespace_context&sslmode=disable",
-			"ensure",
 		}))
 	})
 
