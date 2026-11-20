@@ -215,6 +215,20 @@ func TestFocusSessionErrorsWhenWorkspaceMissing(t *testing.T) {
 	}
 }
 
+func TestDefaultRunnerErrorElidesLongArguments(t *testing.T) {
+	payload := strings.Repeat("thread body ", 50)
+	_, err := defaultRunner(context.Background(), "", "false", 5*time.Second, "send", "--surface", "surface:sf1", "--", payload)
+	if err == nil {
+		t.Fatal("defaultRunner(false) error = nil, want exit failure")
+	}
+	if strings.Contains(err.Error(), payload) {
+		t.Fatalf("error embeds the %d-byte payload, want it elided: %v", len(payload), err)
+	}
+	if !strings.Contains(err.Error(), "send --surface surface:sf1 -- <600 bytes>") {
+		t.Fatalf("error = %v, want short args kept and the payload summarized by size", err)
+	}
+}
+
 func joinArgs(args []string) string {
 	return strings.Join(args, "\x00")
 }

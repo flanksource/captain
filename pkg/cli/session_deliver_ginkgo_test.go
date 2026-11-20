@@ -234,6 +234,6 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		Expect(target.Surface).To(Equal(&CmuxSurface{
 			SurfaceID: "surface-moved", SurfaceRef: "surface:42", WorkspaceID: "workspace-current", Workspace: "Current",
 		}))
-		Expect(deliver.ChooseChannel(target)).To(Equal(deliver.ChannelCmux))
+		Expect(deliver.ChooseChannel(target)).To(Equal(deliver.ChannelCmuxMessage))
 	})
 })

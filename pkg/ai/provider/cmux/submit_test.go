@@ -2,7 +2,8 @@ package cmux
 
 import (
 	"context"
-	"os"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -247,6 +248,34 @@ func TestSendSurfaceTextFallsBackToSettleWhenPasteUnobserved(t *testing.T) {
 	}
 }
 
+// busyPromptStderr is cmux's refusal when the agent composer already holds text.
+const busyPromptStderr = "Error: send: the agent prompt in surface:sf1 holds text someone is typing, so nothing was sent. Retry when the prompt is clear, or pass --force to send anyway."
+
+func TestSendSurfaceTextFailsFastWhenPromptHoldsText(t *testing.T) {
+	runner := &timedRunner{}
+	r := newTestRun(runConfig{SendAttempts: 3, SendRetryDelay: time.Millisecond}, func(ctx context.Context, cwd, binary string, timeout time.Duration, args ...string) (string, error) {
+		_, _ = runner.run(ctx, cwd, binary, timeout, args...)
+		if args[0] == "send" {
+			return "", fmt.Errorf("cmux send failed (exit 1): %s", busyPromptStderr)
+		}
+		return "idle", nil
+	})
+
+	err := r.sendSurfaceText(context.Background(), testSurface, "message", "thread payload")
+	if !errors.Is(err, ErrPromptBusy) {
+		t.Fatalf("sendSurfaceText() error = %v, want ErrPromptBusy", err)
+	}
+	sends := 0
+	for _, op := range runner.ops {
+		if op == "send" {
+			sends++
+		}
+	}
+	if sends != 1 {
+		t.Fatalf("send attempts = %d, want 1: a busy prompt is a refusal, not a transient error", sends)
+	}
+}
+
 func TestSubmitAndConfirmRepressesEnterUntilSurfaceAdvances(t *testing.T) {
 	runner := &codexSurfaceRunner{}
 	r := newTestRun(runConfig{
@@ -281,32 +310,6 @@ func TestConfirmStartedInitialDetectsLogAppearance(t *testing.T) {
 	}
 	if why != "session log appeared" {
 		t.Fatalf("confirmStarted reason = %q, want %q", why, "session log appeared")
-	}
-}
-
-func TestConfirmStartedFeedbackDetectsLogGrowth(t *testing.T) {
-	repo := t.TempDir()
-	fakeClaudeHome(t)
-	logPath := sessionLogFile(t, repo, "sess")
-	writeSessionLog(t, logPath, completedSessionLine) // the prior turn
-	base := fileSize(logPath)
-
-	// read-screen matches the post-send baseline so the surface signal never fires,
-	// isolating log-growth as the only confirmation signal.
-	r := newTestRun(runConfig{}, constantScreenRunner("idle prompt"))
-	sc := submitConfirm{logPath: logPath, baseOffset: base, growth: true}
-
-	if started, _ := r.confirmStarted(context.Background(), testSurface, sc, "idle prompt"); started {
-		t.Fatal("confirmStarted() = true before the log grew, want false")
-	}
-
-	appendSessionLine(t, logPath, `{"type":"user","message":{"content":[{"type":"text","text":"feedback"}]}}`)
-	started, why := r.confirmStarted(context.Background(), testSurface, sc, "idle prompt")
-	if !started {
-		t.Fatal("confirmStarted() = false after the log grew, want true")
-	}
-	if why != "session log grew past pre-send offset" {
-		t.Fatalf("confirmStarted reason = %q, want growth reason", why)
 	}
 }
 
@@ -360,18 +363,5 @@ func constantScreenRunner(screen string) Runner {
 			return screen, nil
 		}
 		return "ok", nil
-	}
-}
-
-// appendSessionLine appends one line to an existing session log on disk.
-func appendSessionLine(t *testing.T, path, line string) {
-	t.Helper()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Close() }()
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		t.Fatal(err)
 	}
 }

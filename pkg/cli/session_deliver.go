@@ -56,7 +56,7 @@ func claudeMessagingEnvironment(ctx context.Context, pid int) (map[string]string
 }
 
 // RunSessionDeliver sends text into a live claude or codex session that captain
-// did not launch, through its messaging socket, codex queue or cmux pane (see
+// did not launch, through its messaging socket, cmux agent inbox or codex queue (see
 // deliver.ChooseChannel). Unlike POST /{id}/message it never resumes the session
 // in a second process: a session that is not live is a 409.
 func RunSessionDeliver(ctx context.Context, opts SessionDeliverOptions) (deliver.Result, error) {
@@ -117,7 +117,7 @@ func liveDeliveryTarget(ctx context.Context, id string) (deliver.Target, error) 
 			fmt.Sprintf("process %d now runs session %s, not %s", record.Live.PID, declared, item.ProviderSessionID))
 	}
 	return deliver.Target{
-		Source: record.Source, SessionID: item.ProviderSessionID, SessionFile: record.Live.SessionFile,
+		Source: record.Source, SessionID: item.ProviderSessionID,
 		Environment: env, Surface: record.Live.Surface,
 	}, nil
 }
