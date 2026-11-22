@@ -144,7 +144,7 @@ var _ = Describe("prompt chat permission mode", func() {
 		})
 
 		It("starts the resumed run in the requested posture", func() {
-			rendered, err := resumeRenderResult(item, ChatMessageRequest{Text: "continue", PermissionMode: "auto"})
+			rendered, err := resumeRenderResult(context.Background(), item, ChatMessageRequest{Text: "continue", PermissionMode: "auto"})
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rendered.Input.Permissions.Mode).To(Equal(api.PermissionAuto))
@@ -155,7 +155,7 @@ var _ = Describe("prompt chat permission mode", func() {
 			item.Summary.Source = "codex"
 			item.Summary.Model = "gpt-5.6-sol"
 
-			_, err := resumeRenderResult(item, ChatMessageRequest{Text: "continue", PermissionMode: "dontAsk"})
+			_, err := resumeRenderResult(context.Background(), item, ChatMessageRequest{Text: "continue", PermissionMode: "dontAsk"})
 
 			Expect(chatErrorStatus(err)).To(Equal(http.StatusUnprocessableEntity))
 		})
@@ -172,7 +172,7 @@ var _ = Describe("prompt chat permission mode", func() {
 				CaptainID: "transcript-1", Source: "claude", CWD: worktree, Model: "claude-opus-5",
 			}
 
-			rendered, err := resumeRenderResult(item, ChatMessageRequest{Text: "Answers: implement the plan"})
+			rendered, err := resumeRenderResult(context.Background(), item, ChatMessageRequest{Text: "Answers: implement the plan"})
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rendered.Provider).To(Equal("anthropic"))

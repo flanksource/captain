@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -88,6 +89,25 @@ var _ = Describe("prompt chat lifecycle", func() {
 		Expect(chat.provider).To(BeNil())
 		Expect(chat.state.Turn).To(BeZero())
 	})
+	It("owns the provider session it continues while it is still starting", func() {
+		const providerID = "continued-provider-session"
+		rendered := claudeAgentRender("")
+		rendered.Input.SessionID = providerID
+		chats := newChatBroker()
+		chat := newChatSession("continuing-run", rendered, 0, newRunStream(), nil)
+
+		chats.register(chat)
+
+		owner, ok := chats.getSession(providerID)
+		Expect(ok).To(BeTrue())
+		Expect(owner).To(BeIdenticalTo(chat))
+		_, err := owner.send(context.Background(), ChatMessageRequest{Text: "second"})
+		Expect(chatErrorStatus(err)).To(Equal(http.StatusConflict))
+		chats.finish(chat)
+		_, ok = chats.getSession(providerID)
+		Expect(ok).To(BeFalse())
+	})
+
 	It("queues an idle follow-up and publishes its exact message id", func() {
 		stream := newRunStream()
 		chat := newChatSession("run-1", PromptRenderResult{Provider: api.OpenAI.Name, Mode: string(api.ModeAgent)}, 0, stream, nil)

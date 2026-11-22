@@ -31,6 +31,8 @@
 -- Idempotent: once the groups are collapsed every statement matches nothing.
 
 DO $$
+DECLARE
+  ref record;
 BEGIN
   IF to_regclass('public.captain_sessions') IS NULL THEN
     RETURN;
@@ -65,17 +67,26 @@ BEGIN
   FROM ranked
   WHERE id <> winner;
 
-  UPDATE captain_prompt_runs r SET session_id = m.winner
-  FROM captain_duplicate_session_map m WHERE r.session_id = m.loser;
-
-  UPDATE captain_prompt_runs r SET root_session_id = m.winner
-  FROM captain_duplicate_session_map m WHERE r.root_session_id = m.loser;
-
-  UPDATE captain_prompt_runs r SET execution_session_id = m.winner
-  FROM captain_duplicate_session_map m WHERE r.execution_session_id = m.loser;
-
-  UPDATE captain_session_processes p SET session_id = m.winner
-  FROM captain_duplicate_session_map m WHERE p.session_id = m.loser;
+  -- This runs before the HCL schema, so a database from an older release may not
+  -- have every reference column yet (execution_session_id came later). A column
+  -- that does not exist holds no reference to a ghost, so there is nothing to move.
+  FOR ref IN
+    SELECT wanted.table_name, wanted.column_name
+    FROM (VALUES ('captain_prompt_runs', 'session_id'),
+                 ('captain_prompt_runs', 'root_session_id'),
+                 ('captain_prompt_runs', 'execution_session_id'),
+                 ('captain_session_processes', 'session_id')) AS wanted (table_name, column_name)
+    -- to_regclass resolves the name exactly as the UPDATE below does; a lookup
+    -- that disagreed would skip a live reference and let the delete cascade it.
+    JOIN pg_attribute a
+      ON a.attrelid = to_regclass(wanted.table_name)
+     AND a.attname = wanted.column_name
+     AND NOT a.attisdropped
+  LOOP
+    EXECUTE format(
+      'UPDATE %I t SET %I = m.winner FROM captain_duplicate_session_map m WHERE t.%I = m.loser',
+      ref.table_name, ref.column_name, ref.column_name);
+  END LOOP;
 
   -- captain_sessions.parent_session_id and root_session_id are self-referential
   -- and ON DELETE CASCADE, so a ghost that any subagent row named as its parent

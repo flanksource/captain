@@ -60,6 +60,12 @@ const WHOAMI_RESULT = {
       catalogPrefix: "jev",
       modes: [{ mode: "api", kind: "api", keyless: false }],
     },
+    {
+      family: "bash",
+      provider: "bash",
+      catalogPrefix: "bash",
+      modes: [{ mode: "api", kind: "api", keyless: false }],
+    },
   ],
   adapters: [
     {
@@ -122,6 +128,13 @@ const WHOAMI_RESULT = {
       modelCount: 0,
       modelError: "set TYPESAFE_API_KEY to list models",
     },
+    {
+      type: "api",
+      provider: "bash",
+      mode: "api",
+      authenticated: false,
+      modelCount: 0,
+    },
   ],
 };
 
@@ -154,6 +167,8 @@ describe("WhoamiPage", () => {
     expect(runtimeTreeItem("DeepSeek", "API")).toHaveTextContent("No token");
     fireEvent.click(screen.getByRole("button", { name: "Expand Jev provider" }));
     expect(runtimeTreeItem("Jev", "API")).toHaveTextContent("No token");
+    fireEvent.click(screen.getByRole("button", { name: "Expand Bash provider" }));
+    expect(runtimeTreeItem("Bash", "API")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/whoami?models=true&limit=0&disabled=true",
       expect.objectContaining({ method: "POST", body: "{}" }),

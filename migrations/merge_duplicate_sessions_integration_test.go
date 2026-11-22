@@ -101,4 +101,69 @@ var _ = Describe("Captain duplicate session collapse", func() {
 		).Scan(&provider)).To(Succeed())
 		Expect(provider).To(Equal("codex-agent"))
 	})
+
+	// The collapse runs in the pre phase, before the HCL schema adds columns that
+	// newer releases introduced. A database last migrated before
+	// captain_prompt_runs.execution_session_id existed must still upgrade: the
+	// re-point for a reference column that does not exist yet has nothing to move.
+	It("upgrades a database whose prompt runs predate execution_session_id", func(ctx SpecContext) {
+		handle := dbtest.ForGinkgo(dbtest.Options{Name: "captain_merge_duplicates_old_runs"})
+		dsn, db := handle.DSN(), handle.SQL()
+
+		Expect(Apply(ctx, dsn)).To(Succeed())
+
+		_, err := db.ExecContext(ctx, `DROP INDEX captain_sessions_provider_identity_key`)
+		Expect(err).NotTo(HaveOccurred())
+
+		const (
+			winnerID = "55555555-5555-5555-5555-555555555555"
+			ghostID  = "66666666-6666-6666-6666-666666666666"
+			runID    = "77777777-7777-7777-7777-777777777777"
+		)
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO captain_sessions (id, source, provider, host_id, provider_session_id, created_at)
+			VALUES ($1, 'codex', '',            'host-b', 'rollout-2', now() - interval '2 minutes'),
+			       ($2, 'codex', 'codex-agent', 'host-b', 'rollout-2', now() - interval '1 minute')`,
+			winnerID, ghostID)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO captain_prompt_runs (id, session_id, root_session_id) VALUES ($1, $2, $2)`, runID, ghostID)
+		Expect(err).NotTo(HaveOccurred())
+
+		// CASCADE also drops the views and functions built on the column; the
+		// post phase recreates them, as it would on the real older database.
+		_, err = db.ExecContext(ctx, `ALTER TABLE captain_prompt_runs DROP COLUMN execution_session_id CASCADE`)
+		Expect(err).NotTo(HaveOccurred())
+		// These functions read the column through PL/pgSQL or the overview views,
+		// which CASCADE cannot see; an older database has no version that does.
+		for _, function := range []string{"captain_set_prompt_run_state()", "captain_overview_queue()", "captain_overview_queue_sessions()", "captain_overview_flush()"} {
+			_, err = db.ExecContext(ctx, `DROP FUNCTION `+function+` CASCADE`)
+			Expect(err).NotTo(HaveOccurred())
+		}
+		_, err = db.ExecContext(ctx,
+			`DELETE FROM schema_migration_scripts WHERE scope = $1`, Scope)
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(Apply(ctx, dsn)).To(Succeed())
+
+		var surviving int
+		Expect(db.QueryRowContext(ctx,
+			`SELECT count(*) FROM captain_sessions WHERE id IN ($1, $2)`, winnerID, ghostID,
+		).Scan(&surviving)).To(Succeed())
+		Expect(surviving).To(Equal(1), "the duplicate pair should collapse to one row")
+
+		var runSession, runRoot string
+		Expect(db.QueryRowContext(ctx,
+			`SELECT session_id, root_session_id FROM captain_prompt_runs WHERE id = $1`, runID,
+		).Scan(&runSession, &runRoot)).To(Succeed(), "the prompt run was cascaded away with the ghost")
+		Expect([]string{runSession, runRoot}).To(Equal([]string{winnerID, winnerID}))
+
+		var restored bool
+		Expect(db.QueryRowContext(ctx, `
+			SELECT EXISTS (SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'captain_prompt_runs'
+			  AND column_name = 'execution_session_id')`,
+		).Scan(&restored)).To(Succeed())
+		Expect(restored).To(BeTrue(), "the HCL schema should add execution_session_id after the pre phase")
+	})
 })

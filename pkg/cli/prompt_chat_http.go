@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 
@@ -106,7 +105,7 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 			writeChatJSON(w, http.StatusAccepted, response)
 			return
 		}
-		response, resumeErr := resumeSessionMessage(item, request)
+		response, resumeErr := resumeSessionMessage(r.Context(), item, request)
 		if resumeErr != nil {
 			writeChatError(w, resumeErr)
 			return
@@ -174,8 +173,8 @@ func resumeSessionScore(item SessionGetItem) int {
 // a session mid-thread.
 const resumeMode = api.ModeAgent
 
-func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (ChatMessageResponse, error) {
-	rendered, err := resumeRenderResult(item, request)
+func resumeSessionMessage(ctx context.Context, item SessionGetItem, request ChatMessageRequest) (ChatMessageResponse, error) {
+	rendered, err := resumeRenderResult(ctx, item, request)
 	if err != nil {
 		return ChatMessageResponse{}, err
 	}
@@ -197,7 +196,7 @@ func resumeSessionMessage(item SessionGetItem, request ChatMessageRequest) (Chat
 
 // resumeRenderResult validates that a saved session can continue and renders
 // the run that continues it.
-func resumeRenderResult(item SessionGetItem, request ChatMessageRequest) (PromptRenderResult, error) {
+func resumeRenderResult(ctx context.Context, item SessionGetItem, request ChatMessageRequest) (PromptRenderResult, error) {
 	if strings.TrimSpace(request.Text) == "" {
 		return PromptRenderResult{}, newChatError(http.StatusBadRequest, "message text is required")
 	}
@@ -207,11 +206,6 @@ func resumeRenderResult(item SessionGetItem, request ChatMessageRequest) (Prompt
 	target := resumeTargetOf(item)
 	if strings.TrimSpace(target.CWD) == "" {
 		return PromptRenderResult{}, newChatError(http.StatusUnprocessableEntity, "session has no working directory")
-	}
-	info, err := os.Stat(target.CWD)
-	if err != nil || !info.IsDir() {
-		return PromptRenderResult{}, newChatError(http.StatusUnprocessableEntity,
-			fmt.Sprintf("session working directory %s is unavailable", target.CWD))
 	}
 	provider, err := resumeProvider(target.Source)
 	if err != nil {
@@ -232,14 +226,18 @@ func resumeRenderResult(item SessionGetItem, request ChatMessageRequest) (Prompt
 	if model == "" {
 		return PromptRenderResult{}, newChatError(http.StatusUnprocessableEntity, "session has no model")
 	}
+	setup, err := resumeSetup(ctx, item, target.CWD)
+	if err != nil {
+		return PromptRenderResult{}, err
+	}
 	modelSpec := api.Model{
 		Name: model, Provider: provider, Mode: resumeMode, Effort: api.Effort(item.Summary.ReasoningEffort),
 	}
 	req := api.Spec{
 		Model: modelSpec, Prompt: api.Prompt{User: strings.TrimSpace(request.Text)},
 		SessionID: item.ProviderSessionID, Permissions: api.Permissions{Mode: request.PermissionMode},
+		Setup: setup,
 	}
-	req.SetCwd(target.CWD)
 	return PromptRenderResult{
 		Name: "resume " + item.CaptainID, Model: model, Provider: provider.Name, Mode: string(resumeMode),
 		User: req.Prompt.User, Input: req,
