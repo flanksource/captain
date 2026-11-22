@@ -2,11 +2,46 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
+
+func TestOverviewRecoveryRetriesUntilSuccessOrCancellation(t *testing.T) {
+	for _, cancelAfterFailure := range []bool{false, true} {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			attempts := 0
+			go recoverOverviews(ctx, func(context.Context) error {
+				attempts++
+				if attempts == 1 {
+					return errors.New("temporary database error")
+				}
+				return nil
+			})
+			synctest.Wait()
+			if attempts != 1 {
+				t.Fatalf("attempts before retry delay = %d, want 1", attempts)
+			}
+			if cancelAfterFailure {
+				cancel()
+			}
+			time.Sleep(2 * time.Minute)
+			synctest.Wait()
+			want := 2
+			if cancelAfterFailure {
+				want = 1
+			}
+			if attempts != want {
+				t.Fatalf("attempts = %d, want %d", attempts, want)
+			}
+		})
+	}
+}
 
 // TestWatcherDebounce verifies a burst of write events produces one ingest
 // after the quiet period rather than one per event.

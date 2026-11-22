@@ -270,9 +270,7 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 	backfillWG.Add(1)
 	go func() {
 		defer backfillWG.Done()
-		if err := m.db.EnsureOverviews(runCtx); err != nil && runCtx.Err() == nil {
-			log.Errorf("complete Captain overviews after crash recovery: %v", err)
-		}
+		recoverOverviews(runCtx, m.db.EnsureOverviews)
 	}()
 	backfillWG.Add(1)
 	go func() {
@@ -336,6 +334,23 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 			if ok && err != nil {
 				log.Warnf("transcript watcher: %v", err)
 			}
+		}
+	}
+}
+
+func recoverOverviews(ctx context.Context, ensure func(context.Context) error) {
+	for ctx.Err() == nil {
+		err := ensure(ctx)
+		if err == nil || ctx.Err() != nil {
+			return
+		}
+		log.Errorf("complete Captain overviews after crash recovery: %v", err)
+		timer := time.NewTimer(time.Minute)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }

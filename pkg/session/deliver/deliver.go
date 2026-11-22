@@ -1,7 +1,7 @@
 // Package deliver sends a message into an agent session that is already running
 // and that captain did not launch, through the channel that agent listens on:
-// Claude Code's messaging socket, cmux's hook-delivered agent inbox for any
-// agent in a cmux pane, or the Codex message queue. It never types into the
+// Claude Code's messaging socket, cmux's hook-delivered agent inbox,
+// or the Codex message queue. It never types into the
 // agent's prompt and never resumes the session in a second process.
 package deliver
 
@@ -88,10 +88,9 @@ type Deliverer struct {
 	Dial  func(ctx context.Context, socket string) (net.Conn, error)
 }
 
-// ChooseChannel picks claude's messaging socket, else cmux's agent inbox for an
-// agent in a cmux pane, else the codex queue. cmux's inbox goes before the codex
-// queue because cmux installs the hooks that drain it into every codex it
-// launches, and it also wakes an idle agent.
+// ChooseChannel picks Claude's messaging socket, the Codex queue, or the cmux
+// inbox. Codex can run in a cmux pane with its inbox hooks disabled, and cmux
+// exposes no per-session drain readiness check.
 func ChooseChannel(target Target) (Channel, error) {
 	env := target.Environment
 	switch {
@@ -100,14 +99,15 @@ func ChooseChannel(target Target) (Channel, error) {
 			return "", fmt.Errorf("claude session %s has %s but no %s", target.SessionID, EnvMessagingSocket, EnvMessagingToken)
 		}
 		return ChannelClaudeSocket, nil
+	case target.Source == "codex":
+		if target.SessionID == "" {
+			return "", fmt.Errorf("codex session has no session id")
+		}
+		return ChannelCodexQueue, nil
 	case target.Surface != nil && target.Surface.SurfaceID != "":
 		return ChannelCmuxMessage, nil
-	case target.Source == "codex" && target.SessionID != "":
-		return ChannelCodexQueue, nil
 	case target.Source == "claude":
 		return "", fmt.Errorf("claude session %s has no child process carrying its %s and is not in a cmux pane", target.SessionID, EnvMessagingSocket)
-	case target.Source == "codex":
-		return "", fmt.Errorf("codex session has no session id and is not in a cmux pane")
 	default:
 		return "", fmt.Errorf("session %s (%s) has no delivery channel: not claude, codex, or in a cmux pane", target.SessionID, target.Source)
 	}

@@ -24,10 +24,10 @@ jobs:
         with:
           restore: false
       - name: Lint with Gavel
-        uses: flanksource/gavel@fa6cc17dc723d13a354febfee843b3323a9a9251 # v0.0.79
+        uses: flanksource/gavel@df234f1804fc14ad0ce2aa88b0204e82c93a8351 # v0.0.88
         with:
           args: lint golangci-lint
-          version: v0.0.54
+          version: v0.0.88
           artifact-name: gavel-lint-results
           comment-header: captain-gavel-lint
           comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -63,14 +63,15 @@ jobs:
       # pkg/cli/webapp is ignored: its vitest suite needs a sibling clicky-ui
       # checkout (a link: dependency), which does not exist on CI runners.
       - name: Test with Gavel
-        uses: flanksource/gavel@fa6cc17dc723d13a354febfee843b3323a9a9251 # v0.0.79
+        uses: flanksource/gavel@df234f1804fc14ad0ce2aa88b0204e82c93a8351 # v0.0.88
         with:
           # --test-timeout is the per-package deadline (gavel defaults to 5m).
           # pkg/ai/fixture drives real agent subprocesses and exceeded it on a
           # loaded runner, and a killed suite writes no ginkgo report, so one
           # slow package was reported as three failures.
           args: test --timeout 45m --test-timeout 20m --ignore tests/e2e --ignore pkg/cli/webapp
-          version: v0.0.54
+          version: v0.0.88
+          timeout-minutes: 50
           artifact-name: gavel-test-results
           comment-header: captain-gavel-test
           comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
