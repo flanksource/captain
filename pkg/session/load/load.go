@@ -53,6 +53,9 @@ func Load(ctx context.Context, contributors ...Contributor) (Result, []error) {
 		}
 	}
 	Reconcile(result.Session, result.Session.Requests)
+	if result.Session.InputMetadata == nil {
+		result.Session.InputMetadata = session.ParseInputMetadata(result.Session.InitialPrompt)
+	}
 	if err := DeriveAwaitingInput(result.Session); err != nil {
 		failures = append(failures, fmt.Errorf("awaiting input: %w", err))
 	}

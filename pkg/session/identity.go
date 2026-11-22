@@ -1,6 +1,7 @@
 package session
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -22,6 +23,9 @@ func applySessionIdentity(s *Session) {
 	}
 	if s.InitialPrompt == "" {
 		s.InitialPrompt = firstUserPrompt(s.Messages)
+	}
+	if s.InputMetadata == nil {
+		s.InputMetadata = ParseInputMetadata(s.InitialPrompt)
 	}
 	if s.Title == "" {
 		s.Title = DeriveTitle(s.InitialPrompt)
@@ -75,9 +79,18 @@ func firstUserPrompt(messages []Message) string {
 	return ""
 }
 
-// DeriveTitle names a conversation after its opening prompt: whitespace
-// collapsed to single spaces, truncated at a word boundary.
+// htmlComment matches a Markdown/HTML comment, which renders invisibly; hosts
+// use them to mark injected prompt blocks.
+var htmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+
+// DeriveTitle names a conversation after its opening prompt: an XML-field
+// prompt by its summary (see ParseInputMetadata), HTML comments dropped,
+// whitespace collapsed to single spaces, truncated at a word boundary.
 func DeriveTitle(prompt string) string {
+	prompt = htmlComment.ReplaceAllString(prompt, " ")
+	if metadata := ParseInputMetadata(prompt); metadata != nil {
+		prompt = metadata.title
+	}
 	collapsed := strings.Join(strings.Fields(prompt), " ")
 	if collapsed == "" {
 		return ""
