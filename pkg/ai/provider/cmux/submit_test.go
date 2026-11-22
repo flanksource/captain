@@ -256,7 +256,7 @@ func TestSendSurfaceTextFailsFastWhenPromptHoldsText(t *testing.T) {
 	r := newTestRun(runConfig{SendAttempts: 3, SendRetryDelay: time.Millisecond}, func(ctx context.Context, cwd, binary string, timeout time.Duration, args ...string) (string, error) {
 		_, _ = runner.run(ctx, cwd, binary, timeout, args...)
 		if args[0] == "send" {
-			return "", fmt.Errorf("cmux send failed (exit 1): %s", busyPromptStderr)
+			return "", fmt.Errorf("%w: %s", ErrPromptBusy, busyPromptStderr)
 		}
 		return "idle", nil
 	})

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -78,8 +79,10 @@ var _ = Describe("Amp HTTP threads", func() {
 
 	DescribeTable("accepts only a matching Amp receipt", func(ctx SpecContext, status int, body, failure string) {
 		const message = "Review the header\nCheck it on mobile"
+		var posts atomic.Int32
 		serve = func(w http.ResponseWriter, r *http.Request) {
 			Expect(r.Method).To(Equal(http.MethodPost))
+			posts.Add(1)
 			Expect(r.URL.Path).To(Equal("/api/v2/threads/" + threadID + "/messages"))
 			var payload map[string]string
 			Expect(json.NewDecoder(r.Body).Decode(&payload)).To(Succeed())
@@ -88,6 +91,7 @@ var _ = Describe("Amp HTTP threads", func() {
 			fmt.Fprint(w, body)
 		}
 		receipt, err := client.Send(ctx, threadID, message)
+		Expect(posts.Load()).To(Equal(int32(1)))
 		if failure != "" {
 			Expect(err).To(MatchError(ContainSubstring(failure)))
 			Expect(err.Error()).NotTo(ContainSubstring("private transcript"))

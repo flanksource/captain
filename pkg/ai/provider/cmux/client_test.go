@@ -2,6 +2,7 @@ package cmux
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -212,6 +213,14 @@ func TestFocusSessionErrorsWhenWorkspaceMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no cmux workspace") {
 		t.Fatalf("error = %v, want 'no cmux workspace'", err)
+	}
+}
+
+func TestSendSurfaceDoesNotClassifyEchoedArgumentsAsPromptBusy(t *testing.T) {
+	client := NewClient("false")
+	err := client.SendSurface(context.Background(), "workspace:ws1", "surface:sf1", "Investigate: "+promptBusyMarker)
+	if err == nil || errors.Is(err, ErrPromptBusy) {
+		t.Fatalf("SendSurface() error = %v, want a command failure without ErrPromptBusy", err)
 	}
 }
 

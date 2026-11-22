@@ -42,9 +42,9 @@ var _ = Describe("ChooseChannel", func() {
 		Entry("claude with a messaging socket, in cmux",
 			Target{Source: "claude", SessionID: claudeSessionID, Environment: claudeEnvironment("/tmp/cc.sock"), Surface: cmuxSurface},
 			ChannelClaudeSocket),
-		Entry("codex in cmux, through cmux's hook-delivered agent inbox",
+		Entry("codex in cmux without a verified inbox drain, queued by session id",
 			Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface},
-			ChannelCmuxMessage),
+			ChannelCodexQueue),
 		Entry("codex outside cmux, queued on its thread by session id alone",
 			Target{Source: "codex", SessionID: codexThreadID},
 			ChannelCodexQueue),
@@ -130,7 +130,7 @@ var _ = Describe("Deliver", func() {
 			return nil
 		}}
 
-		result, err := deliverer.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID}, threadText)
+		result, err := deliverer.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface}, threadText)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(Result{Channel: ChannelCodexQueue, Status: StatusQueued}))
@@ -145,7 +145,7 @@ var _ = Describe("Deliver", func() {
 			return "", nil
 		}
 
-		result, err := Deliverer{Cmux: client}.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface}, threadText)
+		result, err := Deliverer{Cmux: client}.Deliver(ctx, Target{Source: "claude", SessionID: claudeSessionID, Surface: cmuxSurface}, threadText)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(Result{Channel: ChannelCmuxMessage, Status: StatusQueued}))
@@ -160,7 +160,7 @@ var _ = Describe("Deliver", func() {
 			return "", errors.New("cmux agent message failed (exit 1): agent messages are off")
 		}
 
-		_, err := Deliverer{Cmux: client}.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface}, threadText)
+		_, err := Deliverer{Cmux: client}.Deliver(ctx, Target{Source: "claude", SessionID: claudeSessionID, Surface: cmuxSurface}, threadText)
 
 		Expect(err).To(MatchError(And(ContainSubstring(cmuxSurface.SurfaceID), ContainSubstring("agent messages are off"))))
 	})

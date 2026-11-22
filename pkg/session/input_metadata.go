@@ -23,7 +23,7 @@ type InputMetadata struct {
 var inputTitleFields = []string{"summary", "title", "subject", "description", "message", "command-message"}
 
 type xmlElement struct {
-	name     string
+	name     xml.Name
 	text     strings.Builder
 	hasChild bool
 }
@@ -43,7 +43,8 @@ func ParseInputMetadata(prompt string) *InputMetadata {
 	parents := 0
 	fields := map[string]string{}
 	for {
-		token, err := decoder.Token()
+		// RawToken preserves mismatched tags while non-strict decoding allows bare &.
+		token, err := decoder.RawToken()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -57,9 +58,9 @@ func ParseInputMetadata(prompt string) *InputMetadata {
 			} else {
 				stack[len(stack)-1].hasChild = true
 			}
-			stack = append(stack, &xmlElement{name: t.Name.Local})
+			stack = append(stack, &xmlElement{name: t.Name})
 		case xml.EndElement:
-			if len(stack) == 0 {
+			if len(stack) == 0 || stack[len(stack)-1].name != t.Name {
 				return nil
 			}
 			element := stack[len(stack)-1]
@@ -71,9 +72,10 @@ func ParseInputMetadata(prompt string) *InputMetadata {
 			if len(stack) == 0 && element.hasChild {
 				parents++
 			}
-			if _, seen := fields[element.name]; !element.hasChild && text != "" && !seen {
-				fields[element.name] = text
-				order = append(order, element.name)
+			name := element.name.Local
+			if _, seen := fields[name]; !element.hasChild && text != "" && !seen {
+				fields[name] = text
+				order = append(order, name)
 			}
 		case xml.CharData:
 			if len(stack) == 0 {

@@ -88,6 +88,29 @@ func TestUnifiedIngestInputPreservesAgentTurnOwnership(t *testing.T) {
 	}
 }
 
+func TestClaudeIngestKeepsRootReplyWhenSubagentHasTheSameSourceLine(t *testing.T) {
+	const id = "ca44d4b0-37d0-44be-a10e-90a3f7da4cd7"
+	dir := t.TempDir()
+	root := filepath.Join(dir, id+".jsonl")
+	agents := filepath.Join(dir, id, "subagents")
+	if err := os.MkdirAll(agents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(root, []byte(`{"type":"assistant","uuid":"root-reply","sessionId":"`+id+`","timestamp":"2026-07-14T12:00:00Z","message":{"role":"assistant","content":"Root reply"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agents, "agent-example.jsonl"), []byte(`{"type":"assistant","uuid":"child-reply","sessionId":"`+id+`","timestamp":"2026-07-14T11:00:00Z","message":{"role":"assistant","content":"Child reply"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := claudeIngestInput(t.Context(), nil, "example-host", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(input.Messages) != 1 || input.Messages[0].Sequence != 1 || input.Messages[0].ProviderMessageID != "root-reply" {
+		t.Fatalf("messages = %+v, want the root reply at sequence 1", input.Messages)
+	}
+}
+
 func messagesAt(sequences ...int64) []database.IngestMessage {
 	messages := make([]database.IngestMessage, 0, len(sequences))
 	for _, sequence := range sequences {
