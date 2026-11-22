@@ -14,10 +14,14 @@ func newChatBroker() *chatBroker {
 
 var promptChats = newChatBroker()
 
+// register makes a chat reachable by its run and, when it continues a provider
+// session, by that session from the start: preparing its workspace can take long
+// enough for another message to arrive and resume the session a second time.
 func (b *chatBroker) register(chat *chatSession) {
 	b.mu.Lock()
 	b.byRun[chat.runID] = chat
 	b.mu.Unlock()
+	b.bindSession(chat, chat.sessionID())
 }
 
 func (b *chatBroker) bindSession(chat *chatSession, sessionID string) {

@@ -66,6 +66,7 @@ func newChatSession(runID string, rendered PromptRenderResult, timeout time.Dura
 		permissionMode: rendered.Input.Permissions.Mode,
 		state: ChatStateFrame{
 			RunID: runID, Status: "starting", Capabilities: capabilities,
+			SessionID: strings.TrimSpace(rendered.Input.SessionID),
 		},
 	}
 	if binding == nil && strings.TrimSpace(rendered.Input.SessionID) == "" {
