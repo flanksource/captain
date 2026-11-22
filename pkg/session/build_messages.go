@@ -1,7 +1,9 @@
 package session
 
 import (
+	"slices"
 	"sort"
+	"time"
 
 	"github.com/flanksource/captain/pkg/ai/assistanttags"
 	"github.com/flanksource/captain/pkg/bash"
@@ -42,7 +44,7 @@ func buildHierarchy(ps claude.ParsedSession, turnByEntry map[string]string) hier
 	agents := []*Agent{root}
 	byID := map[string]*Agent{"": root, ps.SessionID: root}
 
-	var messages []Message
+	var timed []timedMessage
 	for _, t := range ps.Transcripts {
 		var node *Agent
 		if t.IsAgent {
@@ -59,12 +61,16 @@ func buildHierarchy(ps claude.ParsedSession, turnByEntry map[string]string) hier
 
 		costs := newResponseCosts()
 		var toolCosts claudeToolCosts
+		var at time.Time
 		for _, e := range t.Entries {
 			costs.add(e)
+			if ts, err := e.ParseTimestamp(); err == nil && !ts.IsZero() {
+				at = ts
+			}
 			m, ok := entryToMessage(e, node.ID, turnByEntry[e.UUID])
 			toolCosts.add(e, m)
 			if ok {
-				messages = append(messages, m)
+				timed = append(timed, timedMessage{message: m, at: at})
 			}
 		}
 		toolCosts.estimate()
@@ -85,7 +91,21 @@ func buildHierarchy(ps claude.ParsedSession, turnByEntry map[string]string) hier
 		parent.Children = append(parent.Children, a)
 	}
 
+	// Transcripts are read root first, then sub-agents by file name, so the
+	// stream is put in time order: otherwise a sub-agent that finished long ago
+	// ends the stream and hides the root's latest turns. An entry without a
+	// timestamp keeps the time of the entry before it in its own transcript.
+	slices.SortStableFunc(timed, func(a, b timedMessage) int { return a.at.Compare(b.at) })
+	messages := make([]Message, len(timed))
+	for i, entry := range timed {
+		messages[i] = entry.message
+	}
 	return hierarchy{messages: messages, root: root, agents: agents}
+}
+
+type timedMessage struct {
+	message Message
+	at      time.Time
 }
 
 // resolveParent returns the agent id that spawned transcript t: the owner of the

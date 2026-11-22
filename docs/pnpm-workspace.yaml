@@ -17,4 +17,5 @@ overrides:
   js-yaml: ">=4.3.0 <5"
 
 allowBuilds:
+  "@flanksource/clicky-ui": true
   esbuild: true

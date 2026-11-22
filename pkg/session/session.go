@@ -11,7 +11,7 @@ import (
 // TranscriptParserVersion identifies the persisted transcript projection shape.
 // Consumers that parse a complete source use it when registering that source so
 // the monitor resumes from the recorded offset instead of replaying old events.
-const TranscriptParserVersion = 8
+const TranscriptParserVersion = 9
 
 // Session is the unified session aggregate. It is the single source of truth the
 // history/sessions commands render, the viewer consumes, and the chat/live
@@ -33,7 +33,10 @@ type Session struct {
 	// never derived, so listings can rank it above the initial prompt.
 	Name          string `json:"name,omitempty"`
 	InitialPrompt string `json:"initialPrompt,omitempty"`
-	Version       string `json:"version,omitempty"`
+	// InputMetadata is InitialPrompt parsed, when a host wrote it as XML fields
+	// (a <task-notification>, a slash command) rather than prose.
+	InputMetadata *InputMetadata `json:"inputMetadata,omitempty"`
+	Version       string         `json:"version,omitempty"`
 	// Provider is the session's provider label (a family key for agent-backed
 	// sessions, or "captain"/"multi-model" for captain's own). ModelMode is the
 	// mechanism the latest model call ran on; ExecutionMode is the prompt RUN mode
