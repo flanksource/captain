@@ -104,13 +104,13 @@ func (c *Client) OwnedOrb(ctx context.Context, ref string) (Thread, error) {
 	}
 	switch {
 	case identity.Actor.ID == "" || thread.ID != id:
-		return Thread{}, fmt.Errorf("Amp returned invalid account or thread metadata for %s", id)
+		return Thread{}, fmt.Errorf("invalid account or thread metadata from Amp for %s", id)
 	case thread.CreatorID != identity.Actor.ID:
 		return Thread{}, fmt.Errorf("the Amp account does not own thread %s", id)
 	case thread.Archived:
-		return Thread{}, fmt.Errorf("Amp thread %s is archived", id)
+		return Thread{}, fmt.Errorf("thread %s is archived in Amp", id)
 	case !thread.CanReceive():
-		return Thread{}, fmt.Errorf("Amp thread %s is local or on a runner. Choose an Orb thread", id)
+		return Thread{}, fmt.Errorf("delivery requires an Amp Orb thread, but thread %s is local or on a runner", id)
 	}
 	return thread, nil
 }
@@ -130,14 +130,14 @@ func (c *Client) Send(ctx context.Context, ref, message string) (string, error) 
 		return "", fmt.Errorf("send to Amp thread %s: %w", id, err)
 	}
 	if receipt.Thread.ID != id || strings.TrimSpace(receipt.MessageID) == "" {
-		return "", fmt.Errorf("Amp delivery to %s is unconfirmed: invalid message receipt", id)
+		return "", fmt.Errorf("delivery to Amp thread %s is unconfirmed: invalid message receipt", id)
 	}
 	return receipt.MessageID, nil
 }
 
 func (c *Client) request(ctx context.Context, method, path, message string, expected int, out any) error {
 	if c.token == "" {
-		return fmt.Errorf("AMP_API_KEY needs an Amp personal access token")
+		return fmt.Errorf("set AMP_API_KEY to an Amp personal access token")
 	}
 	var body io.Reader
 	if method == http.MethodPost {
@@ -158,14 +158,14 @@ func (c *Client) request(ctx context.Context, method, path, message string, expe
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("Amp HTTP response unconfirmed: %w", err)
+		return fmt.Errorf("unconfirmed Amp HTTP response: %w", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != expected {
 		return responseError(res.StatusCode, method == http.MethodPost)
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(out); err != nil {
-		return fmt.Errorf("Amp HTTP response unconfirmed: invalid JSON")
+		return fmt.Errorf("unconfirmed Amp HTTP response: invalid JSON")
 	}
 	return nil
 }
@@ -173,21 +173,21 @@ func (c *Client) request(ctx context.Context, method, path, message string, expe
 func responseError(status int, sending bool) error {
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("Amp rejected the personal access token (HTTP %d)", status)
+		return fmt.Errorf("personal access token rejected by Amp (HTTP %d)", status)
 	case http.StatusPaymentRequired:
 		return fmt.Errorf("the Amp account is out of credits (HTTP %d)", status)
 	case http.StatusForbidden:
-		return fmt.Errorf("Amp denied access. Check the token's thread permissions and workspace policy (HTTP %d)", status)
+		return fmt.Errorf("access denied by Amp (HTTP %d). Check the token's thread permissions and workspace policy", status)
 	case http.StatusNotFound:
-		return fmt.Errorf("Amp could not find an accessible, owned Orb thread (HTTP %d)", status)
+		return fmt.Errorf("no accessible, owned Orb thread found in Amp (HTTP %d)", status)
 	case http.StatusConflict:
-		return fmt.Errorf("Amp thread is archived (HTTP %d)", status)
+		return fmt.Errorf("thread is archived in Amp (HTTP %d)", status)
 	case http.StatusTooManyRequests:
-		return fmt.Errorf("Amp rate limit reached (HTTP %d)", status)
+		return fmt.Errorf("rate limit reached in Amp (HTTP %d)", status)
 	default:
 		if sending && status >= http.StatusInternalServerError {
-			return fmt.Errorf("Amp delivery unconfirmed (HTTP %d)", status)
+			return fmt.Errorf("unconfirmed Amp delivery (HTTP %d)", status)
 		}
-		return fmt.Errorf("Amp returned HTTP %d", status)
+		return fmt.Errorf("unexpected HTTP %d from Amp", status)
 	}
 }

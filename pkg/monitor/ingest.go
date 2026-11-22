@@ -413,6 +413,8 @@ func linkCodexFork(ctx context.Context, db *database.DB, hostID string, input *d
 }
 
 func claudeIngestInput(ctx context.Context, db *database.DB, hostID, path string) (database.IngestTranscriptInput, error) {
+	// Source lines are file-local. Read and persist each sub-agent transcript
+	// as its own child session so its sequences cannot collide with the root's.
 	s, info, err := session.BuildTranscriptFile(path)
 	if err != nil {
 		return database.IngestTranscriptInput{}, err

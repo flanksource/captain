@@ -29,7 +29,7 @@ const promptBusyMarker = "holds text someone is typing"
 var ErrPromptBusy = errors.New("agent prompt holds unsent text; clear or submit it, then retry")
 
 // Runner executes the cmux CLI. Tests inject this to assert command arguments
-// without requiring a live cmux.app instance.
+// without requiring a live cmux.app instance. A prompt refusal wraps ErrPromptBusy.
 type Runner func(ctx context.Context, cwd, binary string, timeout time.Duration, args ...string) (stdout string, err error)
 
 type Client struct {
@@ -249,9 +249,6 @@ func (c *Client) SendSurface(ctx context.Context, workspaceRef, surfaceRef, text
 		return fmt.Errorf("surface reference is required")
 	}
 	_, err := c.run(ctx, "", "send", "--workspace", workspaceRef, "--surface", surfaceRef, "--", text)
-	if err != nil && strings.Contains(err.Error(), promptBusyMarker) {
-		return fmt.Errorf("%w: surface %s: %w", ErrPromptBusy, surfaceRef, err)
-	}
 	return err
 }
 
@@ -426,6 +423,7 @@ func defaultRunner(_ context.Context, cwd, binary string, timeout time.Duration,
 		if msg == "" {
 			msg = strings.TrimSpace(result.Stdout)
 		}
+		promptBusy := len(args) > 0 && args[0] == "send" && strings.Contains(msg, promptBusyMarker)
 		if msg == "" && result.Error != nil {
 			msg = result.Error.Error()
 		}
@@ -436,7 +434,11 @@ func defaultRunner(_ context.Context, cwd, binary string, timeout time.Duration,
 				echoed[i] = fmt.Sprintf("<%d bytes>", len(arg))
 			}
 		}
-		return result.Stdout, fmt.Errorf("%s %s failed (exit %d): %s", binary, strings.Join(echoed, " "), result.ExitCode, msg)
+		err := fmt.Errorf("%s %s failed (exit %d): %s", binary, strings.Join(echoed, " "), result.ExitCode, msg)
+		if promptBusy {
+			err = fmt.Errorf("%w: %w", ErrPromptBusy, err)
+		}
+		return result.Stdout, err
 	}
 	return result.Stdout, nil
 }

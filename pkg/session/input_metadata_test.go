@@ -44,6 +44,9 @@ func TestParseInputMetadataLeavesProsePromptsAlone(t *testing.T) {
 		"Render <b>bold</b> titles",
 		"<task>wrap</task> then explain it",
 		"<summary>Fix <b>bold</b> titles</summary>",
+		"<task><summary>Fix parser</task>",
+		"<task><summary>Fix parser</description></task>",
+		"<a:summary>Fix parser</b:summary>",
 		"<broken>",
 		"",
 	} {
@@ -60,6 +63,13 @@ func TestDeriveSessionTitleNamesAnEnvelopePromptByItsSummary(t *testing.T) {
 	}
 	if title := DeriveTitle("<task-notification><task-id>x1</task-id></task-notification>"); title != "task notification" {
 		t.Fatalf("title = %q, want the humanized tag", title)
+	}
+}
+
+func TestDeriveTitleKeepsMalformedEnvelopeText(t *testing.T) {
+	const prompt = "<task><summary>Fix parser</task>"
+	if title := DeriveTitle(prompt); title != prompt {
+		t.Fatalf("title = %q, want %q", title, prompt)
 	}
 }
 
