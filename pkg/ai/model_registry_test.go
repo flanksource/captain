@@ -24,6 +24,30 @@ func TestRegistryModelDefsIncludeFableCapabilities(t *testing.T) {
 	}
 }
 
+// The runtime mode is its own field on a catalog row, so an agent row is named
+// like the model itself, as its API row is. A mode baked into the label showed
+// up twice wherever the mode is already displayed.
+func TestAgentCatalogModelsCarryThePlainModelLabel(t *testing.T) {
+	rows := agentCatalogModels()
+	if len(rows) == 0 {
+		t.Fatal("the catalog has no agent rows")
+	}
+	for _, row := range rows {
+		want := ""
+		for _, known := range row.Provider.Models() {
+			if known.ID == row.ID {
+				want = known.Label
+			}
+		}
+		if want == "" {
+			t.Fatalf("agent row %q has no registry model to take its label from", row.ID)
+		}
+		if row.Label != want {
+			t.Errorf("agent row %q label = %q, want the model's own label %q", row.ID, row.Label, want)
+		}
+	}
+}
+
 func TestModelUsesAdaptiveThinking(t *testing.T) {
 	cases := []struct {
 		model string

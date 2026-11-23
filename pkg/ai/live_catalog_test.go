@@ -21,7 +21,7 @@ func findModel(t *testing.T, models []Model, id string) Model {
 func TestMergeLiveCatalogUpsertsLiveAndPreservesStatic(t *testing.T) {
 	static := []Model{
 		{ID: "anthropic/claude-sonnet-5", Provider: Anthropic, Mode: ModeAPI, Label: "Claude Sonnet 5", ContextWindow: 1_000_000, ReleaseDate: "2026-06-01"},
-		{ID: "claude-opus-4-8", Provider: Anthropic, Mode: ModeAgent, Label: "Claude Agent · Opus 4.8", ContextWindow: 1_000_000},
+		{ID: "claude-opus-4-8", Provider: Anthropic, Mode: ModeAgent, Label: "Claude Opus 4.8", ContextWindow: 1_000_000},
 	}
 	adapters := []AdapterStatus{
 		{Provider: OpenAI.Name, Mode: string(ModeCLI), Type: "cli", ModelDetails: []ModelDef{
