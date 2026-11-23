@@ -26,7 +26,9 @@ jobs:
       - name: Lint with Gavel
         uses: flanksource/gavel@df234f1804fc14ad0ce2aa88b0204e82c93a8351 # v0.0.88
         with:
-          args: lint golangci-lint
+          # A cold golangci-lint run (no Go cache restore) takes ~5m, the
+          # per-linter default, so give it headroom.
+          args: lint golangci-lint --timeout 15m
           version: v0.0.88
           artifact-name: gavel-lint-results
           comment-header: captain-gavel-lint
