@@ -55,6 +55,9 @@ jobs:
       - name: Build webapp
         run: |
           pnpm --dir pkg/cli/webapp build
+          # Vite empties dist before it writes, deleting the tracked .gitkeep that lets go:embed
+          # compile without a built webapp; put it back so the tree stays clean.
+          git checkout -- pkg/cli/webapp/dist/.gitkeep
           # Vite rewrites the tracked entrypoint with content-hashed asset names.
           # Keep the generated file in place for go:embed, but hide that one
           # expected worktree change from GoReleaser's clean-tree validation.
