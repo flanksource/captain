@@ -90,16 +90,16 @@ func Start(name, upstreamURL string, inject map[string]string) (*Proxy, error) {
 	p := &Proxy{name: name, upstream: upstream, inject: inject}
 
 	// We expose the proxy URL as <localhost>:<port><upstream.Path>, so the
-	// client's outgoing path already matches the upstream's. The director only
-	// rewrites scheme/host — leaving r.URL.Path alone avoids double-prefixing
+	// client's outgoing path already matches the upstream's. The rewrite only
+	// changes scheme/host — leaving the path alone avoids double-prefixing
 	// when the client follows a relative redirect that strips trailing slashes.
 	rp := &httputil.ReverseProxy{
-		Director: func(r *http.Request) {
-			r.URL.Scheme = upstream.Scheme
-			r.URL.Host = upstream.Host
-			r.Host = upstream.Host
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = upstream.Scheme
+			pr.Out.URL.Host = upstream.Host
+			pr.Out.Host = upstream.Host
 			for k, v := range p.inject {
-				r.Header.Set(k, v)
+				pr.Out.Header.Set(k, v)
 			}
 		},
 	}
