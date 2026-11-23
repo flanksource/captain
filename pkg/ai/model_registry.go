@@ -1,8 +1,6 @@
 package ai
 
 import (
-	"strings"
-
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/api/registry"
 )
@@ -158,38 +156,33 @@ func registryCatalogModels() []Model {
 }
 
 // agentCatalogModels projects the agent-mode rows, which carry the bare exact id
-// (not a catalog-prefixed one) and an agent-flavoured label. Like
-// registryCatalogModels it runs at init and leaves filtering to Catalog().
+// (not a catalog-prefixed one). The label is the model's own: the mode is the
+// row's Mode, not part of its name. Like registryCatalogModels it runs at init
+// and leaves filtering to Catalog().
 func agentCatalogModels() []Model {
 	out := make([]Model, 0)
-	for _, spec := range []struct {
-		provider *registry.Provider
-		label    func(string) string
-	}{
-		{registry.Anthropic, func(l string) string { return "Claude Agent · " + strings.TrimPrefix(l, "Claude ") }},
-		{registry.OpenAI, func(l string) string { return "Codex Agent · " + l }},
-	} {
-		if _, known := spec.provider.Caps(registry.ModeAgent); !known {
+	for _, provider := range []*registry.Provider{registry.Anthropic, registry.OpenAI} {
+		if _, known := provider.Caps(registry.ModeAgent); !known {
 			continue
 		}
-		for _, m := range spec.provider.Models() {
+		for _, m := range provider.Models() {
 			if !m.Preferred {
 				continue
 			}
-			if known, available := spec.provider.Availability(registry.ModeAgent, m.ID); !known || !available {
+			if known, available := provider.Availability(registry.ModeAgent, m.ID); !known || !available {
 				continue
 			}
 			out = append(out, Model{
 				ID:               m.ID,
-				Provider:         spec.provider,
+				Provider:         provider,
 				Mode:             registry.ModeAgent,
-				Label:            spec.label(m.Label),
+				Label:            m.Label,
 				Reasoning:        m.Reasoning,
 				Temperature:      m.Temperature,
-				AdaptiveThinking: m.AdaptiveThinking && spec.provider == registry.Anthropic,
+				AdaptiveThinking: m.AdaptiveThinking && provider == registry.Anthropic,
 				ContextWindow:    m.ContextWindow,
 				ReleaseDate:      m.ReleaseDate,
-				InputMediaTypes:  clampInputMediaTypes(spec.provider, registry.ModeAgent, m.InputMediaTypes),
+				InputMediaTypes:  clampInputMediaTypes(provider, registry.ModeAgent, m.InputMediaTypes),
 				SupportedEfforts: m.SupportedEfforts,
 				DefaultEffort:    m.DefaultEffort,
 				Priority:         m.Priority,
