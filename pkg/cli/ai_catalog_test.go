@@ -17,9 +17,9 @@ func installTestCatalog(t *testing.T) {
 
 	if err := ai.SetModelCatalog([]ai.Model{
 		{ID: "anthropic/claude-sonnet-4-5", Provider: ai.Anthropic, Mode: ai.ModeAPI, Label: "Claude Sonnet 4.5"},
-		{ID: "claude-opus-4-8", Provider: ai.Anthropic, Mode: ai.ModeAgent, Label: "Claude Agent · Opus 4.8"},
-		{ID: "claude-sonnet-5", Provider: ai.Anthropic, Mode: ai.ModeAgent, Label: "Claude Agent · Sonnet 5"},
-		{ID: "gpt-5.5", Provider: ai.OpenAI, Mode: ai.ModeAgent, Label: "Codex Agent · GPT-5.5"},
+		{ID: "claude-opus-4-8", Provider: ai.Anthropic, Mode: ai.ModeAgent, Label: "Claude Opus 4.8"},
+		{ID: "claude-sonnet-5", Provider: ai.Anthropic, Mode: ai.ModeAgent, Label: "Claude Sonnet 5"},
+		{ID: "gpt-5.5", Provider: ai.OpenAI, Mode: ai.ModeAgent, Label: "GPT-5.5"},
 	}); err != nil {
 		t.Fatalf("SetModelCatalog: %v", err)
 	}
@@ -36,20 +36,20 @@ func TestAgentCatalogModels(t *testing.T) {
 		{
 			provider: ai.OpenAI,
 			mode:     ai.ModeCLI,
-			want:     []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Provider: "openai", Mode: ai.ModeCLI, CapabilitiesKnown: true}},
+			want:     []ai.ModelDef{{ID: "gpt-5.5", Name: "GPT-5.5", Provider: "openai", Mode: ai.ModeCLI, CapabilitiesKnown: true}},
 		},
 		{
 			provider: ai.OpenAI,
 			mode:     ai.ModeAgent,
-			want:     []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Provider: "openai", Mode: ai.ModeAgent, CapabilitiesKnown: true}},
+			want:     []ai.ModelDef{{ID: "gpt-5.5", Name: "GPT-5.5", Provider: "openai", Mode: ai.ModeAgent, CapabilitiesKnown: true}},
 		},
 		{
 			// Sorted by ID; genkit (API) anthropic entry excluded.
 			provider: ai.Anthropic,
 			mode:     ai.ModeAgent,
 			want: []ai.ModelDef{
-				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Provider: "anthropic", Mode: ai.ModeAgent, CapabilitiesKnown: true},
-				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Provider: "anthropic", Mode: ai.ModeAgent, CapabilitiesKnown: true},
+				{ID: "claude-opus-4-8", Name: "Claude Opus 4.8", Provider: "anthropic", Mode: ai.ModeAgent, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Provider: "anthropic", Mode: ai.ModeAgent, CapabilitiesKnown: true},
 			},
 		},
 		{
@@ -58,8 +58,8 @@ func TestAgentCatalogModels(t *testing.T) {
 			provider: ai.Anthropic,
 			mode:     ai.ModeCLI,
 			want: []ai.ModelDef{
-				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Provider: "anthropic", Mode: ai.ModeCLI, CapabilitiesKnown: true},
-				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Provider: "anthropic", Mode: ai.ModeCLI, CapabilitiesKnown: true},
+				{ID: "claude-opus-4-8", Name: "Claude Opus 4.8", Provider: "anthropic", Mode: ai.ModeCLI, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Provider: "anthropic", Mode: ai.ModeCLI, CapabilitiesKnown: true},
 			},
 		},
 		{
@@ -68,15 +68,15 @@ func TestAgentCatalogModels(t *testing.T) {
 			provider: ai.Anthropic,
 			mode:     ai.ModeCmux,
 			want: []ai.ModelDef{
-				{ID: "claude-opus-4-8", Name: "Claude Agent · Opus 4.8", Provider: "anthropic", Mode: ai.ModeCmux, CapabilitiesKnown: true},
-				{ID: "claude-sonnet-5", Name: "Claude Agent · Sonnet 5", Provider: "anthropic", Mode: ai.ModeCmux, CapabilitiesKnown: true},
+				{ID: "claude-opus-4-8", Name: "Claude Opus 4.8", Provider: "anthropic", Mode: ai.ModeCmux, CapabilitiesKnown: true},
+				{ID: "claude-sonnet-5", Name: "Claude Sonnet 5", Provider: "anthropic", Mode: ai.ModeCmux, CapabilitiesKnown: true},
 			},
 		},
 		{
 			// codex-cmux shares the codex-agent runtime model slug.
 			provider: ai.OpenAI,
 			mode:     ai.ModeCmux,
-			want:     []ai.ModelDef{{ID: "gpt-5.5", Name: "Codex Agent · GPT-5.5", Provider: "openai", Mode: ai.ModeCmux, CapabilitiesKnown: true}},
+			want:     []ai.ModelDef{{ID: "gpt-5.5", Name: "GPT-5.5", Provider: "openai", Mode: ai.ModeCmux, CapabilitiesKnown: true}},
 		},
 		{
 			// No catalog entries for gemini-cli: empty, never an error.
