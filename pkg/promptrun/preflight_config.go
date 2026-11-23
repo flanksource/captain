@@ -41,7 +41,11 @@ func validateConstructionConfig(in Input) error {
 		if err := selection.Dispatch.Validate(); err != nil {
 			return err
 		}
-		if runsWhole(*selection) && in.Config.CanUseTool != nil {
+		binding, err := in.Config.Approvals()
+		if err != nil {
+			return fmt.Errorf("promptrun: %w", err)
+		}
+		if runsWhole(*selection) && binding.Legacy {
 			return fmt.Errorf("promptrun: sandbox %q runs the whole run in an environment of its own, which asks its approvals through Config.OnApproval; set that instead of the deprecated CanUseTool", selection.Kind)
 		}
 	}
