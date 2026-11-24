@@ -89,6 +89,7 @@ var _ = Describe("SessionHandler", Ordered, func() {
 		Expect(body.DetailSource["messages"]).To(Equal("transcript"))
 		Expect(body.Plan).NotTo(BeNil())
 		Expect(body.Plan.Content).To(Equal(planMarkdown))
+		Expect(body.PermissionModes).To(Equal(api.SupportedPermissionModes(api.Anthropic, resumeMode)))
 	})
 
 	It("reports an unknown session as a JSON 404", func(ctx SpecContext) {

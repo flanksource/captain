@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	sessionquery "github.com/flanksource/captain/pkg/session/query"
@@ -23,6 +24,9 @@ type sessionReadResponse struct {
 	*session.Session
 	DetailAvailable bool              `json:"detailAvailable"`
 	DetailSource    map[string]string `json:"detailSource"`
+	// PermissionModes are the postures a continued session may start with;
+	// absent when the session cannot be resumed.
+	PermissionModes []api.PermissionMode `json:"permissionModes,omitempty"`
 }
 
 // SessionHandler serves one Captain session by identity, with paths relative to
@@ -115,7 +119,10 @@ func writeSessionRead(w http.ResponseWriter, r *http.Request, id string, open se
 			fmt.Sprintf("session %s has no composed aggregate", item.CaptainID), nil)
 		return
 	}
-	writeChatJSON(w, http.StatusOK, sessionReadResponse{Session: item.Detail, DetailAvailable: item.DetailAvailable, DetailSource: item.DetailSource})
+	writeChatJSON(w, http.StatusOK, sessionReadResponse{
+		Session: item.Detail, DetailAvailable: item.DetailAvailable, DetailSource: item.DetailSource,
+		PermissionModes: item.PermissionModes,
+	})
 }
 
 func wantsSessionStream(r *http.Request) bool {
