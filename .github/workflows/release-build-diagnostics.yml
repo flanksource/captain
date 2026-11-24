@@ -49,9 +49,11 @@ jobs:
               free -m | sed -n 2,3p
               df -h / /home/runner | tail -n +2
               du -sh ~/.cache/go-build 2>/dev/null
-              ps -eo rss=,pid=,args= --sort=-rss | head -6 | cut -c1-160
+              ps -eo rss=,pid=,args= --sort=-rss | head -6 | sed -E 's/^( *[0-9]+ +[0-9]+ ).*( -p [^ ]+).*/\1\2/' | cut -c1-160
               sleep 15
             done
           ) &
-          goreleaser build --snapshot --clean
+          # Compiling sqlglot-go/sqlglot peaks near 6 GB, so four targets at once exhaust the
+          # runner's 16 GB; two at a time should fit.
+          goreleaser build --snapshot --clean --parallelism 2
           ls -la dist
