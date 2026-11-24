@@ -63,8 +63,10 @@ jobs:
           # expected worktree change from GoReleaser's clean-tree validation.
           git diff --exit-code -- . ':(exclude)pkg/cli/webapp/dist/index.html'
           git update-index --assume-unchanged pkg/cli/webapp/dist/index.html
+      # Compiling github.com/flanksource/sqlglot-go/sqlglot peaks near 6 GB, so building all four
+      # targets at once exhausts the runner's 16 GB and it is shut down; two at a time leave 4 GB.
       - uses: goreleaser/goreleaser-action@v6
         with:
-          args: release --clean
+          args: release --clean --parallelism 2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
