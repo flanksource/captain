@@ -226,7 +226,7 @@ table "captain_turn_requests" {
   }
   index "captain_turn_requests_pending_session_idx" {
     columns = [column.session_id, column.kind, column.created_at]
-    where   = "state = 'pending'"
+    where   = "state = 'pending'::captain_turn_request_state"
   }
   index "captain_turn_requests_turn_id_idx" {
     columns = [column.turn_id]
@@ -237,7 +237,7 @@ table "captain_turn_requests" {
   index "captain_turn_requests_credential_call_key" {
     unique  = true
     columns = [column.credential_id, column.tool_call_id]
-    where   = "credential_id IS NOT NULL AND tool_call_id IS NOT NULL"
+    where   = "(credential_id IS NOT NULL) AND (tool_call_id IS NOT NULL)"
   }
 
   check "captain_turn_requests_version_nonnegative" {

@@ -212,7 +212,7 @@ table "captain_prompt_runs" {
   index "captain_prompt_runs_active_session_key" {
     unique  = true
     columns = [column.session_id]
-    where   = "state IN ('pending', 'running', 'waiting')"
+    where   = "state = ANY (ARRAY['pending'::captain_prompt_run_state, 'running'::captain_prompt_run_state, 'waiting'::captain_prompt_run_state])"
   }
   index "captain_prompt_runs_admission_key" {
     unique  = true
