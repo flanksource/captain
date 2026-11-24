@@ -134,7 +134,8 @@ table "captain_plans" {
   index "captain_plans_prompt_variant_key" {
     unique  = true
     columns = [column.source_prompt_run_id, column.variant]
-    where   = "source_prompt_run_id IS NOT NULL AND variant IS NOT NULL"
+    # Atlas compares predicates against PostgreSQL's deparsed form.
+    where   = "(source_prompt_run_id IS NOT NULL) AND (variant IS NOT NULL)"
   }
   index "captain_plans_approval_state_idx" {
     columns = [column.approval_state, column.updated_at]

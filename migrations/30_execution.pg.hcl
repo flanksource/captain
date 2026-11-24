@@ -83,7 +83,7 @@ table "captain_turns" {
   index "captain_turns_open_session_key" {
     unique  = true
     columns = [column.session_id]
-    where   = "status = 'open'"
+    where   = "status = 'open'::captain_turn_status"
   }
   index "captain_turns_started_at_idx" {
     columns = [column.started_at]

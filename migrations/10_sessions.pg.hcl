@@ -187,7 +187,7 @@ table "captain_sessions" {
   index "captain_sessions_transcript_parent_key" {
     unique  = true
     columns = [column.parent_session_id]
-    where   = "parent_relation = 'transcript'"
+    where   = "parent_relation = 'transcript'::text"
   }
   index "captain_sessions_root_session_id_idx" {
     columns = [column.root_session_id]

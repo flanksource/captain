@@ -94,7 +94,7 @@ table "captain_api_tokens" {
   }
   index "captain_api_tokens_agent_idx" {
     columns = [column.agent]
-    where   = "agent IS NOT NULL AND revoked_at IS NULL"
+    where   = "(agent IS NOT NULL) AND (revoked_at IS NULL)"
   }
 
   check "captain_api_tokens_expiry" {
