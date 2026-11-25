@@ -65,9 +65,9 @@ func addCaptainSessionChatPaths(spec *rpc.OpenAPISpec) {
 		Name: "id", In: "path", Required: true, Description: "Captain session id or provider session id",
 		Schema: &rpc.OpenAPISchema{Type: "string"},
 	}
-	spec.Paths["/api/captain/sessions/{id}/message"] = rpc.OpenAPIPath{
-		"post": promptRunOperation("messageSession", "Continue a saved or active session", session, chatMessageRequestBody(), jsonResponse(chatMessageResponseSchema())),
-	}
+	message := promptRunOperation("messageSession", "Continue a saved or active session", session, chatMessageRequestBody(), jsonResponse(chatMessageResponseSchema()))
+	message.Responses["409"] = worktreeUnavailableResponse()
+	spec.Paths["/api/captain/sessions/{id}/message"] = rpc.OpenAPIPath{"post": message}
 	spec.Paths["/api/captain/sessions/{id}/chat"] = rpc.OpenAPIPath{
 		"get": promptRunOperation("getSessionChat", "Get the session's live chat run in this process", session, nil, jsonResponse(sessionChatSchema())),
 	}
@@ -305,7 +305,33 @@ func chatMessageRequestSchema() *rpc.OpenAPISchema {
 			"text": {Type: "string"}, "messageId": {Type: "string"},
 			"model": {Type: "string"}, "mode": {Type: "string"},
 			"permissionMode": permissionModeSchema(),
+			"worktree":       worktreeRecoverySchema(),
 		},
+	}
+}
+
+func worktreeRecoverySchema() *rpc.OpenAPISchema {
+	return &rpc.OpenAPISchema{Type: "string", Enum: []any{string(WorktreeRecoveryNew), string(WorktreeRecoveryHead)}}
+}
+
+// worktreeUnavailableResponse is the 409 a resume answers when its worktree and
+// branch are both gone: the refusal and the WorktreeUnavailable offer.
+func worktreeUnavailableResponse() rpc.OpenAPIResponse {
+	return rpc.OpenAPIResponse{
+		Description: "Session state conflict; a resume whose worktree and branch are gone carries the recoveries it may retry with",
+		Content: map[string]rpc.OpenAPIMediaType{"application/json": {Schema: &rpc.OpenAPISchema{
+			Type: "object", Required: []string{"error"},
+			Properties: map[string]*rpc.OpenAPISchema{
+				"error": {Type: "string"},
+				"worktree": {
+					Type: "object", Required: []string{"path", "branch", "recoveries"},
+					Properties: map[string]*rpc.OpenAPISchema{
+						"path": {Type: "string"}, "branch": {Type: "string"}, "head": {Type: "string"},
+						"recoveries": {Type: "array", Items: worktreeRecoverySchema()},
+					},
+				},
+			},
+		}}},
 	}
 }
 
