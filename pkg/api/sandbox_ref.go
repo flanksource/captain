@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SandboxRef selects one of Captain's four sandbox modes. A scalar is shorthand
+// SandboxRef selects one of Captain's five sandbox modes. A scalar is shorthand
 // for a mode with no overrides; the object form carries the provider-neutral
 // native-isolation policy plus external-backend selection.
 //
@@ -126,7 +126,7 @@ func sandboxModeSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Type:        "string",
 		Enum:        enumValues(AllSandboxModes()),
-		Description: "Isolation boundary: off, provider-native, Docker, or Git Agent",
+		Description: "Isolation boundary: off, provider-native, Docker, Git Agent, or Substrate",
 	}
 }
 
