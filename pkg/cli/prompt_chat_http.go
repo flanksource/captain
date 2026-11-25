@@ -226,7 +226,7 @@ func resumeRenderResult(ctx context.Context, item SessionGetItem, request ChatMe
 	if model == "" {
 		return PromptRenderResult{}, newChatError(http.StatusUnprocessableEntity, "session has no model")
 	}
-	setup, err := resumeSetup(ctx, item, target.CWD)
+	setup, err := resumeSetup(ctx, item, resumeSetupOptions{CWD: target.CWD, Recovery: request.Worktree})
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
@@ -316,11 +316,14 @@ func readChatRequest(r *http.Request, target any) error {
 
 func writeChatError(w http.ResponseWriter, err error) {
 	var target chatHTTPError
-	if errors.As(err, &target) {
+	switch {
+	case errors.As(err, &target) && target.fields != nil:
+		writeSessionError(w, target.status, target.Error(), target.fields)
+	case errors.As(err, &target):
 		http.Error(w, target.Error(), target.status)
-		return
+	default:
+		http.Error(w, err.Error(), sessionErrorStatus(err))
 	}
-	http.Error(w, err.Error(), sessionErrorStatus(err))
 }
 
 func writeChatJSON(w http.ResponseWriter, status int, value any) {

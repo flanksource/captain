@@ -187,6 +187,18 @@ var _ = Describe("prompt chat lifecycle", func() {
 		Expect(spec.Paths).To(HaveKeyWithValue("/api/captain/sessions/{id}/permission-mode", HaveKey("post")))
 	})
 
+	It("documents the worktree recovery a session message may name and the 409 that offers it", func() {
+		spec := &rpc.OpenAPISpec{}
+		addCaptainPromptRunPaths(spec)
+
+		message := spec.Paths["/api/captain/sessions/{id}/message"]["post"]
+		request := message.RequestBody.Content["application/json"].Schema
+		Expect(request.Properties["worktree"].Enum).To(Equal([]any{"new", "head"}))
+		offer := message.Responses["409"].Content["application/json"].Schema.Properties["worktree"]
+		Expect(offer.Required).To(Equal([]string{"path", "branch", "recoveries"}))
+		Expect(offer.Properties["recoveries"].Items.Enum).To(Equal([]any{"new", "head"}))
+	})
+
 	It("collapses duplicate records for the same provider session when resuming", func() {
 		rich := SessionGetItem{
 			CaptainID: "captain-rich", ProviderSessionID: "provider-1",

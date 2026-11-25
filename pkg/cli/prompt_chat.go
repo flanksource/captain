@@ -674,9 +674,12 @@ func closeProvider(provider ai.Provider) {
 	}
 }
 
+// chatHTTPError is a chat failure with its HTTP status; fields, when set, ride
+// beside `error` in a JSON body.
 type chatHTTPError struct {
 	status int
 	msg    string
+	fields map[string]any
 }
 
 func (e chatHTTPError) Error() string { return e.msg }

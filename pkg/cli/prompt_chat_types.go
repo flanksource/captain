@@ -51,6 +51,32 @@ type ChatMessageRequest struct {
 	// PermissionMode is the posture the message runs under: a resumed session
 	// starts in it, and a live run whose posture differs is switched first.
 	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
+	// Worktree is how a resumed session continues once its worktree and its
+	// branch are both gone; a resume without it is refused with the
+	// recoveries it may choose.
+	Worktree WorktreeRecovery `json:"worktree,omitempty"`
+}
+
+// WorktreeRecovery recreates a session worktree whose branch is gone, at its
+// original path so the provider still finds the session it filed there.
+type WorktreeRecovery string
+
+const (
+	// WorktreeRecoveryNew starts the branch afresh from the repository's HEAD.
+	WorktreeRecoveryNew WorktreeRecovery = "new"
+	// WorktreeRecoveryHead restores the branch at the commit the worktree last
+	// had, while that commit still exists.
+	WorktreeRecoveryHead WorktreeRecovery = "head"
+)
+
+// WorktreeUnavailable is the `worktree` field of the 409 a resume answers when
+// its worktree cannot be recreated as it was: what stood there, and the
+// recoveries a retry may name in ChatMessageRequest.Worktree.
+type WorktreeUnavailable struct {
+	Path       string             `json:"path"`
+	Branch     string             `json:"branch"`
+	Head       string             `json:"head,omitempty"`
+	Recoveries []WorktreeRecovery `json:"recoveries"`
 }
 
 type ChatPermissionModeRequest struct {
