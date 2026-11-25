@@ -18,6 +18,7 @@ import (
 	clickyapi "github.com/flanksource/clicky/api"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 	"github.com/flanksource/commons/logger"
+	"github.com/google/uuid"
 )
 
 type SessionGetResult struct {
@@ -148,7 +149,11 @@ func primaryFoldedSession(id string, sessions []sessionquery.FoldedOverview) (se
 	switch {
 	case len(sessions) == 0:
 		return sessionquery.FoldedOverview{}, fmt.Errorf("%w: session %s not found", database.ErrSessionNotFound, id)
-	case len(sessions) == 1, sessions[0].Session.ParentSessionID == nil:
+	case len(sessions) == 1:
+		return sessions[0], nil
+	}
+	root := sessions[0].Session
+	if parsed, err := uuid.Parse(id); err == nil && root.ID == parsed && root.ParentSessionID == nil && root.RootSessionID == nil {
 		return sessions[0], nil
 	}
 	return sessionquery.FoldedOverview{}, fmt.Errorf("%w: session id %s is ambiguous: it names %d unrelated sessions",

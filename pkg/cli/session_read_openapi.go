@@ -10,7 +10,7 @@ func addCaptainSessionReadPaths(spec *rpc.OpenAPISpec) {
 	spec.Paths["/api/captain/sessions/{id}"] = rpc.OpenAPIPath{"get": {
 		Tags: []string{"Sessions"}, Summary: "Get a unified session and its transcript availability", OperationID: "getSession",
 		Parameters: []rpc.OpenAPIParameter{
-			{Name: "id", In: "path", Required: true, Schema: &rpc.OpenAPISchema{Type: "string"}},
+			{Name: "id", In: "path", Required: true, Description: "Captain session UUID or provider session ID. The response id is the canonical Captain UUID.", Schema: &rpc.OpenAPISchema{Type: "string"}},
 			{Name: "tail", In: "query", Schema: &rpc.OpenAPISchema{Type: "integer"}},
 			{Name: "offset", In: "query", Schema: &rpc.OpenAPISchema{Type: "integer"}},
 			{Name: "limit", In: "query", Schema: &rpc.OpenAPISchema{Type: "integer"}},
