@@ -102,6 +102,51 @@ var _ = Describe("SessionHandler", Ordered, func() {
 		Expect(body["error"]).To(ContainSubstring("not found"))
 	})
 
+	It("returns the same canonical session for its provider, owner, and transcript IDs", func(ctx SpecContext) {
+		providerID := uuid.NewString()
+		owner, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: providerID, Source: "captain", Provider: "anthropic", HostID: captainHostID(),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		transcript, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+			ProviderSessionID: providerID, Source: "claude", Provider: "anthropic", HostID: captainHostID(),
+			ParentSessionID: &owner.ID, ParentRelation: database.SessionParentRelationTranscript,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		const message = "A follow-up in the execution transcript"
+		Expect(db.PutChatMessage(ctx, database.PutChatMessageInput{
+			SessionID: transcript.ID, ProviderMessageID: uuid.NewString(), Role: "user",
+			Parts: json.RawMessage(`[{"type":"text","text":"` + message + `"}]`),
+		})).To(Succeed())
+
+		for _, identity := range []string{owner.ID.String(), transcript.ID.String(), providerID} {
+			response := getSession(ctx, server.URL+"/api/captain/sessions/"+identity+"?tail=1", "application/json")
+			defer response.Body.Close()
+			Expect(response.StatusCode).To(Equal(http.StatusOK), identity)
+			var body sessionReadResponse
+			Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
+			Expect(body.ID).To(Equal(owner.ID.String()), identity)
+			Expect(body.Messages).To(ConsistOf(HaveField("Parts", ConsistOf(HaveField("Text", message)))))
+		}
+	})
+
+	It("reports a provider ID shared by unrelated sessions as a JSON 409", func(ctx SpecContext) {
+		providerID := uuid.NewString()
+		for _, host := range []string{"first-host", "second-host"} {
+			_, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+				ProviderSessionID: providerID, Source: "claude", Provider: "anthropic", HostID: host,
+			})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		response := getSession(ctx, server.URL+"/api/captain/sessions/"+providerID, "application/json")
+		defer response.Body.Close()
+		Expect(response.StatusCode).To(Equal(http.StatusConflict))
+		var body map[string]string
+		Expect(json.NewDecoder(response.Body).Decode(&body)).To(Succeed())
+		Expect(body["error"]).To(ContainSubstring("ambiguous"))
+	})
+
 	It("preserves estimated tool usage and cache cost in the session JSON", func(ctx SpecContext) {
 		stored, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
 			ProviderSessionID: uuid.NewString(), Source: "codex", Provider: "openai", HostID: captainHostID(),

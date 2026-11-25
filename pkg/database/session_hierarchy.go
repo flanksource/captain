@@ -92,6 +92,14 @@ func sessionAggregateRoot(session *Session) uuid.UUID {
 	return session.ID
 }
 
+// CanonicalSessionID gives a transcript row the ID of the session that owns it.
+func (relation SessionParentRelation) CanonicalSessionID(id uuid.UUID, parentID *uuid.UUID) uuid.UUID {
+	if relation == SessionParentRelationTranscript && parentID != nil {
+		return *parentID
+	}
+	return id
+}
+
 func equalOptionalParentRelation(left, right *SessionParentRelation) bool {
 	return optionalParentRelation(left) == optionalParentRelation(right)
 }
