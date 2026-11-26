@@ -1,5 +1,6 @@
 // Reads, lists, copies and deletes the actor templates of the client's atespace: the size each
-// template's actors boot at, and copies of one at another size that build no golden snapshot.
+// template's actors boot at, and copies of one at another size and runner image that build no
+// golden snapshot.
 package substrate
 
 import (
@@ -60,7 +61,11 @@ func (c *Client) ListTemplates(ctx context.Context) ([]Template, error) {
 // CopyTemplate creates template to as a copy of template from, running what it runs, at size.
 // The copy builds no golden snapshot, so its actors boot from its image; an actor asked for at
 // once boots straight away. A name another template has is refused with ErrTemplateExists.
-func (c *Client) CopyTemplate(ctx context.Context, from, to string, size Size) (Template, error) {
+//
+// image, when set, is what the copy's containers run in place of from's: an ate-env template has
+// one, the guest's root filesystem, so a copy runs another release's runner on the same cluster
+// settings. Empty keeps from's image.
+func (c *Client) CopyTemplate(ctx context.Context, from, to string, size Size, image string) (Template, error) {
 	if size.CPUMillicores <= 0 || size.MemoryBytes <= 0 {
 		return Template{}, fmt.Errorf("copy actor template %s/%s to %s at %d millicores and %d bytes: an actor template's size needs both CPU and memory",
 			c.options.Atespace, from, to, size.CPUMillicores, size.MemoryBytes)
@@ -73,6 +78,11 @@ func (c *Client) CopyTemplate(ctx context.Context, from, to string, size Size) (
 	copied.Metadata = &ateapipb.ResourceMetadata{Atespace: c.options.Atespace, Name: to}
 	copied.Status = nil
 	copied.Resources = &ateapipb.ResourceRequirements{Limits: &ateapipb.Resources{CpuMillicores: size.CPUMillicores, MemoryBytes: size.MemoryBytes}}
+	if image != "" {
+		for _, container := range copied.Containers {
+			container.Image = image
+		}
+	}
 	if copied.SnapshotConfig == nil {
 		copied.SnapshotConfig = &ateapipb.SnapshotConfig{}
 	}

@@ -130,7 +130,7 @@ func TestACopiedTemplateAgainstACluster(t *testing.T) {
 
 	name := "captain-e2e-" + uuid.NewString()[:8]
 	size := substrate.Size{CPUMillicores: 1000, MemoryBytes: 1 << 30}
-	copied, err := client.CopyTemplate(ctx, cluster.Options.Template, name, size)
+	copied, err := client.CopyTemplate(ctx, cluster.Options.Template, name, size, "")
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, client.DeleteTemplate(context.WithoutCancel(ctx), name)) }()
 	assert.Equal(t, size, copied.Size)
