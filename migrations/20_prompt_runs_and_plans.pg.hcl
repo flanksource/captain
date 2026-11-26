@@ -123,6 +123,32 @@ table "captain_prompt_runs" {
     null = true
     type = text
   }
+  # The process driving the run to completion: host, PID and the PID's start
+  # time identify it (PIDs are recycled, start times are not), the token tells
+  # two claims apart, and the heartbeat lets another host judge it. A run is
+  # settled only by its driver, so these are what prove a run whose driver
+  # exited first is orphaned rather than slow. Null for a run admitted before
+  # ownership was recorded.
+  column "owner_host_id" {
+    null = true
+    type = text
+  }
+  column "owner_pid" {
+    null = true
+    type = bigint
+  }
+  column "owner_started_at" {
+    null = true
+    type = timestamptz
+  }
+  column "owner_token" {
+    null = true
+    type = uuid
+  }
+  column "owner_heartbeat_at" {
+    null = true
+    type = timestamptz
+  }
   column "version" {
     null    = false
     type    = bigint
@@ -245,6 +271,11 @@ table "captain_prompt_runs" {
   }
   index "captain_prompt_runs_state_idx" {
     columns = [column.state, column.phase, column.updated_at]
+  }
+  # The orphan sweep reads only runs a driver is still meant to be settling.
+  index "captain_prompt_runs_driven_idx" {
+    columns = [column.queued_at]
+    where   = "state = ANY (ARRAY['pending'::captain_prompt_run_state, 'running'::captain_prompt_run_state])"
   }
   index "captain_prompt_runs_turn_id_idx" {
     columns = [column.turn_id]
