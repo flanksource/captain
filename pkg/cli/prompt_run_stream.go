@@ -296,6 +296,7 @@ type runBroker struct {
 var promptRuns = &runBroker{runs: map[string]*runStream{}}
 
 func (b *runBroker) create(runID string) *runStream {
+	stopPromptRunsOnShutdown()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	s := newRunStream()

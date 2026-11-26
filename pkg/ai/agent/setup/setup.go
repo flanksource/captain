@@ -83,6 +83,7 @@ func Apply(ctx context.Context, req *ai.Request, baseDir string) (*shell.SetupRe
 	resolved.Env = append(res.Env, declared...)
 	resolved.Checkout = nil
 	req.Setup = &resolved
+	*req = req.WithoutExplicit("/setup/checkout")
 	return res, nil
 }
 

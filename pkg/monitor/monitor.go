@@ -299,6 +299,9 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 	defer processTicker.Stop()
 	defer backfillTicker.Stop()
 	defer approvalTicker.Stop()
+	// A host that restarted after dying mid-run left its runs unsettled; they
+	// hold their sessions until reclaimed, so reclaim them now, not a minute in.
+	m.reclaimOrphanedRuns(runCtx)
 
 	for {
 		select {
@@ -324,6 +327,7 @@ func (m *Monitor) runLocked(ctx context.Context, lock *sql.Conn) error {
 			m.maintenanceDue.Store(true)
 			requestBackfill(backfillRequests)
 		case <-approvalTicker.C:
+			m.reclaimOrphanedRuns(runCtx)
 			m.sweepApprovals(runCtx)
 		case event, ok := <-watcher.events():
 			if !ok {

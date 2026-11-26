@@ -11,6 +11,7 @@ import (
 	"github.com/flanksource/captain/pkg/budgets"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/promptrun"
+	"github.com/flanksource/captain/pkg/runowner"
 	"github.com/google/uuid"
 )
 
@@ -125,6 +126,9 @@ func (a *DatabaseExecutionAuthority) Begin(
 		}
 		if run.State != database.PromptRunStatePending {
 			return fmt.Errorf("chat request %q already has prompt run %s in state %s", request.RequestID, run.ID, run.State)
+		}
+		if run, createErr = runowner.Claim(ctx, tx, run.ID); createErr != nil {
+			return fmt.Errorf("claim chat prompt run: %w", createErr)
 		}
 		modelCallID, createErr := tx.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
 			TurnID: turn.ID, PromptRunID: run.ID, Model: request.Spec.Name,
@@ -290,6 +294,11 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	})
 	if err != nil {
 		return nil, err
+	}
+	// The process resolving the approval runs the continuation, so it drives
+	// the run from here on, whichever process parked it.
+	if resumed, err = runowner.Claim(ctx, a.db, resumed.ID); err != nil {
+		return nil, fmt.Errorf("claim resumed chat prompt run: %w", err)
 	}
 	modelCallID, err = a.db.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
 		TurnID: turn.ID, PromptRunID: run.ID, Model: spec.Name,
