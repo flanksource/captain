@@ -298,7 +298,10 @@ func (db *DB) CreateOrGetSession(ctx context.Context, input CreateSessionInput) 
 		}
 		existing = found
 	}
-	if existing.Source != record.Source || existing.HostID != record.HostID {
+	// A provider session is its source, host and provider ID. A session its caller names by ID is
+	// that session from any host — a restarted pod writes it under a new hostname — and keeps the
+	// host that first recorded it.
+	if existing.Source != record.Source || (record.ProviderSessionID != nil && existing.HostID != record.HostID) {
 		return nil, fmt.Errorf("%w: existing session has a different provider identity", ErrSessionConflict)
 	}
 	// The label is filled in by whichever writer first knows a concrete one. A
