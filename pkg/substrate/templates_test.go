@@ -1,5 +1,5 @@
 // Specs for the actor templates of a client's atespace, against an in-process Substrate: reading,
-// listing, copying one at another size without a golden snapshot, and deleting.
+// listing, copying one at another size and runner image without a golden snapshot, and deleting.
 package substrate_test
 
 import (
@@ -43,7 +43,7 @@ func TestCopyTemplateKeepsTheSpecAtItsSizeWithoutAGoldenSnapshot(t *testing.T) {
 	ctx := testContext(t)
 	size := substrate.Size{CPUMillicores: 1000, MemoryBytes: 2 << 30}
 
-	copied, err := client.CopyTemplate(ctx, "gavel-runner", "gavel-org-1", size)
+	copied, err := client.CopyTemplate(ctx, "gavel-runner", "gavel-org-1", size, "")
 	require.NoError(t, err)
 	assert.Equal(t, "gavel-org-1", copied.Name)
 	assert.Equal(t, size, copied.Size)
@@ -64,12 +64,36 @@ func TestCopyTemplateKeepsTheSpecAtItsSizeWithoutAGoldenSnapshot(t *testing.T) {
 	assert.Equal(t, copied, read)
 }
 
+// gavel copies the cluster's runner template with the runner image of its own release, so each
+// release's runs execute that release's runner without the template being registered again.
+func TestCopyTemplateRunsTheImageItIsGiven(t *testing.T) {
+	server := substratetest.Start(t)
+	server.AddTemplate("ate-env", "gavel-runner", runnerSize)
+	const image = "ghcr.io/flanksource/gavel-runner@sha256:8c91"
+
+	_, err := dial(t, server).CopyTemplate(testContext(t), "gavel-runner", "gavel-org-1", runnerSize, image)
+	require.NoError(t, err)
+
+	base, _ := server.Template("ate-env", "gavel-runner")
+	got, ok := server.Template("ate-env", "gavel-org-1")
+	require.True(t, ok)
+	require.Len(t, got.GetContainers(), 1)
+	assert.Equal(t, image, got.GetContainers()[0].GetImage())
+	runs := proto.Clone(base.GetContainers()[0]).(*ateapipb.Container)
+	runs.Image = image
+	assert.True(t, proto.Equal(runs, got.GetContainers()[0]), "only the image changes: the guest's command and mounts are the template's")
+	assert.True(t, proto.Equal(&ateapipb.ActorTemplate{Volumes: base.GetVolumes(), WorkerSelector: base.GetWorkerSelector()},
+		&ateapipb.ActorTemplate{Volumes: got.GetVolumes(), WorkerSelector: got.GetWorkerSelector()}))
+	unchanged, _ := server.Template("ate-env", "gavel-runner")
+	assert.Equal(t, base.GetContainers()[0].GetImage(), unchanged.GetContainers()[0].GetImage(), "the template copied from keeps its image")
+}
+
 func TestCopyTemplateRefusesANameAlreadyTaken(t *testing.T) {
 	server := substratetest.Start(t)
 	server.AddTemplate("ate-env", "gavel-runner", runnerSize)
 	server.AddTemplate("ate-env", "gavel-org-1", runnerSize)
 
-	_, err := dial(t, server).CopyTemplate(testContext(t), "gavel-runner", "gavel-org-1", runnerSize)
+	_, err := dial(t, server).CopyTemplate(testContext(t), "gavel-runner", "gavel-org-1", runnerSize, "")
 	require.ErrorIs(t, err, substrate.ErrTemplateExists)
 	assert.Contains(t, err.Error(), "copy actor template ate-env/gavel-runner to gavel-org-1")
 }
@@ -77,7 +101,7 @@ func TestCopyTemplateRefusesANameAlreadyTaken(t *testing.T) {
 func TestCopyTemplateSaysWhichTemplateIsMissing(t *testing.T) {
 	server := substratetest.Start(t)
 
-	_, err := dial(t, server).CopyTemplate(testContext(t), "gavel-runner", "gavel-org-1", runnerSize)
+	_, err := dial(t, server).CopyTemplate(testContext(t), "gavel-runner", "gavel-org-1", runnerSize, "")
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, substrate.ErrTemplateExists))
 	assert.Contains(t, err.Error(), "actor template ate-env/gavel-runner")
@@ -90,7 +114,7 @@ func TestCopyTemplateRefusesASizeWithoutCPUOrMemory(t *testing.T) {
 	client := dial(t, server)
 
 	for _, size := range []substrate.Size{{MemoryBytes: 2 << 30}, {CPUMillicores: 1000}} {
-		_, err := client.CopyTemplate(testContext(t), "gavel-runner", "gavel-org-1", size)
+		_, err := client.CopyTemplate(testContext(t), "gavel-runner", "gavel-org-1", size, "")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "an actor template's size needs both CPU and memory")
 	}
