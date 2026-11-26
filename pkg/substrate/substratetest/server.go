@@ -75,6 +75,8 @@ type Environment struct {
 	Dir string
 	// Created is when the environment was created, its actor's create time.
 	Created time.Time
+	// actor is its actor's state, running unless Place says otherwise, and the worker it is on.
+	actor substrate.Actor
 
 	mu        sync.Mutex
 	processes map[string]*process
@@ -120,6 +122,16 @@ func (s *Server) Backdate(atespace, id string, created time.Time) {
 	defer s.mu.Unlock()
 	if env, ok := s.envs[atespace+"/"+id]; ok {
 		env.Created = created
+	}
+}
+
+// Place sets the state of the live environment id's actor in atespace, and the worker, pool and
+// node it is on, which empty ones clear, as Substrate's scheduler does.
+func (s *Server) Place(atespace, id string, actor substrate.Actor) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if env, ok := s.envs[atespace+"/"+id]; ok {
+		env.actor = actor
 	}
 }
 
@@ -305,13 +317,41 @@ func (c control) ListActors(_ context.Context, req *ateapipb.ListActorsRequest) 
 	}
 	response := &ateapipb.ListActorsResponse{NextPageToken: next}
 	for _, env := range envs[start:end] {
-		response.Actors = append(response.Actors, &ateapipb.Actor{
-			Metadata:      &ateapipb.ResourceMetadata{Atespace: env.Atespace, Name: env.ID, CreateTime: timestamppb.New(env.Created)},
-			ActorTemplate: &ateapipb.ObjectRef{Atespace: env.Atespace, Name: env.Template},
-			Status:        &ateapipb.ActorStatus{State: ateapipb.ActorState_ACTOR_STATE_RUNNING},
-		})
+		response.Actors = append(response.Actors, env.actorMessage())
 	}
 	return response, nil
+}
+
+// GetActor returns the actor of a live environment.
+func (c control) GetActor(_ context.Context, req *ateapipb.GetActorRequest) (*ateapipb.Actor, error) {
+	s := c.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ref := req.GetActor()
+	env, ok := s.envs[ref.GetAtespace()+"/"+ref.GetName()]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "actor %s/%s not found", ref.GetAtespace(), ref.GetName())
+	}
+	return env.actorMessage(), nil
+}
+
+// actorMessage is the environment's actor as Substrate returns it.
+func (env *Environment) actorMessage() *ateapipb.Actor {
+	state := ateapipb.ActorState_ACTOR_STATE_RUNNING
+	if env.actor.State != "" {
+		state = ateapipb.ActorState(ateapipb.ActorState_value["ACTOR_STATE_"+strings.ToUpper(env.actor.State)])
+	}
+	actorStatus := &ateapipb.ActorStatus{State: state}
+	if env.actor.Worker != "" {
+		actorStatus.WorkerAssignment = &ateapipb.WorkerAssignment{
+			Worker: &ateapipb.ObjectRef{Name: env.actor.Worker}, WorkerPool: env.actor.Pool, NodeName: env.actor.Node,
+		}
+	}
+	return &ateapipb.Actor{
+		Metadata:      &ateapipb.ResourceMetadata{Atespace: env.Atespace, Name: env.ID, CreateTime: timestamppb.New(env.Created)},
+		ActorTemplate: &ateapipb.ObjectRef{Atespace: env.Atespace, Name: env.Template},
+		Status:        actorStatus,
+	}
 }
 
 // ListWorkers lists the workers added with AddWorker, in the order they were added, a page at a
