@@ -72,9 +72,10 @@ export interface ChatQueuedMessage {
 }
 
 export interface ChatMessageResponse {
-  runId: string;
+  runId?: string;
+  channel?: "claude-socket" | "codex-queue" | "cmux-message";
   messageId: string;
-  status: "steered" | "queued" | "started";
+  status: "steered" | "queued" | "started" | "sent";
   capabilities: ChatCapabilities;
 }
 

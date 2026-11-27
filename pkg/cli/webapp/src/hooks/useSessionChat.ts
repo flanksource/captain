@@ -163,7 +163,13 @@ export function useSessionChat(options: UseSessionChatOptions) {
             permissionMode,
           );
         }
-        if (response.runId !== activeRunID) {
+        if (response.channel) {
+          setActiveRunID(undefined);
+          setOptimistic((current) => current.filter((item) => item.id !== messageID));
+          void options.onTerminal?.().catch((error: unknown) =>
+            setActionError(`Message accepted. Could not refresh the session. ${errorMessage(error)}`),
+          );
+        } else if (response.runId !== activeRunID) {
           terminalHandled.current = undefined;
           setActiveRunID(response.runId);
         }
@@ -176,6 +182,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
     },
     [
       activeRunID,
+      options.onTerminal,
       options.sessionID,
       permissionMode,
       stream.status,

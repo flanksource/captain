@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	muxclient "github.com/flanksource/captain/pkg/ai/provider/cmux"
 	"github.com/flanksource/captain/pkg/cmux"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session/deliver"
@@ -172,6 +174,128 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		})))
 	})
 
+	It("continues the live session over its socket through the message route", func(ctx SpecContext) {
+		received := listenOnSocket()
+		response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+live.ProviderSessionID+"/message",
+			`{"text":"Continue on the current process","messageId":"follow-up"}`)
+		defer response.Body.Close()
+
+		body, err := io.ReadAll(response.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.StatusCode).To(Equal(http.StatusAccepted), string(body))
+		var result map[string]any
+		Expect(json.Unmarshal(body, &result)).To(Succeed())
+		Expect(result).To(HaveKeyWithValue("channel", "claude-socket"))
+		Expect(result).To(HaveKeyWithValue("messageId", "follow-up"))
+		Expect(result).NotTo(HaveKey("runId"))
+		Eventually(received).Should(Receive(ContainElement(ContainSubstring("Continue on the current process"))))
+	})
+
+	It("continues the original terminal over cmux when the socket is gone", func(ctx SpecContext) {
+		older, newer := time.Now().Add(-time.Hour), time.Now()
+		previousDiscovery, previousDeliverer := discoverSessionProcesses, sessionDeliverer
+		DeferCleanup(func() {
+			discoverSessionProcesses, sessionDeliverer = previousDiscovery, previousDeliverer
+		})
+		discoverSessionProcesses = func() ([]agentProcess, error) {
+			return []agentProcess{
+				{PID: livePID + 1, Command: "claude --resume " + live.ProviderSessionID, Source: "claude", StartedAt: &newer},
+				{PID: livePID, Command: "claude --session-id " + live.ProviderSessionID, Source: "claude", StartedAt: &older, Surface: &CmuxSurface{SurfaceID: "surface-original"}},
+			}, nil
+		}
+		var calls [][]string
+		client := muxclient.NewClient("")
+		client.Runner = func(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
+			calls = append(calls, args)
+			return "", nil
+		}
+		sessionDeliverer = deliver.Deliverer{Cmux: client}
+		response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+live.ID.String()+"/message", `{"text":"Continue in the terminal"}`)
+		defer response.Body.Close()
+
+		body, err := io.ReadAll(response.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.StatusCode).To(Equal(http.StatusAccepted), string(body))
+		Expect(string(body)).To(ContainSubstring(`"channel":"cmux-message"`))
+		Expect(calls).To(Equal([][]string{{"agent", "message", "surface-original", "--from", "captain", "--", "Continue in the terminal"}}))
+	})
+
+	It("checks resume prerequisites after finding no live process", func(ctx SpecContext) {
+		response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+ended.ProviderSessionID+"/message", `{"text":"Resume later"}`)
+		defer response.Body.Close()
+
+		body, err := io.ReadAll(response.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+		Expect(string(body)).To(ContainSubstring("session has no working directory"))
+	})
+
+	DescribeTable("continues an external Codex thread through the message route",
+		func(ctx SpecContext, inCmux bool, queueErr error, status int, channel deliver.Channel, errorText string) {
+			thread, err := db.CreateOrGetSession(ctx, database.CreateSessionInput{
+				ProviderSessionID: uuid.NewString(), Source: "codex", Provider: "openai", HostID: captainHostID(),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			const pid = livePID + 2
+			envByPID[pid] = map[string]string{"CODEX_THREAD_ID": thread.ProviderSessionID}
+			process := agentProcess{PID: pid, Source: "codex", Environment: envByPID[pid]}
+			if inCmux {
+				process.Surface = &CmuxSurface{SurfaceID: "surface-codex"}
+			}
+			previousDiscovery, previousDeliverer := discoverSessionProcesses, sessionDeliverer
+			DeferCleanup(func() {
+				discoverSessionProcesses, sessionDeliverer = previousDiscovery, previousDeliverer
+			})
+			discoverSessionProcesses = func() ([]agentProcess, error) { return []agentProcess{process}, nil }
+			var cmuxCalls [][]string
+			client := muxclient.NewClient("")
+			client.Runner = func(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
+				cmuxCalls = append(cmuxCalls, args)
+				return "", nil
+			}
+			var queueCalls [][]string
+			sessionDeliverer = deliver.Deliverer{Cmux: client, Codex: func(_ context.Context, _ string, args ...string) error {
+				queueCalls = append(queueCalls, args)
+				return queueErr
+			}}
+			const message = "Continue this Codex thread"
+			response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+thread.ProviderSessionID+"/message",
+				`{"text":"`+message+`","messageId":"codex-follow-up"}`)
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(response.StatusCode).To(Equal(status), string(body))
+			Expect(queueCalls).To(Equal([][]string{{"queue", "--thread", thread.ProviderSessionID, "--message=" + message}}))
+			if channel == deliver.ChannelCmuxMessage {
+				Expect(cmuxCalls).To(Equal([][]string{{"agent", "message", "surface-codex", "--from", "captain", "--", message}}))
+			} else {
+				Expect(cmuxCalls).To(BeEmpty())
+			}
+			if errorText != "" {
+				Expect(string(body)).To(ContainSubstring(errorText))
+				return
+			}
+			var result map[string]any
+			Expect(json.Unmarshal(body, &result)).To(Succeed())
+			Expect(result).To(And(HaveKeyWithValue("channel", string(channel)), HaveKeyWithValue("status", "queued"), HaveKeyWithValue("messageId", "codex-follow-up"), Not(HaveKey("runId"))))
+		},
+		Entry("native queue first", true, nil, http.StatusAccepted, deliver.ChannelCodexQueue, ""),
+		Entry("cmux when the queue is unavailable", true, exec.ErrNotFound, http.StatusAccepted, deliver.ChannelCmuxMessage, ""),
+		Entry("resume after both channels are unavailable", false, exec.ErrNotFound, http.StatusUnprocessableEntity, deliver.Channel(""), "session has no working directory"),
+		Entry("report an uncertain queue result without retrying", true, io.ErrUnexpectedEOF, http.StatusBadGateway, deliver.Channel(""), io.ErrUnexpectedEOF.Error()),
+	)
+
+	It("checks resume prerequisites after both live channels are unavailable", func(ctx SpecContext) {
+		envByPID[inboxWaitPID] = map[string]string{}
+		response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+live.ProviderSessionID+"/message", `{"text":"Continue here"}`)
+		defer response.Body.Close()
+
+		body, err := io.ReadAll(response.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.StatusCode).To(Equal(http.StatusUnprocessableEntity))
+		Expect(string(body)).To(ContainSubstring("session has no working directory"))
+	})
+
 	It("refuses a session with no live process rather than resuming it", func(ctx SpecContext) {
 		status, body := deliverTo(ctx, ended.ProviderSessionID, `{"text":"hello"}`)
 		Expect(status).To(Equal(http.StatusConflict))
@@ -228,7 +352,9 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		}
 		envByPID[inboxWaitPID] = map[string]string{}
 
-		target, err := liveDeliveryTarget(ctx, live.ProviderSessionID)
+		item, err := resolveSessionItem(ctx, live.ProviderSessionID)
+		Expect(err).NotTo(HaveOccurred())
+		target, err := liveDeliveryTarget(ctx, item)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(target.Surface).To(Equal(&CmuxSurface{

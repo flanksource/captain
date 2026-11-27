@@ -1,6 +1,9 @@
 package cli
 
-import "github.com/flanksource/captain/pkg/api"
+import (
+	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/session/deliver"
+)
 
 type ChatCapabilities struct {
 	Interrupt bool `json:"interrupt"`
@@ -48,8 +51,8 @@ type ChatMessageRequest struct {
 	MessageID string `json:"messageId,omitempty"`
 	Model     string `json:"model,omitempty"`
 	Mode      string `json:"mode,omitempty"`
-	// PermissionMode is the posture the message runs under: a resumed session
-	// starts in it, and a live run whose posture differs is switched first.
+	// PermissionMode selects the posture of a resumed or attached chat run.
+	// A message sent to an external process runs under its current posture.
 	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
 	// Worktree is how a resumed session continues once its worktree and its
 	// branch are both gone; a resume without it is refused with the
@@ -89,12 +92,10 @@ type ChatPermissionModeResponse struct {
 }
 
 type ChatMessageResponse struct {
-	// RunID is empty when the message went into the session's own live process.
-	RunID     string `json:"runId,omitempty"`
-	MessageID string `json:"messageId"`
-	Status    string `json:"status"`
-	// Channel names how a message to a live process was delivered.
-	Channel      string           `json:"channel,omitempty"`
+	RunID        string           `json:"runId,omitempty"`
+	MessageID    string           `json:"messageId"`
+	Status       string           `json:"status"`
+	Channel      deliver.Channel  `json:"channel,omitempty"`
 	Capabilities ChatCapabilities `json:"capabilities"`
 }
 

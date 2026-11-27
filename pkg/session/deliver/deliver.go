@@ -7,6 +7,7 @@ package deliver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -23,6 +24,9 @@ const (
 	ChannelCmuxMessage  Channel = "cmux-message"
 )
 
+// ErrNoChannel means there was no reachable transport before any message bytes were sent.
+var ErrNoChannel = errors.New("no live delivery channel")
+
 // Status is how far delivery is known to have got: sent into the agent's input
 // (the socket acknowledges no more), or queued by cmux or codex for the agent to
 // read at its next step.
@@ -37,6 +41,7 @@ const (
 	EnvMessagingSocket = "CLAUDE_CODE_MESSAGING_SOCKET"
 	EnvMessagingToken  = "CLAUDE_CODE_MESSAGING_TOKEN"
 	EnvClaudePID       = "CLAUDE_PID"
+	EnvCodexHome       = "CODEX_HOME"
 	envCodexThread     = "CODEX_THREAD_ID"
 )
 
@@ -44,7 +49,7 @@ const (
 // agent process: claude's socket and token, plus the session identity keys that
 // prove the process still runs the target session. They are read at delivery
 // time and never stored, since the token authenticates to the agent's inbox.
-var MessagingKeys = []string{"CLAUDE_CODE_SESSION_ID", envCodexThread, EnvClaudePID, EnvMessagingSocket, EnvMessagingToken}
+var MessagingKeys = []string{"CLAUDE_CODE_SESSION_ID", envCodexThread, EnvCodexHome, EnvClaudePID, EnvMessagingSocket, EnvMessagingToken}
 
 // ClaudeMessagingEnvironment picks the environment claude exported to its
 // children: claude creates its messaging socket after it starts, so its own
@@ -78,8 +83,8 @@ type Result struct {
 	Status  Status  `json:"status"`
 }
 
-// CodexRunner runs the codex CLI with args.
-type CodexRunner func(ctx context.Context, args ...string) error
+// CodexRunner runs the codex CLI using the target process's CODEX_HOME when set.
+type CodexRunner func(ctx context.Context, codexHome string, args ...string) error
 
 // Deliverer holds the clients each channel uses; a nil field uses the default.
 type Deliverer struct {
@@ -94,22 +99,21 @@ type Deliverer struct {
 func ChooseChannel(target Target) (Channel, error) {
 	env := target.Environment
 	switch {
-	case target.Source == "claude" && env[EnvMessagingSocket] != "":
-		if env[EnvMessagingToken] == "" {
-			return "", fmt.Errorf("claude session %s has %s but no %s", target.SessionID, EnvMessagingSocket, EnvMessagingToken)
-		}
+	case target.Source == "claude" && env[EnvMessagingSocket] != "" && env[EnvMessagingToken] != "":
 		return ChannelClaudeSocket, nil
 	case target.Source == "codex":
 		if target.SessionID == "" {
-			return "", fmt.Errorf("codex session has no session id")
+			return "", fmt.Errorf("%w: codex session has no session id", ErrNoChannel)
 		}
 		return ChannelCodexQueue, nil
 	case target.Surface != nil && target.Surface.SurfaceID != "":
 		return ChannelCmuxMessage, nil
+	case target.Source == "claude" && env[EnvMessagingSocket] != "":
+		return "", fmt.Errorf("%w: claude session %s has %s but no %s", ErrNoChannel, target.SessionID, EnvMessagingSocket, EnvMessagingToken)
 	case target.Source == "claude":
-		return "", fmt.Errorf("claude session %s has no child process carrying its %s and is not in a cmux pane", target.SessionID, EnvMessagingSocket)
+		return "", fmt.Errorf("%w: claude session %s has no child process carrying its %s and is not in a cmux pane", ErrNoChannel, target.SessionID, EnvMessagingSocket)
 	default:
-		return "", fmt.Errorf("session %s (%s) has no delivery channel: not claude, codex, or in a cmux pane", target.SessionID, target.Source)
+		return "", fmt.Errorf("%w: session %s (%s) is not claude, codex, or in a cmux pane", ErrNoChannel, target.SessionID, target.Source)
 	}
 }
 
@@ -121,12 +125,28 @@ func (d Deliverer) Deliver(ctx context.Context, target Target, text string) (Res
 	switch channel {
 	case ChannelClaudeSocket:
 		err = d.sendClaudeSocket(ctx, target.Environment[EnvMessagingSocket], target.Environment[EnvMessagingToken], text)
+		if errors.Is(err, errSocketUnavailable) && ctx.Err() == nil {
+			return d.deliverToCmux(ctx, target, text, err)
+		}
 		return Result{Channel: channel, Status: StatusSent}, err
 	case ChannelCmuxMessage:
 		err = d.messageCmux(ctx, target, text)
 		return Result{Channel: channel, Status: StatusQueued}, err
 	default:
-		err = d.queueCodex(ctx, target.SessionID, text)
+		err = d.queueCodex(ctx, target, text)
+		if errors.Is(err, errCodexQueueUnavailable) && ctx.Err() == nil {
+			return d.deliverToCmux(ctx, target, text, err)
+		}
 		return Result{Channel: channel, Status: StatusQueued}, err
 	}
+}
+
+func (d Deliverer) deliverToCmux(ctx context.Context, target Target, text string, nativeErr error) (Result, error) {
+	if target.Surface == nil || target.Surface.SurfaceID == "" {
+		return Result{}, fmt.Errorf("%w: %w", ErrNoChannel, nativeErr)
+	}
+	if err := d.messageCmux(ctx, target, text); err != nil {
+		return Result{}, errors.Join(nativeErr, err)
+	}
+	return Result{Channel: ChannelCmuxMessage, Status: StatusQueued}, nil
 }

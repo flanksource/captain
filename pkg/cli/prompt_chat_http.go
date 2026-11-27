@@ -124,35 +124,28 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 	}
 }
 
-// deliverLiveSessionMessage sends the message into the session's own live
-// process: its claude messaging socket first, then the cmux agent inbox. A
-// live session must never be resumed in a second process, so a live one with no
-// channel is a 422 rather than a fall-through; only a session with no live
-// process reports delivered=false and is left to resume.
+// deliverLiveSessionMessage permits a resume only when no live channel could
+// have accepted the message.
 func deliverLiveSessionMessage(ctx context.Context, item SessionGetItem, request ChatMessageRequest) (ChatMessageResponse, bool, error) {
 	text := strings.TrimSpace(request.Text)
 	if text == "" {
 		return ChatMessageResponse{}, false, newChatError(http.StatusBadRequest, "message text is required")
 	}
-	target, err := liveItemTarget(ctx, item.CaptainID, item)
-	if errors.Is(err, errSessionNotLive) {
+	result, err := deliverLiveSession(ctx, item, text)
+	if errors.Is(err, errSessionNotLive) || errors.Is(err, deliver.ErrNoChannel) {
 		return ChatMessageResponse{}, false, nil
 	}
 	if err != nil {
 		return ChatMessageResponse{}, false, err
 	}
-	if _, err := deliver.ChooseChannel(target); err != nil {
-		return ChatMessageResponse{}, false, newChatError(http.StatusUnprocessableEntity, err.Error())
-	}
-	result, err := sessionDeliverer.Deliver(ctx, target, text)
-	if err != nil {
-		return ChatMessageResponse{}, false, newChatError(http.StatusBadGateway, err.Error())
-	}
 	messageID := strings.TrimSpace(request.MessageID)
 	if messageID == "" {
 		messageID = newMessageID()
 	}
-	return ChatMessageResponse{MessageID: messageID, Status: string(result.Status), Channel: string(result.Channel)}, true, nil
+	return ChatMessageResponse{
+		MessageID: messageID, Status: string(result.Status), Channel: result.Channel,
+		Capabilities: ChatCapabilities{FollowUp: true},
+	}, true, nil
 }
 
 // resolveSessionItem resolves a captain session id or provider session id to

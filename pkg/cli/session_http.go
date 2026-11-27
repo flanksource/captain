@@ -44,10 +44,9 @@ type sessionReadResponse struct {
 //     after=<message id> names the newest one the reader already holds.
 //     An unknown before or after cursor is a JSON 400.
 //   - POST /{id}/tokens sizes the session's transcript rows in tokens.
-//   - POST /{id}/message sends a ChatMessageRequest to the session: to its live
-//     chat run when one is attached in this process, otherwise by resuming the
-//     saved session as a new agent-mode chat run. It answers 202 with a
-//     ChatMessageResponse.
+//   - POST /{id}/message sends a ChatMessageRequest to the attached chat or
+//     live Claude or Codex process, or resumes a saved session as a new agent-mode chat.
+//     It answers 202 with a ChatMessageResponse.
 //   - POST /{id}/deliver sends a SessionDeliverRequest into the session's live
 //     process through its own channel (claude messaging socket, codex queue, or
 //     cmux pane) and answers 202 with a deliver.Result. It never resumes: a

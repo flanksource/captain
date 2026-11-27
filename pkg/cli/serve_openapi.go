@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/session/deliver"
 	"github.com/flanksource/clicky/rpc"
 )
 
@@ -65,8 +66,9 @@ func addCaptainSessionChatPaths(spec *rpc.OpenAPISpec) {
 		Name: "id", In: "path", Required: true, Description: "Captain session id or provider session id",
 		Schema: &rpc.OpenAPISchema{Type: "string"},
 	}
-	message := promptRunOperation("messageSession", "Continue a saved or active session", session, chatMessageRequestBody(), jsonResponse(chatMessageResponseSchema()))
+	message := promptRunOperation("messageSession", "Continue a saved or active session", session, chatMessageRequestBody(), jsonResponse(sessionMessageResponseSchema()))
 	message.Responses["409"] = worktreeUnavailableResponse()
+	message.Responses["502"] = rpc.OpenAPIResponse{Description: "Live session delivery failed"}
 	spec.Paths["/api/captain/sessions/{id}/message"] = rpc.OpenAPIPath{"post": message}
 	spec.Paths["/api/captain/sessions/{id}/chat"] = rpc.OpenAPIPath{
 		"get": promptRunOperation("getSessionChat", "Get the session's live chat run in this process", session, nil, jsonResponse(sessionChatSchema())),
@@ -345,15 +347,28 @@ func permissionModeSchema() *rpc.OpenAPISchema {
 
 func chatMessageResponseSchema() *rpc.OpenAPISchema {
 	return &rpc.OpenAPISchema{
-		Type: "object", Required: []string{"messageId", "status", "capabilities"},
+		Type: "object", Required: []string{"runId", "messageId", "status", "capabilities"},
 		Properties: map[string]*rpc.OpenAPISchema{
-			"runId":        {Type: "string", Description: "Absent when the message went into the session's own live process"},
-			"messageId":    {Type: "string"},
-			"channel":      {Type: "string", Description: "How a message to a live process was delivered", Enum: []any{"claude-socket", "cmux-message", "codex-queue"}},
-			"status":       {Type: "string", Enum: []any{"steered", "queued", "started", "sent"}},
+			"runId": {Type: "string"}, "messageId": {Type: "string"},
+			"status":       {Type: "string", Enum: []any{"steered", "queued", "started"}},
 			"capabilities": chatCapabilitiesSchema(),
 		},
 	}
+}
+
+func sessionMessageResponseSchema() *rpc.OpenAPISchema {
+	return &rpc.OpenAPISchema{OneOf: []*rpc.OpenAPISchema{
+		chatMessageResponseSchema(),
+		{
+			Type: "object", Required: []string{"channel", "messageId", "status", "capabilities"},
+			Properties: map[string]*rpc.OpenAPISchema{
+				"channel":      {Type: "string", Enum: []any{string(deliver.ChannelClaudeSocket), string(deliver.ChannelCodexQueue), string(deliver.ChannelCmuxMessage)}},
+				"messageId":    {Type: "string"},
+				"status":       {Type: "string", Enum: []any{"sent", "queued"}},
+				"capabilities": chatCapabilitiesSchema(),
+			},
+		},
+	}}
 }
 
 func chatCapabilitiesSchema() *rpc.OpenAPISchema {
