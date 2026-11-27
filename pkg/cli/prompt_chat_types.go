@@ -92,11 +92,11 @@ type ChatPermissionModeResponse struct {
 }
 
 type ChatMessageResponse struct {
-	RunID           string           `json:"runId,omitempty"`
-	MessageID       string           `json:"messageId"`
-	Status          string           `json:"status"`
-	Capabilities    ChatCapabilities `json:"capabilities"`
-	DeliveryChannel deliver.Channel  `json:"deliveryChannel,omitempty"`
+	RunID        string           `json:"runId,omitempty"`
+	MessageID    string           `json:"messageId"`
+	Status       string           `json:"status"`
+	Channel      deliver.Channel  `json:"channel,omitempty"`
+	Capabilities ChatCapabilities `json:"capabilities"`
 }
 
 type ChatInterruptResponse struct {

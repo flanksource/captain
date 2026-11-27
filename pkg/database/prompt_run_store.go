@@ -60,13 +60,13 @@ type PromptRun struct {
 	Error                string                 `json:"error,omitempty"`
 	// Owner is the process driving the run; nil for a run admitted before
 	// ownership was recorded.
-	Owner    *PromptRunOwner `json:"owner,omitempty"`
-	Version  int64           `json:"version"`
-	QueuedAt time.Time       `json:"queuedAt"`
-	StartedAt            *time.Time             `json:"startedAt,omitempty"`
-	FinishedAt           *time.Time             `json:"finishedAt,omitempty"`
-	CreatedAt            time.Time              `json:"createdAt"`
-	UpdatedAt            time.Time              `json:"updatedAt"`
+	Owner      *PromptRunOwner `json:"owner,omitempty"`
+	Version    int64           `json:"version"`
+	QueuedAt   time.Time       `json:"queuedAt"`
+	StartedAt  *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
 }
 
 type PromptRunCheckpoint struct {

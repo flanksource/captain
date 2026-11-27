@@ -106,7 +106,17 @@ var _ = Describe("resuming in a removed worktree", func() {
 		},
 		Entry("the worktree had no branch", func(s *api.WorktreeState) { s.Branch = "" }, "no branch"),
 		Entry("the repository is gone", func(s *api.WorktreeState) { s.Repo = filepath.Join(s.Repo, "gone") }, "repository"),
+		Entry("only a branch beneath that name exists", func(s *api.WorktreeState) { s.Branch = "gavel-pr" }, "cannot be recreated while refs/heads/"+resumeTestBranch+" exists"),
 	)
+
+	It("refuses an unknown recovery before looking at the worktree, whatever the worktree's state", func(ctx SpecContext) {
+		state := removedWorktree()
+
+		_, err := resumeWorktreeSetup(ctx, state, WorktreeRecovery("bogus"))
+
+		Expect(chatErrorStatus(err)).To(Equal(http.StatusBadRequest))
+		Expect(err).To(MatchError(ContainSubstring(`unknown worktree recovery "bogus"`)))
+	})
 
 	DescribeTable("offers a new worktree or the session's last commit when its branch is gone",
 		func(ctx SpecContext, change func(*api.WorktreeState), want string) {
@@ -129,7 +139,6 @@ var _ = Describe("resuming in a removed worktree", func() {
 		Entry("the branch no longer exists", func(s *api.WorktreeState) {
 			resumeTestGit(s.Repo, "branch", "-D", resumeTestBranch)
 		}, "branch "+resumeTestBranch+" no longer exists"),
-		Entry("only a branch beneath that name exists", func(s *api.WorktreeState) { s.Branch = "gavel-pr" }, "branch gavel-pr no longer exists"),
 	)
 
 	Context("whose branch was deleted", func() {

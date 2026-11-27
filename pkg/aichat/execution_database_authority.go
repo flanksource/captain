@@ -127,7 +127,7 @@ func (a *DatabaseExecutionAuthority) Begin(
 		if run.State != database.PromptRunStatePending {
 			return fmt.Errorf("chat request %q already has prompt run %s in state %s", request.RequestID, run.ID, run.State)
 		}
-		if run, createErr = runowner.Claim(ctx, tx, run.ID); createErr != nil {
+		if run, createErr = runowner.Claim(ctx, tx, run.ID, runowner.ClaimOptions{}); createErr != nil {
 			return fmt.Errorf("claim chat prompt run: %w", createErr)
 		}
 		modelCallID, createErr := tx.CreateChatModelCall(ctx, database.CreateChatModelCallInput{
@@ -297,7 +297,7 @@ func (a *DatabaseExecutionAuthority) resolveToolApproval(
 	}
 	// The process resolving the approval runs the continuation, so it drives
 	// the run from here on, whichever process parked it.
-	if resumed, err = runowner.Claim(ctx, a.db, resumed.ID); err != nil {
+	if resumed, err = runowner.Claim(ctx, a.db, resumed.ID, runowner.ClaimOptions{TakeOver: true}); err != nil {
 		return nil, fmt.Errorf("claim resumed chat prompt run: %w", err)
 	}
 	modelCallID, err = a.db.CreateChatModelCall(ctx, database.CreateChatModelCallInput{

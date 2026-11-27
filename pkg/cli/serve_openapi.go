@@ -320,8 +320,8 @@ func worktreeRecoverySchema() *rpc.OpenAPISchema {
 // branch are both gone: the refusal and the WorktreeUnavailable offer.
 func worktreeUnavailableResponse() rpc.OpenAPIResponse {
 	return rpc.OpenAPIResponse{
-		Description: "Session state conflict; a resume whose worktree and branch are gone carries the recoveries it may retry with",
-		Content: map[string]rpc.OpenAPIMediaType{"application/json": {Schema: &rpc.OpenAPISchema{
+		Description: "Session state conflict. Most conflicts (run not ready for a message, run terminal, ambiguous session id) answer text/plain; a resume whose worktree and branch are gone answers JSON carrying the recoveries it may retry with",
+		Content: map[string]rpc.OpenAPIMediaType{"text/plain": {Schema: &rpc.OpenAPISchema{Type: "string"}}, "application/json": {Schema: &rpc.OpenAPISchema{
 			Type: "object", Required: []string{"error"},
 			Properties: map[string]*rpc.OpenAPISchema{
 				"error": {Type: "string"},
@@ -360,12 +360,12 @@ func sessionMessageResponseSchema() *rpc.OpenAPISchema {
 	return &rpc.OpenAPISchema{OneOf: []*rpc.OpenAPISchema{
 		chatMessageResponseSchema(),
 		{
-			Type: "object", Required: []string{"deliveryChannel", "messageId", "status", "capabilities"},
+			Type: "object", Required: []string{"channel", "messageId", "status", "capabilities"},
 			Properties: map[string]*rpc.OpenAPISchema{
-				"deliveryChannel": {Type: "string", Enum: []any{string(deliver.ChannelClaudeSocket), string(deliver.ChannelCodexQueue), string(deliver.ChannelCmuxMessage)}},
-				"messageId":       {Type: "string"},
-				"status":          {Type: "string", Enum: []any{"sent", "queued"}},
-				"capabilities":    chatCapabilitiesSchema(),
+				"channel":      {Type: "string", Enum: []any{string(deliver.ChannelClaudeSocket), string(deliver.ChannelCodexQueue), string(deliver.ChannelCmuxMessage)}},
+				"messageId":    {Type: "string"},
+				"status":       {Type: "string", Enum: []any{"sent", "queued"}},
+				"capabilities": chatCapabilitiesSchema(),
 			},
 		},
 	}}

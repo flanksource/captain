@@ -28,6 +28,9 @@ type resumeSetupOptions struct {
 }
 
 func resumeSetup(ctx context.Context, item SessionGetItem, opts resumeSetupOptions) (*shell.Setup, error) {
+	if err := validateWorktreeRecovery(opts.Recovery); err != nil {
+		return nil, err
+	}
 	cwd := opts.CWD
 	unavailable := fmt.Sprintf("session working directory %s is unavailable", cwd)
 	info, err := os.Stat(cwd)
@@ -100,11 +103,10 @@ func resumeWorktreeSetup(ctx context.Context, state api.WorktreeState, recovery 
 	refuse := func(reason string) error {
 		return newChatError(http.StatusUnprocessableEntity, refusal+": "+reason)
 	}
-	switch {
-	case recovery != "" && recovery != WorktreeRecoveryNew && recovery != WorktreeRecoveryHead:
-		return nil, newChatError(http.StatusBadRequest, fmt.Sprintf(
-			"unknown worktree recovery %q, expected %q or %q", recovery, WorktreeRecoveryNew, WorktreeRecoveryHead))
-	case state.Branch == "":
+	if err := validateWorktreeRecovery(recovery); err != nil {
+		return nil, err
+	}
+	if state.Branch == "" {
 		return nil, refuse("it had no branch checked out")
 	}
 	if _, err := os.Stat(state.Repo); err != nil {
@@ -116,6 +118,13 @@ func resumeWorktreeSetup(ctx context.Context, state api.WorktreeState, recovery 
 		return nil, err
 	}
 	if out != ref {
+		children, err := resumeGit(ctx, state.Repo, "for-each-ref", "--count=1", "--format=%(refname)", ref+"/")
+		if err != nil {
+			return nil, err
+		}
+		if children != "" {
+			return nil, refuse(fmt.Sprintf("branch %s cannot be recreated while %s exists", state.Branch, children))
+		}
 		gone := fmt.Sprintf("branch %s no longer exists in %s", state.Branch, state.Repo)
 		if state.BranchDeleted {
 			gone = fmt.Sprintf("branch %s was deleted with it", state.Branch)
@@ -129,6 +138,14 @@ func resumeWorktreeSetup(ctx context.Context, state api.WorktreeState, recovery 
 	return &shell.Setup{Cwd: state.Repo, Checkout: &shell.Checkout{
 		Mode: shell.CheckoutLocal, Path: state.Repo, Worktree: worktree,
 	}}, nil
+}
+
+func validateWorktreeRecovery(recovery WorktreeRecovery) error {
+	if recovery == "" || recovery == WorktreeRecoveryNew || recovery == WorktreeRecoveryHead {
+		return nil
+	}
+	return newChatError(http.StatusBadRequest, fmt.Sprintf(
+		"unknown worktree recovery %q, expected %q or %q", recovery, WorktreeRecoveryNew, WorktreeRecoveryHead))
 }
 
 // recoverWorktreeBranch recreates the worktree's missing branch the way

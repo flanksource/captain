@@ -52,7 +52,7 @@ var _ = Describe("reclaiming a run whose driver is gone", func() {
 	}
 	driveBy := func(ctx SpecContext, run *database.PromptRun, owner database.PromptRunOwner) {
 		GinkgoHelper()
-		_, err := db.ClaimPromptRunOwner(ctx, run.ID, owner)
+		_, err := db.ClaimPromptRunOwner(ctx, run.ID, owner, nil)
 		Expect(err).NotTo(HaveOccurred())
 	}
 	reload := func(ctx SpecContext, run *database.PromptRun) *database.PromptRun {
@@ -118,6 +118,29 @@ var _ = Describe("reclaiming a run whose driver is gone", func() {
 		Expect(err).To(MatchError(database.ErrPromptRunConflict))
 		Expect(conflict.Run.ID).To(Equal(live.ID))
 		Expect(reload(ctx, live).State).To(Equal(database.PromptRunStatePending))
+	})
+
+	It("refuses a replayed admission of a run another live process drives, leaving its owner in place", func(ctx SpecContext) {
+		runID := uuid.New()
+		replay := func() (*database.PromptRun, error) {
+			return promptrun.Admit(ctx, promptrun.Input{Resolved: resolved, Record: &promptrun.Recording{
+				DB: db, Placement: promptrun.Placement{Sessions: sessions}, Origin: "gavel.comments",
+				PromptRunID: runID, AdmissionKey: "delivery-" + runID.String(),
+			}})
+		}
+		first, err := replay()
+		Expect(err).NotTo(HaveOccurred())
+		self, err := runowner.Local()
+		Expect(err).NotTo(HaveOccurred())
+		rival := self
+		rival.Token = uuid.New()
+		driveBy(ctx, first, rival)
+
+		_, err = replay()
+
+		Expect(err).To(MatchError(database.ErrPromptRunDriven))
+		Expect(err).To(MatchError(database.ErrPromptRunConflict))
+		Expect(reload(ctx, first).Owner).To(HaveField("Token", rival.Token))
 	})
 
 	It("never reclaims a run parked on an answer, whatever became of its driver", func(ctx SpecContext) {

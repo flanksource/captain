@@ -161,7 +161,7 @@ func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 		if finishedRun(run.State) {
 			return fmt.Errorf("%w: admission resolved run %s, which is %s", ErrRunFinished, run.ID, run.State)
 		}
-		if run, err = runowner.Claim(ctx, tx, run.ID); err != nil {
+		if run, err = runowner.Claim(ctx, tx, run.ID, runowner.ClaimOptions{}); err != nil {
 			return fmt.Errorf("promptrun: claim run: %w", err)
 		}
 		if rec.Link != nil {

@@ -195,7 +195,7 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded session
 	item.DetailSource = provenance.Facets()
 	enrichSessionDetail(detail, item.Summary)
 	if err := applyLaunchPermissionMode(detail); err != nil {
-		return SessionGetItem{}, fmt.Errorf("Captain session %s: %w", overview.ID, err)
+		return SessionGetItem{}, fmt.Errorf("session %s: %w", overview.ID, err)
 	}
 	foldDetailUsage(&item.Summary, detail)
 	// A question is not waiting on a person while the agent still has the turn: a

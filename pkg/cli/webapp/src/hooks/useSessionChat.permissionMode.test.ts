@@ -148,12 +148,12 @@ describe("useSessionChat permission mode selection", () => {
 });
 
 describe("useSessionChat send()", () => {
-  it.each([["claude-socket", "sent"], ["codex-queue", "queued"]])("refreshes the transcript after %s delivery without opening a prompt stream", async (deliveryChannel, status) => {
+  it.each([["claude-socket", "sent"], ["codex-queue", "queued"]])("refreshes the transcript after %s delivery without opening a prompt stream", async (channel, status) => {
     usePromptRunStreamMock.mockReturnValue(streamState());
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
       messageId: "m1",
       status,
-      deliveryChannel,
+      channel,
       capabilities: { ...liveCapabilities, interrupt: false },
     })));
     const onTerminal = vi.fn().mockResolvedValue(undefined);

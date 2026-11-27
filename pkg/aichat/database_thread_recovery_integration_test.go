@@ -42,7 +42,11 @@ var _ = Describe("Database chat history recovery", func() {
 		sources, err := db.ListSessionSources(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(sources).To(HaveKey(transcriptPath))
-		Expect(sources[transcriptPath].ParserVersion).To(Equal(session.TranscriptParserVersion))
+		Expect(sources[transcriptPath]).To(SatisfyAll(
+			HaveField("ParserVersion", Not(Equal(session.TranscriptParserVersion))),
+			HaveField("ByteOffset", BeZero()),
+			HaveField("ObservedSize", BeZero()),
+		), "recovery serves the parse without persisting it, so the ingest cursor must stay unadvanced")
 
 		provider := &fakeStreamingProvider{events: []api.Event{
 			{Kind: api.EventText, Text: "OK"},

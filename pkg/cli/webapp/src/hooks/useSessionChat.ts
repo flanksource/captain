@@ -163,7 +163,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
             permissionMode,
           );
         }
-        if (response.deliveryChannel) {
+        if (response.channel) {
           setActiveRunID(undefined);
           setOptimistic((current) => current.filter((item) => item.id !== messageID));
           void options.onTerminal?.().catch((error: unknown) =>

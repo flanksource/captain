@@ -185,7 +185,7 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		Expect(response.StatusCode).To(Equal(http.StatusAccepted), string(body))
 		var result map[string]any
 		Expect(json.Unmarshal(body, &result)).To(Succeed())
-		Expect(result).To(HaveKeyWithValue("deliveryChannel", "claude-socket"))
+		Expect(result).To(HaveKeyWithValue("channel", "claude-socket"))
 		Expect(result).To(HaveKeyWithValue("messageId", "follow-up"))
 		Expect(result).NotTo(HaveKey("runId"))
 		Eventually(received).Should(Receive(ContainElement(ContainSubstring("Continue on the current process"))))
@@ -216,7 +216,7 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		body, err := io.ReadAll(response.Body)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(response.StatusCode).To(Equal(http.StatusAccepted), string(body))
-		Expect(string(body)).To(ContainSubstring(`"deliveryChannel":"cmux-message"`))
+		Expect(string(body)).To(ContainSubstring(`"channel":"cmux-message"`))
 		Expect(calls).To(Equal([][]string{{"agent", "message", "surface-original", "--from", "captain", "--", "Continue in the terminal"}}))
 	})
 
@@ -277,7 +277,7 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 			}
 			var result map[string]any
 			Expect(json.Unmarshal(body, &result)).To(Succeed())
-			Expect(result).To(And(HaveKeyWithValue("deliveryChannel", string(channel)), HaveKeyWithValue("status", "queued"), HaveKeyWithValue("messageId", "codex-follow-up"), Not(HaveKey("runId"))))
+			Expect(result).To(And(HaveKeyWithValue("channel", string(channel)), HaveKeyWithValue("status", "queued"), HaveKeyWithValue("messageId", "codex-follow-up"), Not(HaveKey("runId"))))
 		},
 		Entry("native queue first", true, nil, http.StatusAccepted, deliver.ChannelCodexQueue, ""),
 		Entry("cmux when the queue is unavailable", true, exec.ErrNotFound, http.StatusAccepted, deliver.ChannelCmuxMessage, ""),

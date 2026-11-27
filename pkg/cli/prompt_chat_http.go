@@ -106,29 +106,14 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 			writeChatJSON(w, http.StatusAccepted, response)
 			return
 		}
-		switch resumeTargetOf(item).Source {
-		case "claude", "codex":
-			text := strings.TrimSpace(request.Text)
-			if text == "" {
-				writeChatError(w, newChatError(http.StatusBadRequest, "message text is required"))
-				return
-			}
-			delivery, err := deliverLiveSession(r.Context(), item, text)
-			switch {
-			case err == nil:
-				messageID := strings.TrimSpace(request.MessageID)
-				if messageID == "" {
-					messageID = newMessageID()
-				}
-				writeChatJSON(w, http.StatusAccepted, ChatMessageResponse{
-					MessageID: messageID, Status: string(delivery.Status), DeliveryChannel: delivery.Channel,
-					Capabilities: ChatCapabilities{FollowUp: true},
-				})
-				return
-			case !errors.Is(err, errSessionNotLive) && !errors.Is(err, deliver.ErrNoChannel):
-				writeChatError(w, err)
-				return
-			}
+		response, delivered, deliverErr := deliverLiveSessionMessage(r.Context(), item, request)
+		if deliverErr != nil {
+			writeChatError(w, deliverErr)
+			return
+		}
+		if delivered {
+			writeChatJSON(w, http.StatusAccepted, response)
+			return
 		}
 		response, resumeErr := resumeSessionMessage(r.Context(), item, request)
 		if resumeErr != nil {
@@ -137,6 +122,30 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 		}
 		writeChatJSON(w, http.StatusAccepted, response)
 	}
+}
+
+// deliverLiveSessionMessage permits a resume only when no live channel could
+// have accepted the message.
+func deliverLiveSessionMessage(ctx context.Context, item SessionGetItem, request ChatMessageRequest) (ChatMessageResponse, bool, error) {
+	text := strings.TrimSpace(request.Text)
+	if text == "" {
+		return ChatMessageResponse{}, false, newChatError(http.StatusBadRequest, "message text is required")
+	}
+	result, err := deliverLiveSession(ctx, item, text)
+	if errors.Is(err, errSessionNotLive) || errors.Is(err, deliver.ErrNoChannel) {
+		return ChatMessageResponse{}, false, nil
+	}
+	if err != nil {
+		return ChatMessageResponse{}, false, err
+	}
+	messageID := strings.TrimSpace(request.MessageID)
+	if messageID == "" {
+		messageID = newMessageID()
+	}
+	return ChatMessageResponse{
+		MessageID: messageID, Status: string(result.Status), Channel: result.Channel,
+		Capabilities: ChatCapabilities{FollowUp: true},
+	}, true, nil
 }
 
 // resolveSessionItem resolves a captain session id or provider session id to
