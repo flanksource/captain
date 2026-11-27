@@ -93,6 +93,15 @@ export function useSessionChat(options: UseSessionChatOptions) {
       options.permissionModes,
     ),
   );
+  // A posture is sent only once it is known — recorded on the session, picked,
+  // or carried over from a live run — because a session that is still live
+  // refuses any posture it is not already running under.
+  const [permissionModeKnown, setPermissionModeKnown] = useState(
+    () =>
+      Boolean(options.initialPermissionMode) &&
+      selectInitialPermissionMode(options.initialPermissionMode, options.permissionModes) ===
+        options.initialPermissionMode,
+  );
   const [delivered, setDelivered] = useState<DeliveredMessage[]>([]);
   const terminalHandled = useRef<string | undefined>(undefined);
   const stream = usePromptRunStream(activeRunID);
@@ -190,8 +199,11 @@ export function useSessionChat(options: UseSessionChatOptions) {
 
   // The next resumed run should continue in whatever posture the live run ended on.
   useEffect(() => {
-    if (livePermissionMode) setLocalPermissionMode(livePermissionMode);
+    if (!livePermissionMode) return;
+    setLocalPermissionMode(livePermissionMode);
+    setPermissionModeKnown(true);
   }, [livePermissionMode]);
+  const sessionPermissionMode = permissionModeKnown ? permissionMode : undefined;
 
   const send = useCallback(
     async (text: string) => {
@@ -222,7 +234,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
               `/api/captain/sessions/${encodeURIComponent(sessionID)}/message`,
               text,
               messageID,
-              permissionMode,
+              sessionPermissionMode,
             );
           }
         } else {
@@ -231,7 +243,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
             `/api/captain/sessions/${encodeURIComponent(sessionID)}/message`,
             text,
             messageID,
-            permissionMode,
+            sessionPermissionMode,
           );
         }
         if (response.channel) {
@@ -253,8 +265,8 @@ export function useSessionChat(options: UseSessionChatOptions) {
     [
       activeRunID,
       options.sessionID,
-      permissionMode,
       refreshDelivered,
+      sessionPermissionMode,
       stream.status,
       stream.summary?.sessionId,
     ],
@@ -264,6 +276,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
     async (mode: SpecPermissionMode) => {
       if (!isLiveRun) {
         setLocalPermissionMode(mode);
+        setPermissionModeKnown(true);
         return;
       }
       if (!activeRunID) return;

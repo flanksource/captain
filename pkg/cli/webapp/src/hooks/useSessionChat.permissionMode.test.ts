@@ -248,6 +248,34 @@ describe("useSessionChat send()", () => {
     });
   });
 
+  it.each([
+    ["no posture is recorded", undefined, ["default", "auto"], undefined],
+    ["the recorded posture is not offered", "dontAsk", ["default", "plan"], undefined],
+    ["the user picks one", undefined, ["default", "plan"], "plan"],
+  ] as const)("sends a permission mode to the session-message endpoint only when known: %s", async (_name, initial, modes, picked) => {
+    usePromptRunStreamMock.mockReturnValue(streamState());
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ messageId: "m1", status: "sent", channel: "claude-socket", capabilities: liveCapabilities }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() =>
+      useSessionChat({ sessionID: "session-1", initialPermissionMode: initial, permissionModes: [...modes] }),
+    );
+    if (picked) {
+      await act(async () => {
+        await result.current.setPermissionMode(picked);
+      });
+    }
+
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    const body = requestBody(fetchMock, 0);
+    if (picked) expect(body).toMatchObject({ permissionMode: picked });
+    else expect(body).not.toHaveProperty("permissionMode");
+  });
+
   it("omits permissionMode when posting to the run-message endpoint of a live run", async () => {
     usePromptRunStreamMock.mockReturnValue(
       streamState({ status: "streaming", chatState: liveChatState() }),

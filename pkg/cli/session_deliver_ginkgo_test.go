@@ -16,14 +16,35 @@ import (
 	"time"
 
 	muxclient "github.com/flanksource/captain/pkg/ai/provider/cmux"
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/cmux"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/session"
 	"github.com/flanksource/captain/pkg/session/deliver"
 	clickyprocess "github.com/flanksource/clicky/process"
 	"github.com/flanksource/commons-db/dbtest"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+)
+
+var _ = DescribeTable("live delivery permits a requested permission mode only when the live process runs under it",
+	func(recorded, requested api.PermissionMode, wantConflict bool) {
+		item := SessionGetItem{CaptainID: "session-acme", Detail: &session.Session{PermissionMode: recorded}}
+
+		err := livePermissionModeMatches(item, requested, deliver.ChannelClaudeSocket)
+
+		if !wantConflict {
+			Expect(err).NotTo(HaveOccurred())
+			return
+		}
+		Expect(chatErrorStatus(err)).To(Equal(http.StatusConflict))
+		Expect(err).To(MatchError(SatisfyAll(ContainSubstring(string(requested)), ContainSubstring(string(deliver.ChannelClaudeSocket)))))
+	},
+	Entry("no requested mode keeps the current posture", api.PermissionAuto, api.PermissionMode(""), false),
+	Entry("the recorded posture", api.PermissionAuto, api.PermissionAuto, false),
+	Entry("another posture", api.PermissionAuto, api.PermissionPlan, true),
+	Entry("any posture when none is recorded", api.PermissionMode(""), api.PermissionDefault, true),
 )
 
 var _ = Describe("SessionHandler deliver", Ordered, func() {
@@ -207,6 +228,23 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(response.StatusCode).To(Equal(http.StatusBadRequest), string(body))
 		Expect(string(body)).To(ContainSubstring(`unknown worktree recovery "rebase"`))
+	})
+
+	It("refuses a permission mode the live session cannot be confirmed to run under, before sending", func(ctx SpecContext) {
+		previousDeliverer := sessionDeliverer
+		DeferCleanup(func() { sessionDeliverer = previousDeliverer })
+		sessionDeliverer = deliver.Deliverer{Dial: func(context.Context, string) (net.Conn, error) {
+			Fail("a refused permission mode must not reach the live session")
+			return nil, os.ErrNotExist
+		}}
+		response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+live.ProviderSessionID+"/message",
+			`{"text":"Continue in plan mode","permissionMode":"plan"}`)
+		defer response.Body.Close()
+
+		body, err := io.ReadAll(response.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.StatusCode).To(Equal(http.StatusConflict), string(body))
+		Expect(string(body)).To(SatisfyAll(ContainSubstring("unrecorded permission mode"), ContainSubstring(`"plan"`)))
 	})
 
 	It("continues the original terminal over cmux when the socket is gone", func(ctx SpecContext) {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session/deliver"
 	sessionprocess "github.com/flanksource/captain/pkg/session/process"
 	clickyprocess "github.com/flanksource/clicky/process"
@@ -77,7 +78,7 @@ func RunSessionDeliver(ctx context.Context, opts SessionDeliverOptions) (deliver
 	if err != nil {
 		return deliver.Result{}, err
 	}
-	result, err := deliverLiveSession(ctx, item, opts.Text)
+	result, err := deliverLiveSession(ctx, item, liveMessage{Text: opts.Text})
 	if errors.Is(err, errSessionNotLive) {
 		err = newChatError(http.StatusConflict, err.Error())
 	}
@@ -87,16 +88,54 @@ func RunSessionDeliver(ctx context.Context, opts SessionDeliverOptions) (deliver
 	return result, err
 }
 
-func deliverLiveSession(ctx context.Context, item SessionGetItem, text string) (deliver.Result, error) {
+// liveMessage is a message for a live session's own process.
+type liveMessage struct {
+	Text string
+	// PermissionMode, when set, must be the posture the live process already
+	// runs under: no live channel can switch it.
+	PermissionMode api.PermissionMode
+}
+
+func deliverLiveSession(ctx context.Context, item SessionGetItem, message liveMessage) (deliver.Result, error) {
 	target, err := liveDeliveryTarget(ctx, item)
 	if err != nil {
 		return deliver.Result{}, err
 	}
-	result, err := sessionDeliverer.Deliver(ctx, target, text)
+	channel, err := deliver.ChooseChannel(target)
+	if err != nil {
+		return deliver.Result{}, err
+	}
+	if err := livePermissionModeMatches(item, message.PermissionMode, channel); err != nil {
+		return deliver.Result{}, err
+	}
+	result, err := sessionDeliverer.Deliver(ctx, target, message.Text)
 	if err != nil && !errors.Is(err, deliver.ErrNoChannel) {
 		return deliver.Result{}, newChatError(http.StatusBadGateway, err.Error())
 	}
 	return result, err
+}
+
+// livePermissionModeMatches refuses, before anything is sent, a requested
+// posture the live process cannot be confirmed to run under: the socket, queue
+// and cmux inbox all deliver text into the process as it is.
+func livePermissionModeMatches(item SessionGetItem, requested api.PermissionMode, channel deliver.Channel) error {
+	if requested == "" {
+		return nil
+	}
+	var recorded api.PermissionMode
+	if item.Detail != nil {
+		recorded = item.Detail.PermissionMode
+	}
+	if recorded == requested {
+		return nil
+	}
+	current := "an unrecorded permission mode"
+	if recorded != "" {
+		current = fmt.Sprintf("permission mode %q", recorded)
+	}
+	return newChatError(http.StatusConflict, fmt.Sprintf(
+		"session %s is live under %s and %s cannot switch it to %q; send without a permission mode to continue under its current one",
+		item.CaptainID, current, channel, requested))
 }
 
 // liveDeliveryTarget finds the session's live process and re-reads its

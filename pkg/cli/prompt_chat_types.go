@@ -52,7 +52,8 @@ type ChatMessageRequest struct {
 	Model     string `json:"model,omitempty"`
 	Mode      string `json:"mode,omitempty"`
 	// PermissionMode selects the posture of a resumed or attached chat run.
-	// A message sent to an external process runs under its current posture.
+	// A message sent to an external process runs under its current posture, so
+	// one naming any other posture is refused with a 409 before it is sent.
 	PermissionMode api.PermissionMode `json:"permissionMode,omitempty"`
 	// Worktree is how a resumed session continues once its worktree and its
 	// branch are both gone; a resume without it is refused with the

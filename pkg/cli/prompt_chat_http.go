@@ -135,7 +135,7 @@ func deliverLiveSessionMessage(ctx context.Context, item SessionGetItem, request
 	if text == "" {
 		return ChatMessageResponse{}, false, newChatError(http.StatusBadRequest, "message text is required")
 	}
-	result, err := deliverLiveSession(ctx, item, text)
+	result, err := deliverLiveSession(ctx, item, liveMessage{Text: text, PermissionMode: request.PermissionMode})
 	if errors.Is(err, errSessionNotLive) || errors.Is(err, deliver.ErrNoChannel) {
 		return ChatMessageResponse{}, false, nil
 	}
