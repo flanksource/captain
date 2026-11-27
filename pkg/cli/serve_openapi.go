@@ -347,10 +347,10 @@ func chatMessageResponseSchema() *rpc.OpenAPISchema {
 	return &rpc.OpenAPISchema{
 		Type: "object", Required: []string{"messageId", "status", "capabilities"},
 		Properties: map[string]*rpc.OpenAPISchema{
-			"runId":     {Type: "string", Description: "Absent when the message went into the session's own live process"},
-			"messageId": {Type: "string"},
-			"channel":   {Type: "string", Description: "How a message to a live process was delivered", Enum: []any{"claude-socket", "cmux-message", "codex-queue"}},
-			"status":    {Type: "string", Enum: []any{"steered", "queued", "started", "sent"}},
+			"runId":        {Type: "string", Description: "Absent when the message went into the session's own live process"},
+			"messageId":    {Type: "string"},
+			"channel":      {Type: "string", Description: "How a message to a live process was delivered", Enum: []any{"claude-socket", "cmux-message", "codex-queue"}},
+			"status":       {Type: "string", Enum: []any{"steered", "queued", "started", "sent"}},
 			"capabilities": chatCapabilitiesSchema(),
 		},
 	}
