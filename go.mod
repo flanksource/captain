@@ -12,11 +12,11 @@ require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/firebase/genkit/go v1.13.1
-	github.com/flanksource/clicky v1.21.96
-	github.com/flanksource/clicky/aichat v1.21.91
-	github.com/flanksource/commons v1.64.2
-	github.com/flanksource/commons-db v0.1.87
-	github.com/flanksource/gavel v0.0.79
+	github.com/flanksource/clicky v1.21.101
+	github.com/flanksource/clicky/aichat v1.21.101
+	github.com/flanksource/commons v1.65.1
+	github.com/flanksource/commons-db v0.1.93
+	github.com/flanksource/gavel v0.0.114
 	github.com/flanksource/sandbox-runtime v1.0.2
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gliderlabs/ssh v0.3.8
@@ -37,6 +37,7 @@ require (
 	github.com/segmentio/encoding v0.5.4
 	github.com/sergi/go-diff v1.4.0
 	github.com/shirou/gopsutil/v3 v3.24.5
+	github.com/shirou/gopsutil/v4 v4.26.7
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
@@ -172,15 +173,15 @@ require (
 	github.com/exaring/otelpgx v0.11.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fergusstrange/embedded-postgres v1.34.0 // indirect
-	github.com/flanksource/commons-db/cmd/query v0.1.67 // indirect
-	github.com/flanksource/commons-db/recordstore v0.1.67 // indirect
-	github.com/flanksource/commons-db/tracing v0.1.67 // indirect
-	github.com/flanksource/gomplate/v3 v3.24.90 // indirect
-	github.com/flanksource/gomplate/v4 v4.0.2 // indirect
+	github.com/flanksource/commons-db/cmd/query v0.1.91 // indirect
+	github.com/flanksource/commons-db/recordstore v0.1.91 // indirect
+	github.com/flanksource/commons-db/tracing v0.1.91 // indirect
+	github.com/flanksource/gomplate/v3 v3.24.91 // indirect
+	github.com/flanksource/gomplate/v4 v4.0.4 // indirect
 	github.com/flanksource/is-healthy v1.0.93 // indirect
 	github.com/flanksource/kubectl-neat v1.0.4 // indirect
 	github.com/flanksource/repomap v0.4.1 // indirect
-	github.com/flanksource/sqlglot-go v1.2.2 // indirect
+	github.com/flanksource/sqlglot-go v1.6.2 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/geoffgarside/ber v1.2.0 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
@@ -297,7 +298,7 @@ require (
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
 	github.com/pgplex/pgparser v0.2.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.26 // indirect
+	github.com/pierrec/lz4/v4 v4.1.34 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -318,7 +319,6 @@ require (
 	github.com/samber/oops v1.23.2 // indirect
 	github.com/sanity-io/litter v1.5.8 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
-	github.com/shirou/gopsutil/v4 v4.26.7 // indirect
 	github.com/shoenig/go-m1cpu v0.1.7 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect

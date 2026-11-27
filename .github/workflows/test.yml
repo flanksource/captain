@@ -24,7 +24,7 @@ jobs:
         with:
           restore: false
       - name: Lint with Gavel
-        uses: flanksource/gavel@df234f1804fc14ad0ce2aa88b0204e82c93a8351 # v0.0.88
+        uses: flanksource/gavel@b45c43a8f9ee86e56fba6afb1b9af3d028ceb483 # v0.0.114
         with:
           # A cold golangci-lint run (no Go cache restore) takes ~5m, the
           # per-linter default, so give it headroom.
@@ -65,7 +65,7 @@ jobs:
       # pkg/cli/webapp is ignored: its vitest suite needs a sibling clicky-ui
       # checkout (a link: dependency), which does not exist on CI runners.
       - name: Test with Gavel
-        uses: flanksource/gavel@df234f1804fc14ad0ce2aa88b0204e82c93a8351 # v0.0.88
+        uses: flanksource/gavel@b45c43a8f9ee86e56fba6afb1b9af3d028ceb483 # v0.0.114
         with:
           # --test-timeout is the per-package deadline (gavel defaults to 5m).
           # pkg/ai/fixture drives real agent subprocesses and exceeded it on a

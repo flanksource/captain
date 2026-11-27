@@ -84,7 +84,7 @@ jobs:
       contents: read
       id-token: write # keyless cosign signatures
       packages: write # push to ghcr.io
-    uses: flanksource/action-workflows/.github/workflows/publish-multi-platform-docker-image.yml@807c141342c97374e637b4375e3a54e62cd8736e # v1.3.0
+    uses: flanksource/action-workflows/.github/workflows/publish-multi-platform-docker-image.yml@6dc0bcd1c064bb3aaadd05bf6a4ac5b6cd40125a # v1.4.1
     with:
       dockerfile: pkg/container/base/Dockerfile
       context: pkg/container/base
