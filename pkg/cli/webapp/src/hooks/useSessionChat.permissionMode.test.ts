@@ -147,7 +147,32 @@ describe("useSessionChat permission mode selection", () => {
   });
 });
 
-describe("useSessionChat send() permission mode body", () => {
+describe("useSessionChat send()", () => {
+  it.each([["claude-socket", "sent"], ["codex-queue", "queued"]])("refreshes the transcript after %s delivery without opening a prompt stream", async (deliveryChannel, status) => {
+    usePromptRunStreamMock.mockReturnValue(streamState());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+      messageId: "m1",
+      status,
+      deliveryChannel,
+      capabilities: { ...liveCapabilities, interrupt: false },
+    })));
+    const onTerminal = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() =>
+      useSessionChat({ sessionID: "session-1", onTerminal }),
+    );
+
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    expect(onTerminal).toHaveBeenCalledOnce();
+    expect(result.current).toMatchObject({
+      activeRunID: undefined,
+      messages: [],
+      actionError: undefined,
+    });
+  });
+
   it("includes permissionMode when posting directly to the session-message endpoint", async () => {
     usePromptRunStreamMock.mockReturnValue(streamState());
     const fetchMock = vi.fn().mockResolvedValue(

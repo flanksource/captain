@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -25,12 +26,14 @@ var (
 	readProcessEnvironment = clickyprocess.Environment
 	discoverProcesses      = clickyprocess.Discover
 	sessionDeliverer       = deliver.Deliverer{}
+	errSessionNotLive      = errors.New("no live process")
 )
 
 // claudeMessagingEnvironment reads the messaging environment claude pid
 // exported to its children (see deliver.ClaudeMessagingEnvironment). Children
 // with no environment left to read (exited, zombie or exiting) are skipped by
-// the snapshot; any other unreadable child fails the read.
+// the snapshot. A readable child carrying the socket takes precedence over
+// environment errors from siblings.
 func claudeMessagingEnvironment(ctx context.Context, pid int) (map[string]string, error) {
 	snapshot, err := discoverProcesses(ctx, clickyprocess.SnapshotOptions{})
 	if err != nil {
@@ -43,48 +46,70 @@ func claudeMessagingEnvironment(ctx context.Context, pid int) (map[string]string
 	}
 	snapshot.PopulateEnvironments(ctx, pids, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
 	var environments []map[string]string
+	var readErr error
 	for _, childPID := range pids {
 		child, _ := snapshot.Get(childPID)
 		if child.EnvironmentError != "" {
-			return nil, fmt.Errorf("reading environment of claude %d's child %d: %s", pid, childPID, child.EnvironmentError)
+			readErr = errors.Join(readErr, fmt.Errorf("reading environment of claude %d's child %d: %s", pid, childPID, child.EnvironmentError))
 		}
 		if child.Environment != nil {
 			environments = append(environments, child.Environment)
 		}
 	}
-	return deliver.ClaudeMessagingEnvironment(pid, environments), nil
+	if env := deliver.ClaudeMessagingEnvironment(pid, environments); env != nil {
+		return env, nil
+	}
+	return nil, readErr
 }
 
 // RunSessionDeliver sends text into a live claude or codex session that captain
-// did not launch, through its messaging socket, cmux agent inbox or codex queue (see
-// deliver.ChooseChannel). Unlike POST /{id}/message it never resumes the session
-// in a second process: a session that is not live is a 409.
+// did not launch, through its messaging socket, cmux agent inbox or codex queue.
+// A session that is not live is a 409.
 func RunSessionDeliver(ctx context.Context, opts SessionDeliverOptions) (deliver.Result, error) {
 	if strings.TrimSpace(opts.Text) == "" {
 		return deliver.Result{}, newChatError(http.StatusBadRequest, "message text is required")
 	}
-	target, err := liveDeliveryTarget(ctx, opts.ID)
+	item, err := resolveSessionItem(ctx, opts.ID)
 	if err != nil {
 		return deliver.Result{}, err
 	}
-	if _, err := deliver.ChooseChannel(target); err != nil {
-		return deliver.Result{}, newChatError(http.StatusUnprocessableEntity, err.Error())
+	result, err := deliverLiveSession(ctx, item, opts.Text)
+	if errors.Is(err, errSessionNotLive) {
+		err = newChatError(http.StatusConflict, err.Error())
 	}
-	result, err := sessionDeliverer.Deliver(ctx, target, opts.Text)
+	if errors.Is(err, deliver.ErrNoChannel) {
+		err = newChatError(http.StatusUnprocessableEntity, err.Error())
+	}
+	return result, err
+}
+
+func deliverLiveSession(ctx context.Context, item SessionGetItem, text string) (deliver.Result, error) {
+	target, err := liveDeliveryTarget(ctx, item)
 	if err != nil {
+		return deliver.Result{}, err
+	}
+	result, err := sessionDeliverer.Deliver(ctx, target, text)
+	if err != nil && !errors.Is(err, deliver.ErrNoChannel) {
 		return deliver.Result{}, newChatError(http.StatusBadGateway, err.Error())
 	}
-	return result, nil
+	return result, err
 }
 
 // liveDeliveryTarget finds the session's live process and re-reads its
 // environment now (for claude, that of its children), so the target reflects
 // the process as it is rather than the last sample, and a PID since reused by
 // another session is refused.
-func liveDeliveryTarget(ctx context.Context, id string) (deliver.Target, error) {
-	item, err := resolveSessionItem(ctx, id)
-	if err != nil {
-		return deliver.Target{}, err
+func liveDeliveryTarget(ctx context.Context, item SessionGetItem) (deliver.Target, error) {
+	source := resumeTargetOf(item).Source
+	if (source == "claude" || source == "codex") && item.ProviderSessionID != "" {
+		processes, err := discoverSessionProcesses()
+		if err != nil {
+			return deliver.Target{}, err
+		}
+		if process := originalSessionProcess(processes, source, item.ProviderSessionID); process != nil {
+			enrichSurfacesFromCmux([]agentProcess{*process})
+			return processDeliveryTarget(ctx, item, *process)
+		}
 	}
 	live, err := RunSessionLive(ctx, SessionLiveOptions{Source: "all", All: true, Full: true})
 	if err != nil {
@@ -94,31 +119,61 @@ func liveDeliveryTarget(ctx context.Context, id string) (deliver.Target, error) 
 	for i := range live.Sessions {
 		candidate := &live.Sessions[i]
 		if candidate.Live != nil && candidate.Live.PID > 0 &&
-			(candidate.ID == item.CaptainID || (item.ProviderSessionID != "" && candidate.Live.SessionID == item.ProviderSessionID)) {
+			(candidate.Key == item.CaptainID || (item.ProviderSessionID != "" && candidate.Live.SessionID == item.ProviderSessionID)) {
 			record = candidate
 			break
 		}
 	}
 	if record == nil {
-		return deliver.Target{}, newChatError(http.StatusConflict, fmt.Sprintf("session %s has no live process", id))
+		return deliver.Target{}, fmt.Errorf("session %s has %w", item.CaptainID, errSessionNotLive)
 	}
+	process := agentProcess{PID: record.Live.PID, Source: record.Source, Surface: record.Live.Surface}
+	return processDeliveryTarget(ctx, item, process)
+}
+
+// The process that originally opened the session takes precedence over a later
+// resume of the same transcript and over sampled or cwd-inferred identity.
+func originalSessionProcess(processes []agentProcess, source, sessionID string) *agentProcess {
+	var original *agentProcess
+	for i := range processes {
+		process := &processes[i]
+		if process.Source != source || process.PID <= 0 || process.Status == "zombie" || process.Status == "exited" || declaredSessionID(process) != sessionID {
+			continue
+		}
+		if original == nil || (process.StartedAt != nil && (original.StartedAt == nil || process.StartedAt.Before(*original.StartedAt))) {
+			original = process
+		}
+	}
+	return original
+}
+
+func processDeliveryTarget(ctx context.Context, item SessionGetItem, process agentProcess) (deliver.Target, error) {
 	var env map[string]string
-	if record.Source == "claude" {
-		env, err = claudeMessagingEnvironment(ctx, record.Live.PID)
+	var err error
+	if process.Source == "claude" {
+		env, err = claudeMessagingEnvironment(ctx, process.PID)
 	} else {
-		env, err = readProcessEnvironment(ctx, record.Live.PID, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
+		env, err = readProcessEnvironment(ctx, process.PID, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
 	}
 	if err != nil {
-		return deliver.Target{}, newChatError(http.StatusConflict,
-			fmt.Sprintf("session %s's process %d is no longer readable: %v", id, record.Live.PID, err))
+		verifiedPane := process.Surface != nil && process.Surface.SurfaceID != "" &&
+			item.ProviderSessionID != "" && declaredSessionID(&process) == item.ProviderSessionID
+		if !verifiedPane || ctx.Err() != nil {
+			return deliver.Target{}, newChatError(http.StatusConflict,
+				fmt.Sprintf("session %s's process %d is no longer readable: %v", item.CaptainID, process.PID, err))
+		}
 	}
-	if _, declared := sessionprocess.IdentityFromEnvironment(env); declared != "" && declared != item.ProviderSessionID {
+	_, declared := sessionprocess.IdentityFromEnvironment(env)
+	if process.Source == "codex" {
+		declared = env["CODEX_THREAD_ID"]
+	}
+	if declared != "" && declared != item.ProviderSessionID {
 		return deliver.Target{}, newChatError(http.StatusConflict,
-			fmt.Sprintf("process %d now runs session %s, not %s", record.Live.PID, declared, item.ProviderSessionID))
+			fmt.Sprintf("process %d now runs session %s, not %s", process.PID, declared, item.ProviderSessionID))
 	}
 	return deliver.Target{
-		Source: record.Source, SessionID: item.ProviderSessionID,
-		Environment: env, Surface: record.Live.Surface,
+		Source: process.Source, SessionID: item.ProviderSessionID,
+		Environment: env, Surface: process.Surface,
 	}, nil
 }
 
