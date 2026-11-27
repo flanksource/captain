@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/flanksource/captain/pkg/session/deliver"
 	sessionprocess "github.com/flanksource/captain/pkg/session/process"
@@ -38,6 +39,9 @@ func claudeMessagingEnvironment(ctx context.Context, pid int) (map[string]string
 	snapshot, err := discoverProcesses(ctx, clickyprocess.SnapshotOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing children of claude process %d: %w", pid, err)
+	}
+	if !stillRunning(snapshot, pid, nil) {
+		return nil, fmt.Errorf("claude process %d is no longer running", pid)
 	}
 	children := snapshot.Children(pid)
 	pids := make([]int, len(children))
@@ -156,8 +160,18 @@ func processDeliveryTarget(ctx context.Context, item SessionGetItem, process age
 		env, err = readProcessEnvironment(ctx, process.PID, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
 	}
 	if err != nil {
+		// An unreadable environment falls back to the pane recorded at discovery
+		// only while that same process still runs: once it exits, the pane may
+		// host another session.
 		verifiedPane := process.Surface != nil && process.Surface.SurfaceID != "" &&
 			item.ProviderSessionID != "" && declaredSessionID(&process) == item.ProviderSessionID
+		if verifiedPane && ctx.Err() == nil {
+			snapshot, discoverErr := discoverProcesses(ctx, clickyprocess.SnapshotOptions{})
+			if discoverErr != nil {
+				return deliver.Target{}, fmt.Errorf("checking session %s's process %d is still running: %w", item.CaptainID, process.PID, discoverErr)
+			}
+			verifiedPane = stillRunning(snapshot, process.PID, process.StartedAt)
+		}
 		if !verifiedPane || ctx.Err() != nil {
 			return deliver.Target{}, newChatError(http.StatusConflict,
 				fmt.Sprintf("session %s's process %d is no longer readable: %v", item.CaptainID, process.PID, err))
@@ -175,6 +189,16 @@ func processDeliveryTarget(ctx context.Context, item SessionGetItem, process age
 		Source: process.Source, SessionID: item.ProviderSessionID,
 		Environment: env, Surface: process.Surface,
 	}, nil
+}
+
+// stillRunning reports whether snapshot still holds the process discovered as
+// pid: present, not exited, and not a later process that reused its PID.
+func stillRunning(snapshot *clickyprocess.Snapshot, pid int, startedAt *time.Time) bool {
+	current, found := snapshot.Get(pid)
+	if !found || current.Status == "zombie" || current.Status == "exiting" || current.Status == "exited" {
+		return false
+	}
+	return startedAt == nil || current.StartedAt == nil || current.StartedAt.Equal(*startedAt)
 }
 
 func handleSessionDeliver(w http.ResponseWriter, r *http.Request) {

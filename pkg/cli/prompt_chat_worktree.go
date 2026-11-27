@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/flanksource/captain/pkg/api"
@@ -125,6 +126,13 @@ func resumeWorktreeSetup(ctx context.Context, state api.WorktreeState, recovery 
 		if children != "" {
 			return nil, refuse(fmt.Sprintf("branch %s cannot be recreated while %s exists", state.Branch, children))
 		}
+		ancestor, err := ancestorBranchRef(ctx, state)
+		if err != nil {
+			return nil, err
+		}
+		if ancestor != "" {
+			return nil, refuse(fmt.Sprintf("branch %s cannot be recreated while %s exists", state.Branch, ancestor))
+		}
 		gone := fmt.Sprintf("branch %s no longer exists in %s", state.Branch, state.Repo)
 		if state.BranchDeleted {
 			gone = fmt.Sprintf("branch %s was deleted with it", state.Branch)
@@ -138,6 +146,32 @@ func resumeWorktreeSetup(ctx context.Context, state api.WorktreeState, recovery 
 	return &shell.Setup{Cwd: state.Repo, Checkout: &shell.Checkout{
 		Mode: shell.CheckoutLocal, Path: state.Repo, Worktree: worktree,
 	}}, nil
+}
+
+// ancestorBranchRef is the existing branch whose name is a path prefix of the
+// worktree's branch (refs/heads/a for a/b), which stops git creating it; empty
+// when there is none.
+func ancestorBranchRef(ctx context.Context, state api.WorktreeState) (string, error) {
+	var ancestors []string
+	for i, c := range state.Branch {
+		if c == '/' {
+			ancestors = append(ancestors, "refs/heads/"+state.Branch[:i])
+		}
+	}
+	if len(ancestors) == 0 {
+		return "", nil
+	}
+	// for-each-ref also matches refs beneath each pattern, so keep exact matches.
+	out, err := resumeGit(ctx, state.Repo, append([]string{"for-each-ref", "--format=%(refname)"}, ancestors...)...)
+	if err != nil {
+		return "", err
+	}
+	for ref := range strings.Lines(out) {
+		if ref = strings.TrimSpace(ref); slices.Contains(ancestors, ref) {
+			return ref, nil
+		}
+	}
+	return "", nil
 }
 
 func validateWorktreeRecovery(recovery WorktreeRecovery) error {

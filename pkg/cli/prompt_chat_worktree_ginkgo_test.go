@@ -107,6 +107,10 @@ var _ = Describe("resuming in a removed worktree", func() {
 		Entry("the worktree had no branch", func(s *api.WorktreeState) { s.Branch = "" }, "no branch"),
 		Entry("the repository is gone", func(s *api.WorktreeState) { s.Repo = filepath.Join(s.Repo, "gone") }, "repository"),
 		Entry("only a branch beneath that name exists", func(s *api.WorktreeState) { s.Branch = "gavel-pr" }, "cannot be recreated while refs/heads/"+resumeTestBranch+" exists"),
+		Entry("a branch named by a prefix of that name exists", func(s *api.WorktreeState) {
+			resumeTestGit(s.Repo, "branch", "-D", resumeTestBranch)
+			resumeTestGit(s.Repo, "branch", "gavel-pr")
+		}, "cannot be recreated while refs/heads/gavel-pr exists"),
 	)
 
 	It("refuses an unknown recovery before looking at the worktree, whatever the worktree's state", func(ctx SpecContext) {

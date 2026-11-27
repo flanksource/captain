@@ -25,9 +25,48 @@ export type UseSessionChatOptions = {
   initialState?: ChatStateFrame;
   clearOnTerminal?: boolean;
   onTerminal?: () => Promise<unknown>;
+  /** The session's persisted transcript, which a message delivered to an
+   *  external live session reaches only once its provider writes it. */
+  transcript?: SessionUIMessage[];
   initialPermissionMode?: SpecPermissionMode;
   permissionModes?: SpecPermissionMode[];
 };
+
+/** How often the transcript is refreshed while a channel-delivered message
+ *  waits for its provider to write it and a reply. */
+export const DELIVERY_REFRESH_MS = 2_000;
+
+/** A message an external live session accepted, and how many transcript
+ *  messages already carried its text when it was sent. */
+type DeliveredMessage = { id: string; text: string; seen: number };
+
+/** Reports whether the transcript holds a new copy of the delivered text,
+ *  followed by a message the agent wrote after it. Providers file the message
+ *  under their own id, and may wrap its text. */
+export function deliveredMessageSettled(
+  transcript: SessionUIMessage[] | undefined,
+  delivered: DeliveredMessage,
+): boolean {
+  const matches = deliveredTextIndexes(transcript, delivered.text);
+  const last = matches[matches.length - 1];
+  return (
+    last !== undefined &&
+    matches.length > delivered.seen &&
+    transcript!.slice(last + 1).some((message) => message.role !== "user")
+  );
+}
+
+function deliveredTextIndexes(
+  transcript: SessionUIMessage[] | undefined,
+  text: string,
+): number[] {
+  const needle = text.trim();
+  return (transcript ?? []).flatMap((message, index) =>
+    message.parts.some((part) => part.type === "text" && part.text?.includes(needle))
+      ? [index]
+      : [],
+  );
+}
 
 /** Picks the permission mode a not-yet-live session should start selected on:
  *  the caller's initial mode when the runtime still honours it, else
@@ -54,8 +93,40 @@ export function useSessionChat(options: UseSessionChatOptions) {
       options.permissionModes,
     ),
   );
+  const [delivered, setDelivered] = useState<DeliveredMessage[]>([]);
   const terminalHandled = useRef<string | undefined>(undefined);
   const stream = usePromptRunStream(activeRunID);
+  const onTerminal = useRef(options.onTerminal);
+  onTerminal.current = options.onTerminal;
+  const transcript = useRef(options.transcript);
+  transcript.current = options.transcript;
+
+  const refreshDelivered = useCallback(() => {
+    void onTerminal.current?.().catch((error: unknown) =>
+      setActionError(`Message accepted. Could not refresh the session. ${errorMessage(error)}`),
+    );
+  }, []);
+
+  // A delivered message stays visible until the transcript holds it and a
+  // reply, refreshed meanwhile: nothing else refetches an external session.
+  useEffect(() => {
+    if (delivered.length === 0) return;
+    const settled = new Set(
+      delivered
+        .filter((item) => deliveredMessageSettled(options.transcript, item))
+        .map((item) => item.id),
+    );
+    if (settled.size === 0) return;
+    setOptimistic((current) => current.filter((item) => !item.id || !settled.has(item.id)));
+    setDelivered((current) => current.filter((item) => !settled.has(item.id)));
+  }, [delivered, options.transcript]);
+
+  const awaitingDelivery = delivered.length > 0;
+  useEffect(() => {
+    if (!awaitingDelivery) return;
+    const timer = setInterval(refreshDelivered, DELIVERY_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [awaitingDelivery, refreshDelivered]);
 
   useEffect(() => {
     if (options.initialRunID) setActiveRunID(options.initialRunID);
@@ -165,10 +236,9 @@ export function useSessionChat(options: UseSessionChatOptions) {
         }
         if (response.channel) {
           setActiveRunID(undefined);
-          setOptimistic((current) => current.filter((item) => item.id !== messageID));
-          void options.onTerminal?.().catch((error: unknown) =>
-            setActionError(`Message accepted. Could not refresh the session. ${errorMessage(error)}`),
-          );
+          const seen = deliveredTextIndexes(transcript.current, text).length;
+          setDelivered((current) => [...current, { id: messageID, text, seen }]);
+          refreshDelivered();
         } else if (response.runId !== activeRunID) {
           terminalHandled.current = undefined;
           setActiveRunID(response.runId);
@@ -182,9 +252,9 @@ export function useSessionChat(options: UseSessionChatOptions) {
     },
     [
       activeRunID,
-      options.onTerminal,
       options.sessionID,
       permissionMode,
+      refreshDelivered,
       stream.status,
       stream.summary?.sessionId,
     ],

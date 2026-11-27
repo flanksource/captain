@@ -92,6 +92,10 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 		if !decodeChatRequest(w, r, &request) {
 			return
 		}
+		if err := validateWorktreeRecovery(request.Worktree); err != nil {
+			writeChatError(w, err)
+			return
+		}
 		item, err := resolveSessionItem(r.Context(), r.PathValue("id"))
 		if err != nil {
 			writeChatError(w, err)

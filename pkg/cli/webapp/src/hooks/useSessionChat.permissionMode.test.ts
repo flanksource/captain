@@ -1,6 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
 import {
+  DELIVERY_REFRESH_MS,
   selectInitialPermissionMode,
   useSessionChat,
 } from "./useSessionChat";
@@ -168,9 +170,48 @@ describe("useSessionChat send()", () => {
     expect(onTerminal).toHaveBeenCalledOnce();
     expect(result.current).toMatchObject({
       activeRunID: undefined,
-      messages: [],
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
       actionError: undefined,
     });
+  });
+
+  it("keeps refreshing and showing a delivered message until the transcript holds it and a reply", async () => {
+    vi.useFakeTimers();
+    try {
+      usePromptRunStreamMock.mockReturnValue(streamState());
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+        messageId: "m1", status: "sent", channel: "claude-socket", capabilities: liveCapabilities,
+      })));
+      const onTerminal = vi.fn().mockResolvedValue(undefined);
+      const earlier: SessionUIMessage = { id: "t0", role: "user", parts: [{ type: "text", text: "hello" }] };
+      const { result, rerender } = renderHook(
+        ({ transcript }: { transcript: SessionUIMessage[] }) =>
+          useSessionChat({ sessionID: "session-1", onTerminal, transcript }),
+        { initialProps: { transcript: [earlier] } },
+      );
+
+      await act(async () => {
+        await result.current.send("hello");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DELIVERY_REFRESH_MS * 2);
+      });
+      expect(onTerminal).toHaveBeenCalledTimes(3);
+
+      const written: SessionUIMessage = { id: "t1", role: "user", parts: [{ type: "text", text: "hello" }] };
+      rerender({ transcript: [earlier, written] });
+      expect(result.current.messages).toHaveLength(1);
+
+      const reply: SessionUIMessage = { id: "t2", role: "assistant", parts: [{ type: "text", text: "hi" }] };
+      rerender({ transcript: [earlier, written, reply] });
+      expect(result.current.messages).toEqual([]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DELIVERY_REFRESH_MS * 2);
+      });
+      expect(onTerminal).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("includes permissionMode when posting directly to the session-message endpoint", async () => {

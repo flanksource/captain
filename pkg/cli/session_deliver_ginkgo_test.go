@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -191,6 +192,23 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		Eventually(received).Should(Receive(ContainElement(ContainSubstring("Continue on the current process"))))
 	})
 
+	It("rejects an unknown worktree recovery before delivering to a live session", func(ctx SpecContext) {
+		previousDeliverer := sessionDeliverer
+		DeferCleanup(func() { sessionDeliverer = previousDeliverer })
+		sessionDeliverer = deliver.Deliverer{Dial: func(context.Context, string) (net.Conn, error) {
+			Fail("an invalid request must not reach the live session")
+			return nil, os.ErrNotExist
+		}}
+		response := postSessionMessage(ctx, server.URL+"/api/captain/sessions/"+live.ProviderSessionID+"/message",
+			`{"text":"Continue on the current process","worktree":"rebase"}`)
+		defer response.Body.Close()
+
+		body, err := io.ReadAll(response.Body)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.StatusCode).To(Equal(http.StatusBadRequest), string(body))
+		Expect(string(body)).To(ContainSubstring(`unknown worktree recovery "rebase"`))
+	})
+
 	It("continues the original terminal over cmux when the socket is gone", func(ctx SpecContext) {
 		older, newer := time.Now().Add(-time.Hour), time.Now()
 		previousDiscovery, previousDeliverer := discoverSessionProcesses, sessionDeliverer
@@ -334,6 +352,52 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 		Expect(status).To(Equal(http.StatusBadRequest))
 		Expect(body).To(ContainSubstring("message text is required"))
 	})
+
+	DescribeTable("falls back to the recorded pane after an unreadable environment only while the process runs",
+		func(ctx SpecContext, source string, running bool) {
+			const pid = livePID + 3
+			started := time.Now().Add(-time.Minute)
+			previousDiscovery, previousSnapshot := discoverSessionProcesses, discoverProcesses
+			DeferCleanup(func() {
+				discoverSessionProcesses, discoverProcesses = previousDiscovery, previousSnapshot
+			})
+			discoverSessionProcesses = func() ([]agentProcess, error) {
+				return []agentProcess{{
+					PID: pid, Source: source, StartedAt: &started, Command: source + " --session-id " + live.ProviderSessionID,
+					Environment: map[string]string{"CLAUDE_CODE_SESSION_ID": live.ProviderSessionID},
+					Surface:     &CmuxSurface{SurfaceID: "surface-recorded"},
+				}}, nil
+			}
+			discoverProcesses = func(context.Context, clickyprocess.SnapshotOptions) (*clickyprocess.Snapshot, error) {
+				if !running {
+					return clickyprocess.NewSnapshot(nil), nil
+				}
+				// The child's environment is unreadable, as when permission is denied.
+				return clickyprocess.NewSnapshot([]clickyprocess.Process{
+					{PID: pid, PPID: 1, StartedAt: &started},
+					{PID: pid + 1, PPID: pid, EnvironmentError: "permission denied"},
+				}), nil
+			}
+			item, err := resolveSessionItem(ctx, live.ProviderSessionID)
+			Expect(err).NotTo(HaveOccurred())
+			item.Summary.Source = source
+
+			target, err := liveDeliveryTarget(ctx, item)
+
+			if running {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(target.Surface).To(Equal(&CmuxSurface{SurfaceID: "surface-recorded"}))
+				return
+			}
+			var chatErr chatHTTPError
+			Expect(errors.As(err, &chatErr)).To(BeTrue(), "%v", err)
+			Expect(chatErr.status).To(Equal(http.StatusConflict))
+		},
+		Entry("claude still running", "claude", true),
+		Entry("claude exited", "claude", false),
+		Entry("codex still running", "codex", true),
+		Entry("codex exited", "codex", false),
+	)
 
 	It("targets the current workspace when a live terminal has moved", func(ctx SpecContext) {
 		previousDiscovery, previousSurfaces := discoverSessionProcesses, discoverCmuxSurfaces

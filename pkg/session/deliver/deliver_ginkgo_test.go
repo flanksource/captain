@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -197,6 +198,25 @@ var _ = Describe("Deliver", func() {
 
 		Expect(err).To(MatchError(io.ErrUnexpectedEOF))
 	})
+
+	DescribeTable("after the Claude socket refuses a connection, permits a resume only when cmux never started",
+		func(cmuxErr error, wantNoChannel bool) {
+			client := cmux.NewClient("")
+			client.Runner = func(context.Context, string, string, time.Duration, ...string) (string, error) {
+				return "", cmuxErr
+			}
+			deliverer := Deliverer{Cmux: client, Dial: func(context.Context, string) (net.Conn, error) {
+				return nil, os.ErrNotExist
+			}}
+
+			_, err := deliverer.Deliver(ctx, Target{Source: "claude", SessionID: claudeSessionID, Environment: claudeEnvironment("/tmp/cc.sock"), Surface: cmuxSurface}, threadText)
+
+			Expect(err).To(MatchError(ContainSubstring(cmuxSurface.SurfaceID)))
+			Expect(errors.Is(err, ErrNoChannel)).To(Equal(wantNoChannel))
+		},
+		Entry("cmux binary missing", fmt.Errorf("%w: exec: \"cmux\": executable file not found in $PATH", cmux.ErrNotStarted), true),
+		Entry("cmux ran and failed", errors.New("cmux agent message failed (exit 1): socket closed"), false),
+	)
 
 	It("names the surface when cmux refuses the agent message", func() {
 		client := cmux.NewClient("")
