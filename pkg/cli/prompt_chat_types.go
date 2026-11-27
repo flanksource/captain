@@ -89,9 +89,12 @@ type ChatPermissionModeResponse struct {
 }
 
 type ChatMessageResponse struct {
-	RunID        string           `json:"runId"`
-	MessageID    string           `json:"messageId"`
-	Status       string           `json:"status"`
+	// RunID is empty when the message went into the session's own live process.
+	RunID     string `json:"runId,omitempty"`
+	MessageID string `json:"messageId"`
+	Status    string `json:"status"`
+	// Channel names how a message to a live process was delivered.
+	Channel      string           `json:"channel,omitempty"`
 	Capabilities ChatCapabilities `json:"capabilities"`
 }
 

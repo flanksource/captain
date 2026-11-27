@@ -208,20 +208,16 @@ func parseProviderHistory(source, path, providerID string) (*session.Session, er
 	}
 }
 
+// registerRecoveredSource binds the transcript for the monitor to ingest. The
+// recovered messages are served from the parse, not persisted, so the ingest
+// cursor must stay where the ingestor left it: advancing it to the file's size
+// would make the monitor skip bytes the store never held.
 func (q *Loader) registerRecoveredSource(
 	ctx context.Context,
 	sessionID uuid.UUID,
 	source, providerID, path string,
 ) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("%w for %s: stat %s: %v", ErrHistoryUnavailable, providerID, path, err)
-	}
-	return q.db.RegisterSessionSource(ctx, sessionID, database.IngestSourceInput{
-		SourceKind: source, Path: path, SourceIdentity: providerID,
-		ParserVersion: session.TranscriptParserVersion, ByteOffset: info.Size(), ObservedSize: info.Size(),
-		ObservedModTime: info.ModTime(),
-	})
+	return q.db.RegisterTranscriptSource(ctx, sessionID, source, path, providerID)
 }
 
 // providerForHistorySource names the provider a recovered transcript row

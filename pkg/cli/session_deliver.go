@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -86,6 +87,14 @@ func liveDeliveryTarget(ctx context.Context, id string) (deliver.Target, error) 
 	if err != nil {
 		return deliver.Target{}, err
 	}
+	return liveItemTarget(ctx, id, item)
+}
+
+// errSessionNotLive marks a session with no live process, the one failure of
+// liveItemTarget a message may recover from by resuming the saved session.
+var errSessionNotLive = errors.New("session has no live process")
+
+func liveItemTarget(ctx context.Context, id string, item SessionGetItem) (deliver.Target, error) {
 	live, err := RunSessionLive(ctx, SessionLiveOptions{Source: "all", All: true, Full: true})
 	if err != nil {
 		return deliver.Target{}, err
@@ -100,7 +109,9 @@ func liveDeliveryTarget(ctx context.Context, id string) (deliver.Target, error) 
 		}
 	}
 	if record == nil {
-		return deliver.Target{}, newChatError(http.StatusConflict, fmt.Sprintf("session %s has no live process", id))
+		return deliver.Target{}, chatHTTPError{
+			status: http.StatusConflict, msg: fmt.Sprintf("session %s has no live process", id), cause: errSessionNotLive,
+		}
 	}
 	var env map[string]string
 	if record.Source == "claude" {

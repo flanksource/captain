@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/flanksource/captain/pkg/session/deliver"
 	"github.com/google/uuid"
 )
 
@@ -105,6 +106,15 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 			writeChatJSON(w, http.StatusAccepted, response)
 			return
 		}
+		response, delivered, deliverErr := deliverLiveSessionMessage(r.Context(), item, request)
+		if deliverErr != nil {
+			writeChatError(w, deliverErr)
+			return
+		}
+		if delivered {
+			writeChatJSON(w, http.StatusAccepted, response)
+			return
+		}
 		response, resumeErr := resumeSessionMessage(r.Context(), item, request)
 		if resumeErr != nil {
 			writeChatError(w, resumeErr)
@@ -112,6 +122,37 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 		}
 		writeChatJSON(w, http.StatusAccepted, response)
 	}
+}
+
+// deliverLiveSessionMessage sends the message into the session's own live
+// process: its claude messaging socket first, then the cmux agent inbox. A
+// live session must never be resumed in a second process, so a live one with no
+// channel is a 422 rather than a fall-through; only a session with no live
+// process reports delivered=false and is left to resume.
+func deliverLiveSessionMessage(ctx context.Context, item SessionGetItem, request ChatMessageRequest) (ChatMessageResponse, bool, error) {
+	text := strings.TrimSpace(request.Text)
+	if text == "" {
+		return ChatMessageResponse{}, false, newChatError(http.StatusBadRequest, "message text is required")
+	}
+	target, err := liveItemTarget(ctx, item.CaptainID, item)
+	if errors.Is(err, errSessionNotLive) {
+		return ChatMessageResponse{}, false, nil
+	}
+	if err != nil {
+		return ChatMessageResponse{}, false, err
+	}
+	if _, err := deliver.ChooseChannel(target); err != nil {
+		return ChatMessageResponse{}, false, newChatError(http.StatusUnprocessableEntity, err.Error())
+	}
+	result, err := sessionDeliverer.Deliver(ctx, target, text)
+	if err != nil {
+		return ChatMessageResponse{}, false, newChatError(http.StatusBadGateway, err.Error())
+	}
+	messageID := strings.TrimSpace(request.MessageID)
+	if messageID == "" {
+		messageID = newMessageID()
+	}
+	return ChatMessageResponse{MessageID: messageID, Status: string(result.Status), Channel: string(result.Channel)}, true, nil
 }
 
 // resolveSessionItem resolves a captain session id or provider session id to

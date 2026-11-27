@@ -318,8 +318,8 @@ func worktreeRecoverySchema() *rpc.OpenAPISchema {
 // branch are both gone: the refusal and the WorktreeUnavailable offer.
 func worktreeUnavailableResponse() rpc.OpenAPIResponse {
 	return rpc.OpenAPIResponse{
-		Description: "Session state conflict; a resume whose worktree and branch are gone carries the recoveries it may retry with",
-		Content: map[string]rpc.OpenAPIMediaType{"application/json": {Schema: &rpc.OpenAPISchema{
+		Description: "Session state conflict. Most conflicts (run not ready for a message, run terminal, ambiguous session id) answer text/plain; a resume whose worktree and branch are gone answers JSON carrying the recoveries it may retry with",
+		Content: map[string]rpc.OpenAPIMediaType{"text/plain": {Schema: &rpc.OpenAPISchema{Type: "string"}}, "application/json": {Schema: &rpc.OpenAPISchema{
 			Type: "object", Required: []string{"error"},
 			Properties: map[string]*rpc.OpenAPISchema{
 				"error": {Type: "string"},
@@ -345,10 +345,12 @@ func permissionModeSchema() *rpc.OpenAPISchema {
 
 func chatMessageResponseSchema() *rpc.OpenAPISchema {
 	return &rpc.OpenAPISchema{
-		Type: "object", Required: []string{"runId", "messageId", "status", "capabilities"},
+		Type: "object", Required: []string{"messageId", "status", "capabilities"},
 		Properties: map[string]*rpc.OpenAPISchema{
-			"runId": {Type: "string"}, "messageId": {Type: "string"},
-			"status":       {Type: "string", Enum: []any{"steered", "queued", "started"}},
+			"runId":     {Type: "string", Description: "Absent when the message went into the session's own live process"},
+			"messageId": {Type: "string"},
+			"channel":   {Type: "string", Description: "How a message to a live process was delivered", Enum: []any{"claude-socket", "cmux-message", "codex-queue"}},
+			"status":    {Type: "string", Enum: []any{"steered", "queued", "started", "sent"}},
 			"capabilities": chatCapabilitiesSchema(),
 		},
 	}

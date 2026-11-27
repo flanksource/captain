@@ -47,11 +47,17 @@ func promptRunOwnerFromRecord(record promptRunRecord) *PromptRunOwner {
 	}
 }
 
+// ErrPromptRunDriven is a claim refused because another process still drives
+// the run.
+var ErrPromptRunDriven = errors.New("captain prompt run is driven by another process")
+
 // ClaimPromptRunOwner records owner as the driver of an unfinished run, with a
 // fresh heartbeat, and returns the claimed run. A claim replaces the one before
-// it: whoever admits a run, or replays its admission, is the process driving it
-// now.
-func (db *DB) ClaimPromptRunOwner(ctx context.Context, id uuid.UUID, owner PromptRunOwner) (*PromptRun, error) {
+// it, unless refuseIfDriven is set and judges the previous owner, another
+// process, still driving the run: that claim fails with ErrPromptRunDriven
+// instead of orphaning a driver that would keep executing the run. A nil
+// refuseIfDriven takes the run over unconditionally.
+func (db *DB) ClaimPromptRunOwner(ctx context.Context, id uuid.UUID, owner PromptRunOwner, refuseIfDriven PromptRunJudge) (*PromptRun, error) {
 	if err := db.requireGorm(); err != nil {
 		return nil, err
 	}
@@ -61,20 +67,35 @@ func (db *DB) ClaimPromptRunOwner(ctx context.Context, id uuid.UUID, owner Promp
 	if strings.TrimSpace(owner.HostID) == "" || owner.PID <= 0 || owner.StartedAt.IsZero() || owner.Token == uuid.Nil {
 		return nil, fmt.Errorf("%w: a prompt run owner needs a host, PID, start time and token", ErrInvalidPromptRun)
 	}
-	result := db.gorm.WithContext(ctx).Model(&promptRunRecord{}).
-		Where("id = ? AND state IN ?", id, claimablePromptRunStates).
-		Updates(map[string]any{
-			"owner_host_id": strings.TrimSpace(owner.HostID), "owner_pid": owner.PID,
-			"owner_started_at": owner.StartedAt.UTC(), "owner_token": owner.Token,
-			"owner_heartbeat_at": gorm.Expr("clock_timestamp()"),
-		})
-	if result.Error != nil {
-		return nil, fmt.Errorf("claim Captain prompt run %s: %w", id, result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return nil, fmt.Errorf("%w: prompt run %s does not exist or already finished", ErrPromptRunNotFound, id)
-	}
-	return db.GetPromptRun(ctx, id)
+	var claimed *PromptRun
+	err := db.Transaction(ctx, func(tx *DB) error {
+		var record promptRunRecord
+		lookup := tx.gorm.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND state IN ?", id, claimablePromptRunStates).Limit(1).Find(&record)
+		if lookup.Error != nil {
+			return fmt.Errorf("lock Captain prompt run %s: %w", id, lookup.Error)
+		}
+		if lookup.RowsAffected == 0 {
+			return fmt.Errorf("%w: prompt run %s does not exist or already finished", ErrPromptRunNotFound, id)
+		}
+		if previous := promptRunOwnerFromRecord(record); refuseIfDriven != nil && previous != nil && previous.Token != owner.Token {
+			if alive, reason := refuseIfDriven(promptRunFromRecord(record)); alive {
+				return fmt.Errorf("%w: %w: prompt run %s: %s", ErrPromptRunConflict, ErrPromptRunDriven, id, reason)
+			}
+		}
+		if err := tx.gorm.WithContext(ctx).Model(&promptRunRecord{}).Where("id = ?", id).
+			Updates(map[string]any{
+				"owner_host_id": strings.TrimSpace(owner.HostID), "owner_pid": owner.PID,
+				"owner_started_at": owner.StartedAt.UTC(), "owner_token": owner.Token,
+				"owner_heartbeat_at": gorm.Expr("clock_timestamp()"),
+			}).Error; err != nil {
+			return fmt.Errorf("claim Captain prompt run %s: %w", id, err)
+		}
+		var err error
+		claimed, err = tx.GetPromptRun(ctx, id)
+		return err
+	})
+	return claimed, err
 }
 
 // TouchPromptRunOwner refreshes the heartbeat of the claim token holds. It

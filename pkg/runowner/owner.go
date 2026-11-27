@@ -57,17 +57,30 @@ func Local() (database.PromptRunOwner, error) {
 	return localOwner, localErr
 }
 
+// ClaimOptions tunes Claim.
+type ClaimOptions struct {
+	TakeOver bool
+}
+
 // Claim records this process as the driver of run, keeps its heartbeat while
 // the run is unfinished, and returns the claimed run. db may be a transaction:
 // the heartbeat writes through the handle it was opened on, and stops by
 // itself once the run is settled, reclaimed or claimed elsewhere, or was never
 // committed.
-func Claim(ctx context.Context, db *database.DB, runID uuid.UUID) (*database.PromptRun, error) {
+//
+// A run another process still drives is not claimed (database.ErrPromptRunDriven)
+// unless opts.TakeOver says this process is deliberately replacing that driver,
+// as when it resumes a run parked on an approval.
+func Claim(ctx context.Context, db *database.DB, runID uuid.UUID, opts ClaimOptions) (*database.PromptRun, error) {
 	owner, err := Local()
 	if err != nil {
 		return nil, err
 	}
-	run, err := db.ClaimPromptRunOwner(ctx, runID, owner)
+	var refuseIfDriven database.PromptRunJudge
+	if !opts.TakeOver {
+		refuseIfDriven = Judge(time.Now())
+	}
+	run, err := db.ClaimPromptRunOwner(ctx, runID, owner, refuseIfDriven)
 	if err != nil {
 		return nil, err
 	}
