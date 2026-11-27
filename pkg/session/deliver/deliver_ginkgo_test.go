@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -50,6 +52,9 @@ var _ = Describe("ChooseChannel", func() {
 			ChannelCodexQueue),
 		Entry("claude without a messaging socket, in cmux",
 			Target{Source: "claude", SessionID: claudeSessionID, Surface: cmuxSurface},
+			ChannelCmuxMessage),
+		Entry("claude with an unusable socket, in cmux",
+			Target{Source: "claude", SessionID: claudeSessionID, Environment: map[string]string{EnvMessagingSocket: "/tmp/cc.sock"}, Surface: cmuxSurface},
 			ChannelCmuxMessage),
 	)
 
@@ -120,21 +125,25 @@ var _ = Describe("Deliver", func() {
 	It("fails naming the socket when claude is not listening", func() {
 		socket := filepath.Join(shortTempDir(), "gone.sock")
 		_, err := Deliverer{}.Deliver(ctx, Target{Source: "claude", SessionID: claudeSessionID, Environment: claudeEnvironment(socket)}, threadText)
-		Expect(err).To(MatchError(ContainSubstring(socket)))
+		Expect(err).To(And(MatchError(ErrNoChannel), MatchError(ContainSubstring(socket))))
 	})
 
 	It("queues the message on the codex thread named by its session id", func() {
+		const codexHome = "/codex/profile"
+		var home string
 		var args []string
-		deliverer := Deliverer{Codex: func(_ context.Context, argv ...string) error {
+		deliverer := Deliverer{Codex: func(_ context.Context, envHome string, argv ...string) error {
+			home = envHome
 			args = argv
 			return nil
 		}}
 
-		result, err := deliverer.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Surface: cmuxSurface}, threadText)
+		result, err := deliverer.Deliver(ctx, Target{Source: "codex", SessionID: codexThreadID, Environment: map[string]string{EnvCodexHome: codexHome}, Surface: cmuxSurface}, threadText)
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result).To(Equal(Result{Channel: ChannelCodexQueue, Status: StatusQueued}))
-		Expect(args).To(Equal([]string{"queue", "--thread", codexThreadID, "--message", threadText}))
+		Expect(home).To(Equal(codexHome))
+		Expect(args).To(Equal([]string{"queue", "--thread", codexThreadID, "--message=" + threadText}))
 	})
 
 	It("hands the message to cmux's agent inbox for the surface instead of typing into its prompt", func() {
@@ -154,6 +163,61 @@ var _ = Describe("Deliver", func() {
 		}))
 	})
 
+	It("queues on the cmux surface after the Claude socket refuses a connection", func() {
+		var calls []string
+		client := cmux.NewClient("")
+		client.Runner = func(_ context.Context, _, _ string, _ time.Duration, args ...string) (string, error) {
+			calls = append(calls, strings.Join(args, " "))
+			return "", nil
+		}
+		deliverer := Deliverer{Cmux: client, Dial: func(context.Context, string) (net.Conn, error) {
+			calls = append(calls, "dial")
+			return nil, os.ErrNotExist
+		}}
+
+		result, err := deliverer.Deliver(ctx, Target{Source: "claude", SessionID: claudeSessionID, Environment: claudeEnvironment("/tmp/cc.sock"), Surface: cmuxSurface}, threadText)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result).To(Equal(Result{Channel: ChannelCmuxMessage, Status: StatusQueued}))
+		Expect(calls).To(Equal([]string{"dial", "agent message surface:sf1 --from captain -- " + threadText}))
+	})
+
+	It("preserves a partial socket write error without sending again", func() {
+		conn, peer := net.Pipe()
+		DeferCleanup(peer.Close)
+		client := cmux.NewClient("")
+		client.Runner = func(context.Context, string, string, time.Duration, ...string) (string, error) {
+			Fail("cmux must not send a second copy")
+			return "", nil
+		}
+		deliverer := Deliverer{Cmux: client, Dial: func(context.Context, string) (net.Conn, error) {
+			return partialSocketWrite{Conn: conn}, nil
+		}}
+
+		_, err := deliverer.Deliver(ctx, Target{Source: "claude", SessionID: claudeSessionID, Environment: claudeEnvironment("/tmp/cc.sock"), Surface: cmuxSurface}, threadText)
+
+		Expect(err).To(MatchError(io.ErrUnexpectedEOF))
+	})
+
+	DescribeTable("after the Claude socket refuses a connection, permits a resume only when cmux never started",
+		func(cmuxErr error, wantNoChannel bool) {
+			client := cmux.NewClient("")
+			client.Runner = func(context.Context, string, string, time.Duration, ...string) (string, error) {
+				return "", cmuxErr
+			}
+			deliverer := Deliverer{Cmux: client, Dial: func(context.Context, string) (net.Conn, error) {
+				return nil, os.ErrNotExist
+			}}
+
+			_, err := deliverer.Deliver(ctx, Target{Source: "claude", SessionID: claudeSessionID, Environment: claudeEnvironment("/tmp/cc.sock"), Surface: cmuxSurface}, threadText)
+
+			Expect(err).To(MatchError(ContainSubstring(cmuxSurface.SurfaceID)))
+			Expect(errors.Is(err, ErrNoChannel)).To(Equal(wantNoChannel))
+		},
+		Entry("cmux binary missing", fmt.Errorf("%w: exec: \"cmux\": executable file not found in $PATH", cmux.ErrNotStarted), true),
+		Entry("cmux ran and failed", errors.New("cmux agent message failed (exit 1): socket closed"), false),
+	)
+
 	It("names the surface when cmux refuses the agent message", func() {
 		client := cmux.NewClient("")
 		client.Runner = func(_ context.Context, _, _ string, _ time.Duration, _ ...string) (string, error) {
@@ -165,6 +229,22 @@ var _ = Describe("Deliver", func() {
 		Expect(err).To(MatchError(And(ContainSubstring(cmuxSurface.SurfaceID), ContainSubstring("agent messages are off"))))
 	})
 })
+
+var _ = Describe("Codex queue rejection", func() {
+	DescribeTable("permits fallback only when the queue rejected the write",
+		func(code int, stderr string, want bool) {
+			Expect(codexQueueRejected(code, stderr)).To(Equal(want))
+		},
+		Entry("CLI without queue support", 2, "error: unrecognized subcommand 'queue'\n\nUsage: codex [COMMAND]", true),
+		Entry("daemon without queue support", 1, "Error: the local app-server daemon does not support thread/queue/add; update or restart the local app-server daemon: failed to queue session message", true),
+		Entry("thread absent from the app server", 1, "Error: failed to queue session message: thread/queue/add failed: failed to read thread: invalid thread-store request: no rollout found for thread id "+codexThreadID+" (code -32603)", true),
+		Entry("server disconnected during send", 1, "Error: failed to queue session message: transport closed", false),
+	)
+})
+
+type partialSocketWrite struct{ net.Conn }
+
+func (partialSocketWrite) Write([]byte) (int, error) { return 1, io.ErrUnexpectedEOF }
 
 // shortTempDir keeps unix socket paths under the 104-byte sun_path limit that
 // a nested GinkgoT().TempDir() on macOS exceeds.

@@ -2,9 +2,11 @@ package setup_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -107,6 +109,38 @@ func TestApply_ConsumesTheCheckoutAndIsIdempotent(t *testing.T) {
 	}
 	if req.Setup.Checkout != nil {
 		t.Errorf("Setup.Checkout = %+v after re-applying, want nil", req.Setup.Checkout)
+	}
+}
+
+// A spec decoded with an explicit zero inside the checkout records that field's
+// presence. Consuming the checkout must consume those markers too, or encoding
+// the rewritten spec (as the run recorder does) fails on a path that no longer
+// exists.
+func TestApply_ConsumedCheckoutStillEncodes(t *testing.T) {
+	repo := gitRepo(t)
+	var req ai.Request
+	spec := `{"setup":{"checkout":{"mode":"local","path":` + strconv.Quote(repo) +
+		`,"worktree":{"mode":"new","base":""}}}}`
+	if err := json.Unmarshal([]byte(spec), &req); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	res, err := setup.Apply(context.Background(), &req, t.TempDir())
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	t.Cleanup(func() {
+		if res != nil && res.Cleanup != nil {
+			_ = res.Cleanup()
+		}
+	})
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal after Apply: %v", err)
+	}
+	if strings.Contains(string(data), `"checkout"`) {
+		t.Errorf("encoded spec = %s, want no checkout once it has been performed", data)
 	}
 }
 

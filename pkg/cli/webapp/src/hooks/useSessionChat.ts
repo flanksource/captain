@@ -25,9 +25,58 @@ export type UseSessionChatOptions = {
   initialState?: ChatStateFrame;
   clearOnTerminal?: boolean;
   onTerminal?: () => Promise<unknown>;
+  /** The session's persisted transcript, which a message delivered to an
+   *  external live session reaches only once its provider writes it. */
+  transcript?: SessionUIMessage[];
   initialPermissionMode?: SpecPermissionMode;
   permissionModes?: SpecPermissionMode[];
 };
+
+/** How often the transcript is refreshed while a channel-delivered message
+ *  waits for its provider to write it and a reply. */
+export const DELIVERY_REFRESH_MS = 2_000;
+
+/** A message an external live session accepted, and the first transcript
+ *  occurrence of its text it may claim: those already there before it was sent
+ *  belong to earlier messages. */
+export type DeliveredMessage = { id: string; text: string; seen: number };
+
+/** Splits pending deliveries into those the transcript now holds, followed by
+ *  a message the agent wrote after them, and those still waiting. Providers
+ *  file a message under their own id and may wrap its text, so each delivery
+ *  claims its own user-message occurrence of the text, in send order; a
+ *  waiting delivery keeps the occurrence it claimed. */
+export function settleDeliveries(
+  transcript: SessionUIMessage[] | undefined,
+  delivered: DeliveredMessage[],
+): { settled: Set<string>; pending: DeliveredMessage[] } {
+  const claimed = new Map<string, number>();
+  const settled = new Set<string>();
+  const pending: DeliveredMessage[] = [];
+  for (const item of delivered) {
+    const occurrence = Math.max(item.seen, (claimed.get(item.text) ?? -1) + 1);
+    claimed.set(item.text, occurrence);
+    const index = deliveredTextIndexes(transcript, item.text)[occurrence];
+    const replied =
+      index !== undefined && transcript!.slice(index + 1).some((message) => message.role !== "user");
+    if (replied) settled.add(item.id);
+    else pending.push({ ...item, seen: occurrence });
+  }
+  return { settled, pending };
+}
+
+function deliveredTextIndexes(
+  transcript: SessionUIMessage[] | undefined,
+  text: string,
+): number[] {
+  const needle = text.trim();
+  return (transcript ?? []).flatMap((message, index) =>
+    message.role === "user" &&
+    message.parts.some((part) => part.type === "text" && part.text?.includes(needle))
+      ? [index]
+      : [],
+  );
+}
 
 /** Picks the permission mode a not-yet-live session should start selected on:
  *  the caller's initial mode when the runtime still honours it, else
@@ -54,8 +103,45 @@ export function useSessionChat(options: UseSessionChatOptions) {
       options.permissionModes,
     ),
   );
+  // A posture is sent only once it is known — recorded on the session, picked,
+  // or carried over from a live run — because a session that is still live
+  // refuses any posture it is not already running under.
+  const [permissionModeKnown, setPermissionModeKnown] = useState(
+    () =>
+      Boolean(options.initialPermissionMode) &&
+      selectInitialPermissionMode(options.initialPermissionMode, options.permissionModes) ===
+        options.initialPermissionMode,
+  );
+  const [delivered, setDelivered] = useState<DeliveredMessage[]>([]);
   const terminalHandled = useRef<string | undefined>(undefined);
   const stream = usePromptRunStream(activeRunID);
+  const onTerminal = useRef(options.onTerminal);
+  onTerminal.current = options.onTerminal;
+  const transcript = useRef(options.transcript);
+  transcript.current = options.transcript;
+
+  const refreshDelivered = useCallback(() => {
+    void onTerminal.current?.().catch((error: unknown) =>
+      setActionError(`Message accepted. Could not refresh the session. ${errorMessage(error)}`),
+    );
+  }, []);
+
+  // A delivered message stays visible until the transcript holds it and a
+  // reply, refreshed meanwhile: nothing else refetches an external session.
+  useEffect(() => {
+    if (delivered.length === 0) return;
+    const { settled, pending } = settleDeliveries(options.transcript, delivered);
+    if (settled.size === 0) return;
+    setOptimistic((current) => current.filter((item) => !item.id || !settled.has(item.id)));
+    setDelivered(pending);
+  }, [delivered, options.transcript]);
+
+  const awaitingDelivery = delivered.length > 0;
+  useEffect(() => {
+    if (!awaitingDelivery) return;
+    const timer = setInterval(refreshDelivered, DELIVERY_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [awaitingDelivery, refreshDelivered]);
 
   useEffect(() => {
     if (options.initialRunID) setActiveRunID(options.initialRunID);
@@ -119,8 +205,11 @@ export function useSessionChat(options: UseSessionChatOptions) {
 
   // The next resumed run should continue in whatever posture the live run ended on.
   useEffect(() => {
-    if (livePermissionMode) setLocalPermissionMode(livePermissionMode);
+    if (!livePermissionMode) return;
+    setLocalPermissionMode(livePermissionMode);
+    setPermissionModeKnown(true);
   }, [livePermissionMode]);
+  const sessionPermissionMode = permissionModeKnown ? permissionMode : undefined;
 
   const send = useCallback(
     async (text: string) => {
@@ -128,6 +217,9 @@ export function useSessionChat(options: UseSessionChatOptions) {
       const message = userMessage(messageID, text);
       setOptimistic((current) => mergeSessionMessages(current, [message]));
       setActionError(undefined);
+      // Counted before sending, so a copy written while the request is in
+      // flight counts as this message's.
+      const seen = deliveredTextIndexes(transcript.current, text).length;
       try {
         const sessionID = options.sessionID ?? stream.summary?.sessionId;
         const active =
@@ -151,7 +243,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
               `/api/captain/sessions/${encodeURIComponent(sessionID)}/message`,
               text,
               messageID,
-              permissionMode,
+              sessionPermissionMode,
             );
           }
         } else {
@@ -160,10 +252,14 @@ export function useSessionChat(options: UseSessionChatOptions) {
             `/api/captain/sessions/${encodeURIComponent(sessionID)}/message`,
             text,
             messageID,
-            permissionMode,
+            sessionPermissionMode,
           );
         }
-        if (response.runId !== activeRunID) {
+        if (response.channel) {
+          setActiveRunID(undefined);
+          setDelivered((current) => [...current, { id: messageID, text, seen }]);
+          refreshDelivered();
+        } else if (response.runId !== activeRunID) {
           terminalHandled.current = undefined;
           setActiveRunID(response.runId);
         }
@@ -177,7 +273,8 @@ export function useSessionChat(options: UseSessionChatOptions) {
     [
       activeRunID,
       options.sessionID,
-      permissionMode,
+      refreshDelivered,
+      sessionPermissionMode,
       stream.status,
       stream.summary?.sessionId,
     ],
@@ -187,6 +284,7 @@ export function useSessionChat(options: UseSessionChatOptions) {
     async (mode: SpecPermissionMode) => {
       if (!isLiveRun) {
         setLocalPermissionMode(mode);
+        setPermissionModeKnown(true);
         return;
       }
       if (!activeRunID) return;

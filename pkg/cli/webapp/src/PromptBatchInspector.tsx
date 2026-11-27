@@ -84,6 +84,9 @@ export function PromptBatchInspector({
     onTerminal: async () => {
       await query.refetch();
     },
+    transcript: query.data?.sessions.find(
+      (item) => item.captainId === target?.sessionId,
+    )?.detail?.messages,
   });
 
   useEffect(() => {

@@ -58,12 +58,15 @@ type PromptRun struct {
 	ApprovalState        *api.ToolApprovalState `json:"-"`
 	ProviderCheckpoint   *PromptRunCheckpoint   `json:"-"`
 	Error                string                 `json:"error,omitempty"`
-	Version              int64                  `json:"version"`
-	QueuedAt             time.Time              `json:"queuedAt"`
-	StartedAt            *time.Time             `json:"startedAt,omitempty"`
-	FinishedAt           *time.Time             `json:"finishedAt,omitempty"`
-	CreatedAt            time.Time              `json:"createdAt"`
-	UpdatedAt            time.Time              `json:"updatedAt"`
+	// Owner is the process driving the run; nil for a run admitted before
+	// ownership was recorded.
+	Owner      *PromptRunOwner `json:"owner,omitempty"`
+	Version    int64           `json:"version"`
+	QueuedAt   time.Time       `json:"queuedAt"`
+	StartedAt  *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	UpdatedAt  time.Time       `json:"updatedAt"`
 }
 
 type PromptRunCheckpoint struct {
@@ -152,6 +155,11 @@ type promptRunRecord struct {
 	ProviderCheckpointVersion *int                   `gorm:"column:provider_checkpoint_version"`
 	ProviderCheckpoint        []byte                 `gorm:"column:provider_checkpoint"`
 	Error                     *string                `gorm:"column:error"`
+	OwnerHostID               *string                `gorm:"column:owner_host_id"`
+	OwnerPID                  *int64                 `gorm:"column:owner_pid"`
+	OwnerStartedAt            *time.Time             `gorm:"column:owner_started_at"`
+	OwnerToken                *uuid.UUID             `gorm:"column:owner_token;type:uuid"`
+	OwnerHeartbeatAt          *time.Time             `gorm:"column:owner_heartbeat_at"`
 	Version                   int64                  `gorm:"column:version"`
 	QueuedAt                  time.Time              `gorm:"column:queued_at"`
 	StartedAt                 *time.Time             `gorm:"column:started_at"`

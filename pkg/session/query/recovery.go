@@ -30,12 +30,11 @@ func (q *Loader) recoverMessages(
 	if providerID == "" {
 		return nil, fmt.Errorf("%w: terminal chat session %s has no provider session ID", ErrHistoryUnavailable, overview.ID)
 	}
-	transcript, err := q.db.GetTranscriptSession(ctx, overview.ID)
-	if err != nil && !errors.Is(err, database.ErrSessionNotFound) {
+	transcript, err := q.transcriptSession(ctx, overview)
+	if err != nil {
 		return nil, err
 	}
-	source := providerHistorySource(overview, transcript)
-	path, err := locateProviderHistory(source, providerID, transcript)
+	source, path, err := locateProviderHistory(providerHistorySource(overview, transcript), providerID, transcript)
 	if err != nil {
 		return nil, fmt.Errorf("%w for %s: %v", ErrHistoryUnavailable, providerID, err)
 	}
@@ -58,6 +57,20 @@ func (q *Loader) recoverMessages(
 	}
 	providerMessages, _ := recovered.ToUIMessages()
 	return mergeRecoveredMessages(cached, providerMessages, recovered.Turns, turns), nil
+}
+
+// transcriptSession is the row that holds the session's provider transcript:
+// the session itself when a monitor ingested it from that transcript, else its
+// transcript child; nil when it has neither yet.
+func (q *Loader) transcriptSession(ctx context.Context, overview database.SessionOverview) (*database.Session, error) {
+	if api.IsTranscriptSource(overview.Source) {
+		return q.db.GetSession(ctx, overview.ID)
+	}
+	transcript, err := q.db.GetTranscriptSession(ctx, overview.ID)
+	if errors.Is(err, database.ErrSessionNotFound) {
+		return nil, nil
+	}
+	return transcript, err
 }
 
 func needsProviderHistory(overview database.SessionOverview, turns []database.SessionTurn, messages []session.Message) bool {
@@ -112,34 +125,44 @@ func providerHistorySource(overview database.SessionOverview, transcript *databa
 	return provider.AgentName
 }
 
-func locateProviderHistory(source, providerID string, transcript *database.Session) (string, error) {
-	if transcript != nil && strings.TrimSpace(transcript.Path) != "" {
+// locateProviderHistory finds the transcript of providerID and the source it
+// is written in. With no known source it searches both Claude and Codex history,
+// and the history it is found in names the source.
+func locateProviderHistory(source, providerID string, transcript *database.Session) (string, string, error) {
+	if source != "" && transcript != nil && strings.TrimSpace(transcript.Path) != "" {
 		if _, err := os.Stat(transcript.Path); err == nil {
-			return transcript.Path, nil
+			return source, transcript.Path, nil
 		}
 	}
+	var path string
+	var err error
 	switch source {
-	case "claude":
-		return history.FindSessionFile(providerID)
+	case api.TranscriptSourceClaude:
+		path, err = history.FindSessionFile(providerID)
 	case api.TranscriptSourceAPI:
-		return history.APITranscriptPath(providerID)
-	case "codex":
-		return findCodexHistory(providerID)
+		path, err = history.APITranscriptPath(providerID)
+	case api.TranscriptSourceCodex:
+		path, err = findCodexHistory(providerID)
 	case "":
-		claudePath, claudeErr := history.FindSessionFile(providerID)
-		codexPath, codexErr := findCodexHistory(providerID)
-		if claudeErr == nil && codexErr != nil {
-			return claudePath, nil
-		}
-		if codexErr == nil && claudeErr != nil {
-			return codexPath, nil
-		}
-		if claudeErr == nil {
-			return "", fmt.Errorf("provider session exists in both Claude and Codex history")
-		}
-		return "", errors.Join(claudeErr, codexErr)
+		return searchProviderHistory(providerID)
 	default:
-		return "", fmt.Errorf("unsupported provider history source %q", source)
+		err = fmt.Errorf("unsupported provider history source %q", source)
+	}
+	return source, path, err
+}
+
+func searchProviderHistory(providerID string) (string, string, error) {
+	claudePath, claudeErr := history.FindSessionFile(providerID)
+	codexPath, codexErr := findCodexHistory(providerID)
+	switch {
+	case claudeErr == nil && codexErr == nil:
+		return "", "", fmt.Errorf("provider session %s exists in both Claude (%s) and Codex (%s) history", providerID, claudePath, codexPath)
+	case claudeErr == nil:
+		return api.TranscriptSourceClaude, claudePath, nil
+	case codexErr == nil:
+		return api.TranscriptSourceCodex, codexPath, nil
+	default:
+		return "", "", errors.Join(claudeErr, codexErr)
 	}
 }
 
@@ -181,24 +204,20 @@ func parseProviderHistory(source, path, providerID string) (*session.Session, er
 		}
 		return recovered, nil
 	default:
-		return nil, fmt.Errorf("cannot determine provider history source")
+		return nil, fmt.Errorf("cannot parse provider history of source %q at %s", source, path)
 	}
 }
 
+// registerRecoveredSource binds the transcript for the monitor to ingest. The
+// recovered messages are served from the parse, not persisted, so the ingest
+// cursor must stay where the ingestor left it: advancing it to the file's size
+// would make the monitor skip bytes the store never held.
 func (q *Loader) registerRecoveredSource(
 	ctx context.Context,
 	sessionID uuid.UUID,
 	source, providerID, path string,
 ) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("%w for %s: stat %s: %v", ErrHistoryUnavailable, providerID, path, err)
-	}
-	return q.db.RegisterSessionSource(ctx, sessionID, database.IngestSourceInput{
-		SourceKind: source, Path: path, SourceIdentity: providerID,
-		ParserVersion: session.TranscriptParserVersion, ByteOffset: info.Size(), ObservedSize: info.Size(),
-		ObservedModTime: info.ModTime(),
-	})
+	return q.db.RegisterTranscriptSource(ctx, sessionID, source, path, providerID)
 }
 
 // providerForHistorySource names the provider a recovered transcript row

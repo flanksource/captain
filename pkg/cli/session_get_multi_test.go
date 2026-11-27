@@ -118,6 +118,25 @@ var _ = Describe("session get multi-result output", func() {
 		}}))
 	})
 
+	DescribeTable("resolves the permission mode a continued session starts from",
+		func(recorded api.PermissionMode, prompt string, want api.PermissionMode) {
+			detail := &session.Session{PermissionMode: recorded, Prompt: json.RawMessage(prompt)}
+
+			Expect(applyLaunchPermissionMode(detail)).To(Succeed())
+
+			Expect(detail.PermissionMode).To(Equal(want))
+		},
+		Entry("launch spec posture when the transcript recorded none", api.PermissionMode(""), `{"permissions":{"mode":"auto"}}`, api.PermissionAuto),
+		Entry("the transcript's last switch over the launch posture", api.PermissionPlan, `{"permissions":{"mode":"auto"}}`, api.PermissionPlan),
+		Entry("nothing for an external session without a launch spec", api.PermissionMode(""), ``, api.PermissionMode("")),
+	)
+
+	It("fails on a launch spec that cannot be decoded", func() {
+		detail := &session.Session{Prompt: json.RawMessage(`{"permissions":"auto"}`)}
+
+		Expect(applyLaunchPermissionMode(detail)).To(MatchError(ContainSubstring("decode launch spec permissions")))
+	})
+
 	DescribeTable("projects each runtime mode into session detail",
 		func(mode api.RuntimeMode) {
 			detail := &session.Session{}

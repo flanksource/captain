@@ -115,6 +115,7 @@ function SessionGetItemDetail({
     initialState: item.chatState,
     clearOnTerminal: true,
     onTerminal: onRefresh,
+    transcript: item.detail?.messages,
     initialPermissionMode: item.detail?.permissionMode,
     permissionModes: item.permissionModes,
   });

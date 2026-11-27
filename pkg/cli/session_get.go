@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	clickyapi "github.com/flanksource/clicky/api"
 	rpchttp "github.com/flanksource/clicky/rpc/http"
 	"github.com/flanksource/commons/logger"
+	"github.com/google/uuid"
 )
 
 type SessionGetResult struct {
@@ -147,7 +149,11 @@ func primaryFoldedSession(id string, sessions []sessionquery.FoldedOverview) (se
 	switch {
 	case len(sessions) == 0:
 		return sessionquery.FoldedOverview{}, fmt.Errorf("%w: session %s not found", database.ErrSessionNotFound, id)
-	case len(sessions) == 1, sessions[0].Session.ParentSessionID == nil:
+	case len(sessions) == 1:
+		return sessions[0], nil
+	}
+	root := sessions[0].Session
+	if parsed, err := uuid.Parse(id); err == nil && root.ID == parsed && root.ParentSessionID == nil && root.RootSessionID == nil {
 		return sessions[0], nil
 	}
 	return sessionquery.FoldedOverview{}, fmt.Errorf("%w: session id %s is ambiguous: it names %d unrelated sessions",
@@ -188,6 +194,9 @@ func buildSessionGetItem(ctx context.Context, db sessionGetStore, folded session
 	}
 	item.DetailSource = provenance.Facets()
 	enrichSessionDetail(detail, item.Summary)
+	if err := applyLaunchPermissionMode(detail); err != nil {
+		return SessionGetItem{}, fmt.Errorf("session %s: %w", overview.ID, err)
+	}
 	foldDetailUsage(&item.Summary, detail)
 	// A question is not waiting on a person while the agent still has the turn: a
 	// chat running on the session, or the agent's own process still alive (an
@@ -399,6 +408,24 @@ func foldDetailUsage(summary *SessionRecord, detail *session.Session) {
 		summary.CostUSD = detail.Cost.Total()
 	}
 	summary.Health = deriveSessionHealth(*summary)
+}
+
+// applyLaunchPermissionMode falls back to the posture a captain-launched run
+// started in when its transcript recorded no switch (Claude writes a
+// permission-mode entry only on a change), so a continued session starts where
+// the previous one ran.
+func applyLaunchPermissionMode(detail *session.Session) error {
+	if detail.PermissionMode != "" || len(detail.Prompt) == 0 {
+		return nil
+	}
+	var spec struct {
+		Permissions api.Permissions `json:"permissions"`
+	}
+	if err := json.Unmarshal(detail.Prompt, &spec); err != nil {
+		return fmt.Errorf("decode launch spec permissions: %w", err)
+	}
+	detail.PermissionMode = spec.Permissions.Mode
+	return nil
 }
 
 func enrichSessionDetail(detail *session.Session, summary SessionRecord) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
+	"github.com/flanksource/captain/pkg/runowner"
 	"github.com/flanksource/captain/pkg/runtimeprofiles"
 	"github.com/flanksource/captain/pkg/sessiontree"
 	"github.com/google/uuid"
@@ -116,7 +117,9 @@ func (p Placement) resolve(ctx context.Context, tx *database.DB) (*database.Sess
 // metadata (in.RuntimePresets, in.RuntimeProfile), then the host's Link — all
 // in one transaction, which a Link error rolls back. A replayed AdmissionKey
 // resolves the run already admitted; one that already finished is
-// ErrRunFinished. Run admits through it before dispatch.
+// ErrRunFinished. This process claims the admitted run as its driver (see
+// runowner), and a session held by a run whose driver is gone is reclaimed
+// first. Run admits through it before dispatch.
 func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 	rec := in.Record
 	if rec == nil {
@@ -145,7 +148,7 @@ func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 		if err != nil {
 			return fmt.Errorf("promptrun: place run: %w", err)
 		}
-		run, err := tx.CreatePromptRun(ctx, database.CreatePromptRunInput{
+		run, err := createRun(ctx, tx, database.CreatePromptRunInput{
 			ID: rec.PromptRunID, SessionID: session.ID, BatchID: rec.BatchID, ParentRunID: rec.ParentRunID,
 			InputPlanID: rec.InputPlanID, InputPlanRevisionID: rec.InputPlanRevisionID,
 			Origin: rec.Origin, SpecProfile: rec.SpecProfile, AdmissionKey: rec.AdmissionKey,
@@ -158,6 +161,9 @@ func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 		if finishedRun(run.State) {
 			return fmt.Errorf("%w: admission resolved run %s, which is %s", ErrRunFinished, run.ID, run.State)
 		}
+		if run, err = runowner.Claim(ctx, tx, run.ID, runowner.ClaimOptions{}); err != nil {
+			return fmt.Errorf("promptrun: claim run: %w", err)
+		}
 		if rec.Link != nil {
 			if err := rec.Link(ctx, tx, run); err != nil {
 				return fmt.Errorf("promptrun: link run %s: %w", run.ID, err)
@@ -167,6 +173,23 @@ func Admit(ctx context.Context, in Input) (*database.PromptRun, error) {
 		return nil
 	})
 	return out, err
+}
+
+// createRun files the run, first reclaiming the run holding its session when
+// nothing drives that one any more: a driver that exited before settling its
+// run would otherwise lock the session for good. A held session is retried
+// once whatever the reclaim found, so the conflict names whichever run holds
+// it now — a contender's fresh run, when two admissions reclaimed together.
+func createRun(ctx context.Context, tx *database.DB, input database.CreatePromptRunInput) (*database.PromptRun, error) {
+	run, err := tx.CreatePromptRun(ctx, input)
+	var held *database.ActiveRunConflictError
+	if !errors.As(err, &held) {
+		return run, err
+	}
+	if _, err := runowner.Reclaim(ctx, tx, held.Run.ID); err != nil {
+		return nil, fmt.Errorf("reclaim run %s holding session %s: %w", held.Run.ID, held.SessionID, err)
+	}
+	return tx.CreatePromptRun(ctx, input)
 }
 
 // SpecDocument is the spec as the plain JSON object rendered_spec stores. Every

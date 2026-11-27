@@ -64,6 +64,18 @@ type DB struct {
 	gorm   *gorm.DB
 	owned  bool
 	schema string
+	// root is the handle a transaction was opened on; nil outside one.
+	root *DB
+}
+
+// Root is the handle this one's transaction was opened on, or db itself
+// outside a transaction: what outlives the transaction, for work that must
+// keep writing after it commits.
+func (db *DB) Root() *DB {
+	if db.root != nil {
+		return db.root
+	}
+	return db
 }
 
 type dependencies struct {
@@ -192,7 +204,7 @@ func (db *DB) Transaction(ctx context.Context, fn func(*DB) error) error {
 		return errors.New("captain database transaction callback is nil")
 	}
 	return db.gorm.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return fn(&DB{gorm: tx, schema: db.schema})
+		return fn(&DB{gorm: tx, schema: db.schema, root: db.Root()})
 	})
 }
 

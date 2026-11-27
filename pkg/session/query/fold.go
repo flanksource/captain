@@ -61,11 +61,12 @@ func FoldTranscripts(ctx context.Context, store FoldStore, overviews []database.
 		return len(folded) - 1
 	}
 	for _, row := range overviews {
-		if !isTranscriptChild(row) {
+		ownerID := row.ParentRelation.CanonicalSessionID(row.ID, row.ParentSessionID)
+		if ownerID == row.ID {
 			slot(row)
 			continue
 		}
-		parent, ok := resolved[*row.ParentSessionID]
+		parent, ok := resolved[ownerID]
 		if !ok {
 			loaded, err := loadTranscriptParent(ctx, store, row)
 			if err != nil {
@@ -103,10 +104,6 @@ func reparentOntoFolded(folded []FoldedOverview) {
 			folded[i].Session.ParentSessionID = &owner
 		}
 	}
-}
-
-func isTranscriptChild(row database.SessionOverview) bool {
-	return row.ParentRelation == database.SessionParentRelationTranscript && row.ParentSessionID != nil
 }
 
 func loadTranscriptParent(ctx context.Context, store OverviewStore, child database.SessionOverview) (database.SessionOverview, error) {

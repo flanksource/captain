@@ -62,11 +62,15 @@ var _ = Describe("resuming a session in its recorded worktree", func() {
 		return &api.WorkspaceRecord{Cwd: worktree.Path, Worktree: &worktree}
 	}
 
-	resume := func(ctx context.Context) (PromptRenderResult, error) {
+	resumeWith := func(ctx context.Context, recovery WorktreeRecovery) (PromptRenderResult, error) {
 		GinkgoHelper()
 		item, err := resolveSessionItem(ctx, admission.ID.String())
 		Expect(err).NotTo(HaveOccurred())
-		return resumeRenderResult(ctx, item, ChatMessageRequest{Text: "continue", Model: "claude-opus-5-5"})
+		return resumeRenderResult(ctx, item, ChatMessageRequest{Text: "continue", Model: "claude-opus-5-5", Worktree: recovery})
+	}
+	resume := func(ctx context.Context) (PromptRenderResult, error) {
+		GinkgoHelper()
+		return resumeWith(ctx, "")
 	}
 
 	expectRecreates := func(rendered PromptRenderResult, want api.WorktreeState) {
@@ -117,6 +121,19 @@ var _ = Describe("resuming a session in its recorded worktree", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		expectRecreates(rendered, state)
+	})
+
+	It("asks how to continue once the branch is gone, then continues on the chosen recovery", func(ctx SpecContext) {
+		recordRun(ctx, admission.ID, workspaceOf(state))
+		resumeTestGit(state.Repo, "branch", "-D", resumeTestBranch)
+
+		_, err := resume(ctx)
+		Expect(chatErrorStatus(err)).To(Equal(http.StatusConflict))
+
+		rendered, err := resumeWith(ctx, WorktreeRecoveryHead)
+		Expect(err).NotTo(HaveOccurred())
+		expectRecreates(rendered, state)
+		Expect(resumeTestGit(state.Repo, "rev-parse", "refs/heads/"+resumeTestBranch)).To(Equal(state.Head))
 	})
 
 	DescribeTable("reports the directory unavailable when no run recorded a worktree there",

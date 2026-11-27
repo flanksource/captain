@@ -1,7 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SessionUIMessage } from "@flanksource/clicky-ui/ai";
 import {
+  DELIVERY_REFRESH_MS,
   selectInitialPermissionMode,
+  settleDeliveries,
   useSessionChat,
 } from "./useSessionChat";
 import type { ChatStateFrame, PromptRunStreamState } from "./usePromptRunStream";
@@ -66,6 +69,50 @@ function liveChatState(
     ...overrides,
   };
 }
+
+function userText(id: string, text: string): SessionUIMessage {
+  return { id, role: "user", parts: [{ type: "text", text }] };
+}
+
+function assistantText(id: string, text: string): SessionUIMessage {
+  return { id, role: "assistant", parts: [{ type: "text", text }] };
+}
+
+describe("settleDeliveries", () => {
+  it("does not count an assistant reply that repeats the delivered text as its copy", () => {
+    const transcript = [userText("t1", "hello"), assistantText("t2", "hello, how can I help?")];
+
+    const { settled, pending } = settleDeliveries(transcript, [{ id: "m1", text: "hello", seen: 0 }]);
+
+    expect({ settled: [...settled], pending }).toEqual({ settled: ["m1"], pending: [] });
+  });
+
+  it("settles each of two identical deliveries only against its own transcript copy", () => {
+    const delivered = [
+      { id: "m1", text: "retry", seen: 0 },
+      { id: "m2", text: "retry", seen: 0 },
+    ];
+    const first = [userText("t1", "retry"), assistantText("t2", "on it")];
+
+    const afterFirst = settleDeliveries(first, delivered);
+    const afterSecond = settleDeliveries(
+      [...first, userText("t3", "retry"), assistantText("t4", "again")],
+      afterFirst.pending,
+    );
+
+    expect({ settled: [...afterFirst.settled], pending: afterFirst.pending }).toEqual({
+      settled: ["m1"],
+      pending: [{ id: "m2", text: "retry", seen: 1 }],
+    });
+    expect([...afterSecond.settled]).toEqual(["m2"]);
+  });
+
+  it("waits for the agent's reply after the delivered copy", () => {
+    const { settled } = settleDeliveries([userText("t1", "hello")], [{ id: "m1", text: "hello", seen: 0 }]);
+
+    expect(settled.size).toBe(0);
+  });
+});
 
 describe("selectInitialPermissionMode", () => {
   it("honors the initial mode when the runtime still offers it", () => {
@@ -147,7 +194,94 @@ describe("useSessionChat permission mode selection", () => {
   });
 });
 
-describe("useSessionChat send() permission mode body", () => {
+describe("useSessionChat send()", () => {
+  it.each([["claude-socket", "sent"], ["codex-queue", "queued"]])("refreshes the transcript after %s delivery without opening a prompt stream", async (channel, status) => {
+    usePromptRunStreamMock.mockReturnValue(streamState());
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+      messageId: "m1",
+      status,
+      channel,
+      capabilities: { ...liveCapabilities, interrupt: false },
+    })));
+    const onTerminal = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() =>
+      useSessionChat({ sessionID: "session-1", onTerminal }),
+    );
+
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    expect(onTerminal).toHaveBeenCalledOnce();
+    expect(result.current).toMatchObject({
+      activeRunID: undefined,
+      messages: [{ role: "user", parts: [{ type: "text", text: "hello" }] }],
+      actionError: undefined,
+    });
+  });
+
+  it("settles a delivery whose copy and reply arrive while its request is in flight", async () => {
+    usePromptRunStreamMock.mockReturnValue(streamState());
+    let respond!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise<Response>((resolve) => (respond = resolve))));
+    const { result, rerender } = renderHook(
+      ({ transcript }: { transcript: SessionUIMessage[] }) =>
+        useSessionChat({ sessionID: "session-1", onTerminal: vi.fn().mockResolvedValue(undefined), transcript }),
+      { initialProps: { transcript: [] as SessionUIMessage[] } },
+    );
+
+    let sent!: Promise<void>;
+    act(() => {
+      sent = result.current.send("hello");
+    });
+    rerender({ transcript: [userText("t1", "hello"), assistantText("t2", "hi")] });
+    await act(async () => {
+      respond(jsonResponse({ messageId: "m1", status: "sent", channel: "claude-socket", capabilities: liveCapabilities }));
+      await sent;
+    });
+
+    expect(result.current.messages).toEqual([]);
+  });
+
+  it("keeps refreshing and showing a delivered message until the transcript holds it and a reply", async () => {
+    vi.useFakeTimers();
+    try {
+      usePromptRunStreamMock.mockReturnValue(streamState());
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({
+        messageId: "m1", status: "sent", channel: "claude-socket", capabilities: liveCapabilities,
+      })));
+      const onTerminal = vi.fn().mockResolvedValue(undefined);
+      const earlier: SessionUIMessage = { id: "t0", role: "user", parts: [{ type: "text", text: "hello" }] };
+      const { result, rerender } = renderHook(
+        ({ transcript }: { transcript: SessionUIMessage[] }) =>
+          useSessionChat({ sessionID: "session-1", onTerminal, transcript }),
+        { initialProps: { transcript: [earlier] } },
+      );
+
+      await act(async () => {
+        await result.current.send("hello");
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DELIVERY_REFRESH_MS * 2);
+      });
+      expect(onTerminal).toHaveBeenCalledTimes(3);
+
+      const written: SessionUIMessage = { id: "t1", role: "user", parts: [{ type: "text", text: "hello" }] };
+      rerender({ transcript: [earlier, written] });
+      expect(result.current.messages).toHaveLength(1);
+
+      const reply: SessionUIMessage = { id: "t2", role: "assistant", parts: [{ type: "text", text: "hi" }] };
+      rerender({ transcript: [earlier, written, reply] });
+      expect(result.current.messages).toEqual([]);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DELIVERY_REFRESH_MS * 2);
+      });
+      expect(onTerminal).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("includes permissionMode when posting directly to the session-message endpoint", async () => {
     usePromptRunStreamMock.mockReturnValue(streamState());
     const fetchMock = vi.fn().mockResolvedValue(
@@ -180,6 +314,34 @@ describe("useSessionChat send() permission mode body", () => {
       text: "hello",
       permissionMode: "auto",
     });
+  });
+
+  it.each([
+    ["no posture is recorded", undefined, ["default", "auto"], undefined],
+    ["the recorded posture is not offered", "dontAsk", ["default", "plan"], undefined],
+    ["the user picks one", undefined, ["default", "plan"], "plan"],
+  ] as const)("sends a permission mode to the session-message endpoint only when known: %s", async (_name, initial, modes, picked) => {
+    usePromptRunStreamMock.mockReturnValue(streamState());
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ messageId: "m1", status: "sent", channel: "claude-socket", capabilities: liveCapabilities }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() =>
+      useSessionChat({ sessionID: "session-1", initialPermissionMode: initial, permissionModes: [...modes] }),
+    );
+    if (picked) {
+      await act(async () => {
+        await result.current.setPermissionMode(picked);
+      });
+    }
+
+    await act(async () => {
+      await result.current.send("hello");
+    });
+
+    const body = requestBody(fetchMock, 0);
+    if (picked) expect(body).toMatchObject({ permissionMode: picked });
+    else expect(body).not.toHaveProperty("permissionMode");
   });
 
   it("omits permissionMode when posting to the run-message endpoint of a live run", async () => {

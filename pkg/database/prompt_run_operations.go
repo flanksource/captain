@@ -111,6 +111,21 @@ func (db *DB) CreatePromptRun(ctx context.Context, input CreatePromptRunInput) (
 	return db.GetPromptRun(ctx, existing.ID)
 }
 
+// ActiveRunConflictError is an admission that lost to
+// captain_prompt_runs_active_session_key: Run is the run holding the session.
+// It is an ErrPromptRunConflict.
+type ActiveRunConflictError struct {
+	SessionID uuid.UUID
+	Run       PromptRun
+}
+
+func (e *ActiveRunConflictError) Error() string {
+	return fmt.Sprintf("%s: session %s already has run %s in state %s",
+		ErrPromptRunConflict, e.SessionID, e.Run.ID, e.Run.State)
+}
+
+func (e *ActiveRunConflictError) Unwrap() error { return ErrPromptRunConflict }
+
 // activeSessionRunConflict explains an insert that lost to
 // captain_prompt_runs_active_session_key by naming the run already in flight on
 // that session. The caller cannot act on "a unique index rejected this"; it can
@@ -124,8 +139,7 @@ func activeSessionRunConflict(ctx context.Context, db *DB, sessionID uuid.UUID) 
 	if err != nil {
 		return fmt.Errorf("%w: session %s already has an active run", ErrPromptRunConflict, sessionID)
 	}
-	return fmt.Errorf("%w: session %s already has run %s in state %s",
-		ErrPromptRunConflict, sessionID, blocking.ID, blocking.State)
+	return &ActiveRunConflictError{SessionID: sessionID, Run: promptRunFromRecord(blocking)}
 }
 
 func (db *DB) GetPromptRun(ctx context.Context, id uuid.UUID) (*PromptRun, error) {
@@ -392,7 +406,8 @@ func promptRunFromRecord(record promptRunRecord) PromptRun {
 		VerificationMarkdown: optionalString(record.VerificationMarkdown), Phase: record.Phase, State: record.State,
 		CurrentIteration: record.CurrentIteration, ResultText: optionalString(record.ResultText), ResultJSON: record.ResultJSON,
 		Workspace: record.Workspace, ApprovalState: record.ApprovalState, ProviderCheckpoint: checkpoint,
-		Error: optionalString(record.Error), Version: record.Version, QueuedAt: record.QueuedAt, StartedAt: record.StartedAt,
+		Error: optionalString(record.Error), Owner: promptRunOwnerFromRecord(record), Version: record.Version,
+		QueuedAt: record.QueuedAt, StartedAt: record.StartedAt,
 		FinishedAt: record.FinishedAt, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
 	}
 }

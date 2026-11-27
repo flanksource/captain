@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/flanksource/captain/pkg/api"
+	"github.com/flanksource/captain/pkg/session/deliver"
 	"github.com/flanksource/clicky/rpc"
 )
 
@@ -65,9 +66,10 @@ func addCaptainSessionChatPaths(spec *rpc.OpenAPISpec) {
 		Name: "id", In: "path", Required: true, Description: "Captain session id or provider session id",
 		Schema: &rpc.OpenAPISchema{Type: "string"},
 	}
-	spec.Paths["/api/captain/sessions/{id}/message"] = rpc.OpenAPIPath{
-		"post": promptRunOperation("messageSession", "Continue a saved or active session", session, chatMessageRequestBody(), jsonResponse(chatMessageResponseSchema())),
-	}
+	message := promptRunOperation("messageSession", "Continue a saved or active session", session, chatMessageRequestBody(), jsonResponse(sessionMessageResponseSchema()))
+	message.Responses["409"] = worktreeUnavailableResponse()
+	message.Responses["502"] = rpc.OpenAPIResponse{Description: "Live session delivery failed"}
+	spec.Paths["/api/captain/sessions/{id}/message"] = rpc.OpenAPIPath{"post": message}
 	spec.Paths["/api/captain/sessions/{id}/chat"] = rpc.OpenAPIPath{
 		"get": promptRunOperation("getSessionChat", "Get the session's live chat run in this process", session, nil, jsonResponse(sessionChatSchema())),
 	}
@@ -303,9 +305,47 @@ func chatMessageRequestSchema() *rpc.OpenAPISchema {
 		Type: "object", Required: []string{"text"},
 		Properties: map[string]*rpc.OpenAPISchema{
 			"text": {Type: "string"}, "messageId": {Type: "string"},
-			"model": {Type: "string"}, "mode": {Type: "string"},
-			"permissionMode": permissionModeSchema(),
+			"model": {Type: "string", Description: liveSettingDescription("model")}, "mode": {Type: "string"},
+			"permissionMode": liveSettingSchema(permissionModeSchema(), "permission mode"),
+			"worktree":       worktreeRecoverySchema(),
 		},
+	}
+}
+
+// liveSettingDescription documents a setting no live delivery channel can
+// switch.
+func liveSettingDescription(setting string) string {
+	return "Applied to a resumed or attached chat run. A message delivered to a live external process runs under that process's current " +
+		setting + "; naming any other " + setting + " is refused with a 409 before anything is sent"
+}
+
+func liveSettingSchema(schema *rpc.OpenAPISchema, setting string) *rpc.OpenAPISchema {
+	schema.Description = liveSettingDescription(setting)
+	return schema
+}
+
+func worktreeRecoverySchema() *rpc.OpenAPISchema {
+	return &rpc.OpenAPISchema{Type: "string", Enum: []any{string(WorktreeRecoveryNew), string(WorktreeRecoveryHead)}}
+}
+
+// worktreeUnavailableResponse is the 409 a resume answers when its worktree and
+// branch are both gone: the refusal and the WorktreeUnavailable offer.
+func worktreeUnavailableResponse() rpc.OpenAPIResponse {
+	return rpc.OpenAPIResponse{
+		Description: "Session state conflict. Most conflicts (run not ready for a message, run terminal, ambiguous session id) answer text/plain; a resume whose worktree and branch are gone answers JSON carrying the recoveries it may retry with",
+		Content: map[string]rpc.OpenAPIMediaType{"text/plain": {Schema: &rpc.OpenAPISchema{Type: "string"}}, "application/json": {Schema: &rpc.OpenAPISchema{
+			Type: "object", Required: []string{"error"},
+			Properties: map[string]*rpc.OpenAPISchema{
+				"error": {Type: "string"},
+				"worktree": {
+					Type: "object", Required: []string{"path", "branch", "recoveries"},
+					Properties: map[string]*rpc.OpenAPISchema{
+						"path": {Type: "string"}, "branch": {Type: "string"}, "head": {Type: "string"},
+						"recoveries": {Type: "array", Items: worktreeRecoverySchema()},
+					},
+				},
+			},
+		}}},
 	}
 }
 
@@ -326,6 +366,21 @@ func chatMessageResponseSchema() *rpc.OpenAPISchema {
 			"capabilities": chatCapabilitiesSchema(),
 		},
 	}
+}
+
+func sessionMessageResponseSchema() *rpc.OpenAPISchema {
+	return &rpc.OpenAPISchema{OneOf: []*rpc.OpenAPISchema{
+		chatMessageResponseSchema(),
+		{
+			Type: "object", Required: []string{"channel", "messageId", "status", "capabilities"},
+			Properties: map[string]*rpc.OpenAPISchema{
+				"channel":      {Type: "string", Enum: []any{string(deliver.ChannelClaudeSocket), string(deliver.ChannelCodexQueue), string(deliver.ChannelCmuxMessage)}},
+				"messageId":    {Type: "string"},
+				"status":       {Type: "string", Enum: []any{"sent", "queued"}},
+				"capabilities": chatCapabilitiesSchema(),
+			},
+		},
+	}}
 }
 
 func chatCapabilitiesSchema() *rpc.OpenAPISchema {

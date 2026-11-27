@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/database"
 	"github.com/flanksource/captain/pkg/session"
 	sessionquery "github.com/flanksource/captain/pkg/session/query"
@@ -23,6 +24,9 @@ type sessionReadResponse struct {
 	*session.Session
 	DetailAvailable bool              `json:"detailAvailable"`
 	DetailSource    map[string]string `json:"detailSource"`
+	// PermissionModes are the postures a continued session may start with;
+	// absent when the session cannot be resumed.
+	PermissionModes []api.PermissionMode `json:"permissionModes,omitempty"`
 }
 
 // SessionHandler serves one Captain session by identity, with paths relative to
@@ -40,10 +44,9 @@ type sessionReadResponse struct {
 //     after=<message id> names the newest one the reader already holds.
 //     An unknown before or after cursor is a JSON 400.
 //   - POST /{id}/tokens sizes the session's transcript rows in tokens.
-//   - POST /{id}/message sends a ChatMessageRequest to the session: to its live
-//     chat run when one is attached in this process, otherwise by resuming the
-//     saved session as a new agent-mode chat run. It answers 202 with a
-//     ChatMessageResponse.
+//   - POST /{id}/message sends a ChatMessageRequest to the attached chat or
+//     live Claude or Codex process, or resumes a saved session as a new agent-mode chat.
+//     It answers 202 with a ChatMessageResponse.
 //   - POST /{id}/deliver sends a SessionDeliverRequest into the session's live
 //     process through its own channel (claude messaging socket, codex queue, or
 //     cmux pane) and answers 202 with a deliver.Result. It never resumes: a
@@ -115,7 +118,10 @@ func writeSessionRead(w http.ResponseWriter, r *http.Request, id string, open se
 			fmt.Sprintf("session %s has no composed aggregate", item.CaptainID), nil)
 		return
 	}
-	writeChatJSON(w, http.StatusOK, sessionReadResponse{Session: item.Detail, DetailAvailable: item.DetailAvailable, DetailSource: item.DetailSource})
+	writeChatJSON(w, http.StatusOK, sessionReadResponse{
+		Session: item.Detail, DetailAvailable: item.DetailAvailable, DetailSource: item.DetailSource,
+		PermissionModes: item.PermissionModes,
+	})
 }
 
 func wantsSessionStream(r *http.Request) bool {

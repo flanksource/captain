@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/flanksource/captain/pkg/session/deliver"
 	"github.com/google/uuid"
 )
 
@@ -91,6 +92,10 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 		if !decodeChatRequest(w, r, &request) {
 			return
 		}
+		if err := validateWorktreeRecovery(request.Worktree); err != nil {
+			writeChatError(w, err)
+			return
+		}
 		item, err := resolveSessionItem(r.Context(), r.PathValue("id"))
 		if err != nil {
 			writeChatError(w, err)
@@ -105,6 +110,15 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 			writeChatJSON(w, http.StatusAccepted, response)
 			return
 		}
+		response, delivered, deliverErr := deliverLiveSessionMessage(r.Context(), item, request)
+		if deliverErr != nil {
+			writeChatError(w, deliverErr)
+			return
+		}
+		if delivered {
+			writeChatJSON(w, http.StatusAccepted, response)
+			return
+		}
 		response, resumeErr := resumeSessionMessage(r.Context(), item, request)
 		if resumeErr != nil {
 			writeChatError(w, resumeErr)
@@ -112,6 +126,30 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 		}
 		writeChatJSON(w, http.StatusAccepted, response)
 	}
+}
+
+// deliverLiveSessionMessage permits a resume only when no live channel could
+// have accepted the message.
+func deliverLiveSessionMessage(ctx context.Context, item SessionGetItem, request ChatMessageRequest) (ChatMessageResponse, bool, error) {
+	text := strings.TrimSpace(request.Text)
+	if text == "" {
+		return ChatMessageResponse{}, false, newChatError(http.StatusBadRequest, "message text is required")
+	}
+	result, err := deliverLiveSession(ctx, item, liveMessage{Text: text, Model: request.Model, PermissionMode: request.PermissionMode})
+	if errors.Is(err, errSessionNotLive) || errors.Is(err, deliver.ErrNoChannel) {
+		return ChatMessageResponse{}, false, nil
+	}
+	if err != nil {
+		return ChatMessageResponse{}, false, err
+	}
+	messageID := strings.TrimSpace(request.MessageID)
+	if messageID == "" {
+		messageID = newMessageID()
+	}
+	return ChatMessageResponse{
+		MessageID: messageID, Status: string(result.Status), Channel: result.Channel,
+		Capabilities: ChatCapabilities{FollowUp: true},
+	}, true, nil
 }
 
 // resolveSessionItem resolves a captain session id or provider session id to
@@ -226,7 +264,7 @@ func resumeRenderResult(ctx context.Context, item SessionGetItem, request ChatMe
 	if model == "" {
 		return PromptRenderResult{}, newChatError(http.StatusUnprocessableEntity, "session has no model")
 	}
-	setup, err := resumeSetup(ctx, item, target.CWD)
+	setup, err := resumeSetup(ctx, item, resumeSetupOptions{CWD: target.CWD, Recovery: request.Worktree})
 	if err != nil {
 		return PromptRenderResult{}, err
 	}
@@ -316,11 +354,14 @@ func readChatRequest(r *http.Request, target any) error {
 
 func writeChatError(w http.ResponseWriter, err error) {
 	var target chatHTTPError
-	if errors.As(err, &target) {
+	switch {
+	case errors.As(err, &target) && target.fields != nil:
+		writeSessionError(w, target.status, target.Error(), target.fields)
+	case errors.As(err, &target):
 		http.Error(w, target.Error(), target.status)
-		return
+	default:
+		http.Error(w, err.Error(), sessionErrorStatus(err))
 	}
-	http.Error(w, err.Error(), sessionErrorStatus(err))
 }
 
 func writeChatJSON(w http.ResponseWriter, status int, value any) {

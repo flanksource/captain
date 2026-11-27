@@ -28,8 +28,13 @@ const promptBusyMarker = "holds text someone is typing"
 // unsent text. Retrying cannot help until someone clears or submits that text.
 var ErrPromptBusy = errors.New("agent prompt holds unsent text; clear or submit it, then retry")
 
+// ErrNotStarted reports that the cmux CLI never started (missing binary, start
+// failure), so cmux received nothing.
+var ErrNotStarted = errors.New("cmux command did not start")
+
 // Runner executes the cmux CLI. Tests inject this to assert command arguments
-// without requiring a live cmux.app instance. A prompt refusal wraps ErrPromptBusy.
+// without requiring a live cmux.app instance. A prompt refusal wraps ErrPromptBusy,
+// and a command that never started wraps ErrNotStarted.
 type Runner func(ctx context.Context, cwd, binary string, timeout time.Duration, args ...string) (stdout string, err error)
 
 type Client struct {
@@ -437,6 +442,11 @@ func defaultRunner(_ context.Context, cwd, binary string, timeout time.Duration,
 		err := fmt.Errorf("%s %s failed (exit %d): %s", binary, strings.Join(echoed, " "), result.ExitCode, msg)
 		if promptBusy {
 			err = fmt.Errorf("%w: %w", ErrPromptBusy, err)
+		}
+		// clicky runs the command through a shell: no PID means the shell never
+		// started, and 126/127 are its "not executable"/"not found" exits.
+		if result.PID == 0 || result.ExitCode == 126 || result.ExitCode == 127 {
+			err = fmt.Errorf("%w: %w", ErrNotStarted, err)
 		}
 		return result.Stdout, err
 	}

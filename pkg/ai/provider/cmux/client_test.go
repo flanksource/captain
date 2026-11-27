@@ -224,6 +224,17 @@ func TestSendSurfaceDoesNotClassifyEchoedArgumentsAsPromptBusy(t *testing.T) {
 	}
 }
 
+func TestDefaultRunnerClassifiesOnlyUnstartedCommandsAsNotStarted(t *testing.T) {
+	_, err := defaultRunner(context.Background(), "", "cmux-binary-that-does-not-exist", 5*time.Second, "ping")
+	if !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("defaultRunner(missing binary) error = %v, want ErrNotStarted", err)
+	}
+	_, err = defaultRunner(context.Background(), "", "false", 5*time.Second, "ping")
+	if err == nil || errors.Is(err, ErrNotStarted) {
+		t.Fatalf("defaultRunner(false) error = %v, want an exit failure without ErrNotStarted", err)
+	}
+}
+
 func TestDefaultRunnerErrorElidesLongArguments(t *testing.T) {
 	payload := strings.Repeat("thread body ", 50)
 	_, err := defaultRunner(context.Background(), "", "false", 5*time.Second, "send", "--surface", "surface:sf1", "--", payload)
