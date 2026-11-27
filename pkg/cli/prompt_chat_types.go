@@ -49,8 +49,11 @@ type PromptRunFrame struct {
 type ChatMessageRequest struct {
 	Text      string `json:"text"`
 	MessageID string `json:"messageId,omitempty"`
-	Model     string `json:"model,omitempty"`
-	Mode      string `json:"mode,omitempty"`
+	// Model selects the model of a resumed chat run. A message sent to an
+	// external process runs on its current model, so one naming any other model
+	// is refused with a 409 before it is sent.
+	Model string `json:"model,omitempty"`
+	Mode  string `json:"mode,omitempty"`
 	// PermissionMode selects the posture of a resumed or attached chat run.
 	// A message sent to an external process runs under its current posture, so
 	// one naming any other posture is refused with a 409 before it is sent.

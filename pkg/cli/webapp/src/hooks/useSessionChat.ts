@@ -36,24 +36,33 @@ export type UseSessionChatOptions = {
  *  waits for its provider to write it and a reply. */
 export const DELIVERY_REFRESH_MS = 2_000;
 
-/** A message an external live session accepted, and how many transcript
- *  messages already carried its text when it was sent. */
-type DeliveredMessage = { id: string; text: string; seen: number };
+/** A message an external live session accepted, and the first transcript
+ *  occurrence of its text it may claim: those already there before it was sent
+ *  belong to earlier messages. */
+export type DeliveredMessage = { id: string; text: string; seen: number };
 
-/** Reports whether the transcript holds a new copy of the delivered text,
- *  followed by a message the agent wrote after it. Providers file the message
- *  under their own id, and may wrap its text. */
-export function deliveredMessageSettled(
+/** Splits pending deliveries into those the transcript now holds, followed by
+ *  a message the agent wrote after them, and those still waiting. Providers
+ *  file a message under their own id and may wrap its text, so each delivery
+ *  claims its own user-message occurrence of the text, in send order; a
+ *  waiting delivery keeps the occurrence it claimed. */
+export function settleDeliveries(
   transcript: SessionUIMessage[] | undefined,
-  delivered: DeliveredMessage,
-): boolean {
-  const matches = deliveredTextIndexes(transcript, delivered.text);
-  const last = matches[matches.length - 1];
-  return (
-    last !== undefined &&
-    matches.length > delivered.seen &&
-    transcript!.slice(last + 1).some((message) => message.role !== "user")
-  );
+  delivered: DeliveredMessage[],
+): { settled: Set<string>; pending: DeliveredMessage[] } {
+  const claimed = new Map<string, number>();
+  const settled = new Set<string>();
+  const pending: DeliveredMessage[] = [];
+  for (const item of delivered) {
+    const occurrence = Math.max(item.seen, (claimed.get(item.text) ?? -1) + 1);
+    claimed.set(item.text, occurrence);
+    const index = deliveredTextIndexes(transcript, item.text)[occurrence];
+    const replied =
+      index !== undefined && transcript!.slice(index + 1).some((message) => message.role !== "user");
+    if (replied) settled.add(item.id);
+    else pending.push({ ...item, seen: occurrence });
+  }
+  return { settled, pending };
 }
 
 function deliveredTextIndexes(
@@ -62,6 +71,7 @@ function deliveredTextIndexes(
 ): number[] {
   const needle = text.trim();
   return (transcript ?? []).flatMap((message, index) =>
+    message.role === "user" &&
     message.parts.some((part) => part.type === "text" && part.text?.includes(needle))
       ? [index]
       : [],
@@ -120,14 +130,10 @@ export function useSessionChat(options: UseSessionChatOptions) {
   // reply, refreshed meanwhile: nothing else refetches an external session.
   useEffect(() => {
     if (delivered.length === 0) return;
-    const settled = new Set(
-      delivered
-        .filter((item) => deliveredMessageSettled(options.transcript, item))
-        .map((item) => item.id),
-    );
+    const { settled, pending } = settleDeliveries(options.transcript, delivered);
     if (settled.size === 0) return;
     setOptimistic((current) => current.filter((item) => !item.id || !settled.has(item.id)));
-    setDelivered((current) => current.filter((item) => !settled.has(item.id)));
+    setDelivered(pending);
   }, [delivered, options.transcript]);
 
   const awaitingDelivery = delivered.length > 0;
@@ -211,6 +217,9 @@ export function useSessionChat(options: UseSessionChatOptions) {
       const message = userMessage(messageID, text);
       setOptimistic((current) => mergeSessionMessages(current, [message]));
       setActionError(undefined);
+      // Counted before sending, so a copy written while the request is in
+      // flight counts as this message's.
+      const seen = deliveredTextIndexes(transcript.current, text).length;
       try {
         const sessionID = options.sessionID ?? stream.summary?.sessionId;
         const active =
@@ -248,7 +257,6 @@ export function useSessionChat(options: UseSessionChatOptions) {
         }
         if (response.channel) {
           setActiveRunID(undefined);
-          const seen = deliveredTextIndexes(transcript.current, text).length;
           setDelivered((current) => [...current, { id: messageID, text, seen }]);
           refreshDelivered();
         } else if (response.runId !== activeRunID) {

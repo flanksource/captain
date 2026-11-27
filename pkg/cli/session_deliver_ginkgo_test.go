@@ -28,23 +28,30 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = DescribeTable("live delivery permits a requested permission mode only when the live process runs under it",
-	func(recorded, requested api.PermissionMode, wantConflict bool) {
-		item := SessionGetItem{CaptainID: "session-acme", Detail: &session.Session{PermissionMode: recorded}}
+var _ = DescribeTable("live delivery permits a requested model or permission mode only when the live process runs it",
+	func(recordedModel string, recordedMode api.PermissionMode, message liveMessage, conflict string) {
+		item := SessionGetItem{
+			CaptainID: "session-acme", Summary: SessionRecord{Model: recordedModel},
+			Detail: &session.Session{PermissionMode: recordedMode},
+		}
 
-		err := livePermissionModeMatches(item, requested, deliver.ChannelClaudeSocket)
+		err := liveMessageMatches(item, message, deliver.ChannelClaudeSocket)
 
-		if !wantConflict {
+		if conflict == "" {
 			Expect(err).NotTo(HaveOccurred())
 			return
 		}
 		Expect(chatErrorStatus(err)).To(Equal(http.StatusConflict))
-		Expect(err).To(MatchError(SatisfyAll(ContainSubstring(string(requested)), ContainSubstring(string(deliver.ChannelClaudeSocket)))))
+		Expect(err).To(MatchError(SatisfyAll(ContainSubstring(conflict), ContainSubstring(string(deliver.ChannelClaudeSocket)))))
 	},
-	Entry("no requested mode keeps the current posture", api.PermissionAuto, api.PermissionMode(""), false),
-	Entry("the recorded posture", api.PermissionAuto, api.PermissionAuto, false),
-	Entry("another posture", api.PermissionAuto, api.PermissionPlan, true),
-	Entry("any posture when none is recorded", api.PermissionMode(""), api.PermissionDefault, true),
+	Entry("nothing requested keeps the current model and posture", "claude-opus-5-5", api.PermissionAuto, liveMessage{}, ""),
+	Entry("the recorded model and posture", "claude-opus-5-5", api.PermissionAuto,
+		liveMessage{Model: "claude-opus-5-5", PermissionMode: api.PermissionAuto}, ""),
+	Entry("another model", "claude-opus-5-5", api.PermissionAuto, liveMessage{Model: "claude-sonnet-5"}, `model "claude-opus-5-5"`),
+	Entry("any model when none is recorded", "", api.PermissionAuto, liveMessage{Model: "claude-sonnet-5"}, "an unrecorded model"),
+	Entry("another posture", "claude-opus-5-5", api.PermissionAuto, liveMessage{PermissionMode: api.PermissionPlan}, `permission mode "auto"`),
+	Entry("any posture when none is recorded", "claude-opus-5-5", api.PermissionMode(""),
+		liveMessage{PermissionMode: api.PermissionDefault}, "an unrecorded permission mode"),
 )
 
 var _ = Describe("SessionHandler deliver", Ordered, func() {
@@ -392,9 +399,10 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 	})
 
 	DescribeTable("falls back to the recorded pane after an unreadable environment only while the process runs",
-		func(ctx SpecContext, source string, running bool) {
+		func(ctx SpecContext, source string, state string) {
 			const pid = livePID + 3
 			started := time.Now().Add(-time.Minute)
+			running := state == "running"
 			previousDiscovery, previousSnapshot := discoverSessionProcesses, discoverProcesses
 			DeferCleanup(func() {
 				discoverSessionProcesses, discoverProcesses = previousDiscovery, previousSnapshot
@@ -407,8 +415,13 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 				}}, nil
 			}
 			discoverProcesses = func(context.Context, clickyprocess.SnapshotOptions) (*clickyprocess.Snapshot, error) {
-				if !running {
+				switch state {
+				case "exited":
 					return clickyprocess.NewSnapshot(nil), nil
+				case "reused":
+					// A later process holds the PID, with no messaging children.
+					reused := started.Add(time.Second)
+					return clickyprocess.NewSnapshot([]clickyprocess.Process{{PID: pid, PPID: 1, StartedAt: &reused}}), nil
 				}
 				// The child's environment is unreadable, as when permission is denied.
 				return clickyprocess.NewSnapshot([]clickyprocess.Process{
@@ -431,10 +444,12 @@ var _ = Describe("SessionHandler deliver", Ordered, func() {
 			Expect(errors.As(err, &chatErr)).To(BeTrue(), "%v", err)
 			Expect(chatErr.status).To(Equal(http.StatusConflict))
 		},
-		Entry("claude still running", "claude", true),
-		Entry("claude exited", "claude", false),
-		Entry("codex still running", "codex", true),
-		Entry("codex exited", "codex", false),
+		Entry("claude still running", "claude", "running"),
+		Entry("claude exited", "claude", "exited"),
+		Entry("claude's PID reused by a later process", "claude", "reused"),
+		Entry("codex still running", "codex", "running"),
+		Entry("codex exited", "codex", "exited"),
+		Entry("codex's PID reused by a later process", "codex", "reused"),
 	)
 
 	It("targets the current workspace when a live terminal has moved", func(ctx SpecContext) {

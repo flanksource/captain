@@ -305,11 +305,23 @@ func chatMessageRequestSchema() *rpc.OpenAPISchema {
 		Type: "object", Required: []string{"text"},
 		Properties: map[string]*rpc.OpenAPISchema{
 			"text": {Type: "string"}, "messageId": {Type: "string"},
-			"model": {Type: "string"}, "mode": {Type: "string"},
-			"permissionMode": permissionModeSchema(),
+			"model": {Type: "string", Description: liveSettingDescription("model")}, "mode": {Type: "string"},
+			"permissionMode": liveSettingSchema(permissionModeSchema(), "permission mode"),
 			"worktree":       worktreeRecoverySchema(),
 		},
 	}
+}
+
+// liveSettingDescription documents a setting no live delivery channel can
+// switch.
+func liveSettingDescription(setting string) string {
+	return "Applied to a resumed or attached chat run. A message delivered to a live external process runs under that process's current " +
+		setting + "; naming any other " + setting + " is refused with a 409 before anything is sent"
+}
+
+func liveSettingSchema(schema *rpc.OpenAPISchema, setting string) *rpc.OpenAPISchema {
+	schema.Description = liveSettingDescription(setting)
+	return schema
 }
 
 func worktreeRecoverySchema() *rpc.OpenAPISchema {

@@ -36,12 +36,12 @@ var (
 // with no environment left to read (exited, zombie or exiting) are skipped by
 // the snapshot. A readable child carrying the socket takes precedence over
 // environment errors from siblings.
-func claudeMessagingEnvironment(ctx context.Context, pid int) (map[string]string, error) {
+func claudeMessagingEnvironment(ctx context.Context, pid int, startedAt *time.Time) (map[string]string, error) {
 	snapshot, err := discoverProcesses(ctx, clickyprocess.SnapshotOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing children of claude process %d: %w", pid, err)
 	}
-	if !stillRunning(snapshot, pid, nil) {
+	if !stillRunning(snapshot, pid, startedAt) {
 		return nil, fmt.Errorf("claude process %d is no longer running", pid)
 	}
 	children := snapshot.Children(pid)
@@ -91,8 +91,9 @@ func RunSessionDeliver(ctx context.Context, opts SessionDeliverOptions) (deliver
 // liveMessage is a message for a live session's own process.
 type liveMessage struct {
 	Text string
-	// PermissionMode, when set, must be the posture the live process already
-	// runs under: no live channel can switch it.
+	// Model and PermissionMode, when set, must be what the live process already
+	// runs: no live channel can switch either.
+	Model          string
 	PermissionMode api.PermissionMode
 }
 
@@ -105,7 +106,7 @@ func deliverLiveSession(ctx context.Context, item SessionGetItem, message liveMe
 	if err != nil {
 		return deliver.Result{}, err
 	}
-	if err := livePermissionModeMatches(item, message.PermissionMode, channel); err != nil {
+	if err := liveMessageMatches(item, message, channel); err != nil {
 		return deliver.Result{}, err
 	}
 	result, err := sessionDeliverer.Deliver(ctx, target, message.Text)
@@ -115,27 +116,36 @@ func deliverLiveSession(ctx context.Context, item SessionGetItem, message liveMe
 	return result, err
 }
 
-// livePermissionModeMatches refuses, before anything is sent, a requested
-// posture the live process cannot be confirmed to run under: the socket, queue
-// and cmux inbox all deliver text into the process as it is.
-func livePermissionModeMatches(item SessionGetItem, requested api.PermissionMode, channel deliver.Channel) error {
-	if requested == "" {
+// liveMessageMatches refuses, before anything is sent, a requested model or
+// posture the live process cannot be confirmed to run: the socket, queue and
+// cmux inbox all deliver text into the process as it is.
+func liveMessageMatches(item SessionGetItem, message liveMessage, channel deliver.Channel) error {
+	if model := strings.TrimSpace(message.Model); model != "" {
+		if err := liveSettingMatches(item, channel, "model", strings.TrimSpace(resumeTargetOf(item).Model), model); err != nil {
+			return err
+		}
+	}
+	if message.PermissionMode == "" {
 		return nil
 	}
 	var recorded api.PermissionMode
 	if item.Detail != nil {
 		recorded = item.Detail.PermissionMode
 	}
+	return liveSettingMatches(item, channel, "permission mode", string(recorded), string(message.PermissionMode))
+}
+
+func liveSettingMatches(item SessionGetItem, channel deliver.Channel, setting, recorded, requested string) error {
 	if recorded == requested {
 		return nil
 	}
-	current := "an unrecorded permission mode"
+	current := "an unrecorded " + setting
 	if recorded != "" {
-		current = fmt.Sprintf("permission mode %q", recorded)
+		current = fmt.Sprintf("%s %q", setting, recorded)
 	}
 	return newChatError(http.StatusConflict, fmt.Sprintf(
-		"session %s is live under %s and %s cannot switch it to %q; send without a permission mode to continue under its current one",
-		item.CaptainID, current, channel, requested))
+		"session %s is live under %s and %s cannot switch it to %q; send without a %s to continue under its current one",
+		item.CaptainID, current, channel, requested, setting))
 }
 
 // liveDeliveryTarget finds the session's live process and re-reads its
@@ -194,7 +204,7 @@ func processDeliveryTarget(ctx context.Context, item SessionGetItem, process age
 	var env map[string]string
 	var err error
 	if process.Source == "claude" {
-		env, err = claudeMessagingEnvironment(ctx, process.PID)
+		env, err = claudeMessagingEnvironment(ctx, process.PID, process.StartedAt)
 	} else {
 		env, err = readProcessEnvironment(ctx, process.PID, clickyprocess.EnvironmentOptions{Keys: deliver.MessagingKeys})
 	}
