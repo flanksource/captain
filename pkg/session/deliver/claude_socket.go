@@ -3,6 +3,7 @@ package deliver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -13,6 +14,8 @@ import (
 const claudeLineLimit = 1 << 20
 
 const claudeSocketTimeout = 10 * time.Second
+
+var errSocketUnavailable = errors.New("claude socket unavailable before sending")
 
 type claudeMessage struct {
 	Role    string `json:"role"`
@@ -46,17 +49,24 @@ func (d Deliverer) sendClaudeSocket(ctx context.Context, socket, token, text str
 	}
 	conn, err := dial(ctx, socket)
 	if err != nil {
-		return fmt.Errorf("connect to claude messaging socket %s: %w", socket, err)
+		return fmt.Errorf("%w: connect to claude messaging socket %s: %w", errSocketUnavailable, socket, err)
 	}
 	defer conn.Close()
 	if deadline, ok := ctx.Deadline(); ok {
 		if err := conn.SetWriteDeadline(deadline); err != nil {
-			return err
+			return fmt.Errorf("%w: set socket write deadline: %w", errSocketUnavailable, err)
 		}
 	}
 	payload := append(append(append(auth, '\n'), message...), '\n')
-	if _, err := conn.Write(payload); err != nil {
+	n, err := conn.Write(payload)
+	if err != nil && n == 0 {
+		return fmt.Errorf("%w: write to claude messaging socket %s: %w", errSocketUnavailable, socket, err)
+	}
+	if err != nil {
 		return fmt.Errorf("write to claude messaging socket %s: %w", socket, err)
+	}
+	if n != len(payload) {
+		return fmt.Errorf("short write to claude messaging socket %s: wrote %d of %d bytes", socket, n, len(payload))
 	}
 	return nil
 }

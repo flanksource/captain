@@ -12,6 +12,7 @@ import (
 	"github.com/flanksource/captain/pkg/ai"
 	"github.com/flanksource/captain/pkg/api"
 	"github.com/flanksource/captain/pkg/session"
+	"github.com/flanksource/captain/pkg/session/deliver"
 	"github.com/google/uuid"
 )
 
@@ -104,6 +105,30 @@ func handleSessionMessage(chats *chatBroker) http.HandlerFunc {
 			}
 			writeChatJSON(w, http.StatusAccepted, response)
 			return
+		}
+		switch resumeTargetOf(item).Source {
+		case "claude", "codex":
+			text := strings.TrimSpace(request.Text)
+			if text == "" {
+				writeChatError(w, newChatError(http.StatusBadRequest, "message text is required"))
+				return
+			}
+			delivery, err := deliverLiveSession(r.Context(), item, text)
+			switch {
+			case err == nil:
+				messageID := strings.TrimSpace(request.MessageID)
+				if messageID == "" {
+					messageID = newMessageID()
+				}
+				writeChatJSON(w, http.StatusAccepted, ChatMessageResponse{
+					MessageID: messageID, Status: string(delivery.Status), DeliveryChannel: delivery.Channel,
+					Capabilities: ChatCapabilities{FollowUp: true},
+				})
+				return
+			case !errors.Is(err, errSessionNotLive) && !errors.Is(err, deliver.ErrNoChannel):
+				writeChatError(w, err)
+				return
+			}
 		}
 		response, resumeErr := resumeSessionMessage(r.Context(), item, request)
 		if resumeErr != nil {
